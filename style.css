@@ -4237,10 +4237,41 @@ body.dark .nav-item {
    Sidebar Collapse & Icons (Fashion Style)
    ========================================= */
 
+/* GitHub 按钮：复刻侧边栏切换按钮的极简风格 */
+.sidebar-github-btn {
+    position: absolute;
+    top: 40px;             /* 位于最上方 */
+    left: 6vw;             /* 展开时与文字对齐 */
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--ink);
+    opacity: 0.4;          /* 初始状态保持低调 */
+    z-index: 50;
+    transition: transform 0.4s var(--trans-curve), opacity 0.4s var(--trans-curve);
+}
+
+.sidebar-github-btn svg {
+    width: 24px;
+    height: 24px;
+}
+
+.sidebar-github-btn:hover {
+    opacity: 1;
+    transform: scale(1.15); /* 悬停时轻微放大 */
+}
+
+/* === 核心：调整垂直间距防止重叠 === */
+
 /* 切换按钮样式 */
 .sidebar-toggle {
     position: absolute;
-    top: 50px;
+    top: 90px ;  /* 将三角按钮从 50px 下移到 90px，为 Github 留出空间 */
     right: 15%; /* 放置在导航文字右侧附近 */
     width: 32px; height: 32px;
     background: transparent;
@@ -4332,10 +4363,23 @@ body.nav-collapsed .nav-item::before {
     display: none;
 }
 
+/* 2. 收缩状态 (nav-collapsed) 适配 */
+body.nav-collapsed .sidebar-github-btn {
+    left: 50%;
+    transform: translateX(-50%);
+    top: 40px;
+}
+
+body.nav-collapsed .sidebar-github-btn:hover {
+    transform: translateX(-50%) scale(1.15);
+}
+
 /* 6. 切换按钮旋转 */
 body.nav-collapsed .sidebar-toggle {
-    transform: rotate(180deg);
-    right: 34px; /* 居中放置 */
+    top: 90px ;  /* 收缩后也保持下移 */
+    right: auto ;
+    left: 50% ;
+    transform: translateX(-50%) rotate(180deg) ; /* 保持原旋转逻辑 */
 }
 
 /* 7. 右侧面板：平滑移动并同比例放大 */
