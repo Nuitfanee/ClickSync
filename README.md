@@ -7,6 +7,8 @@
 
 ![Click Sync UI](UI/UI1.png)
 ![Click Sync UI](UI/UI2.png)
+![Click Sync UI](UI/UI4.png)
+![Click Sync UI](UI/UI3.png)
 
 ---
 
@@ -257,5 +259,6 @@ npx http-server . -p 8000
 ## 开源协议
 
 本项目为开源项目。请查看仓库中的 `LICENSE` 文件（如尚未添加，可在贡献时补充）。
+
 
 
