@@ -3,7 +3,7 @@
 ![WebHID](https://img.shields.io/badge/WebHID-enabled-blue)
 ![JavaScript](https://img.shields.io/badge/JavaScript-vanilla-yellow)
 
-> 基于 **WebHID** 的浏览器端鼠标配置与测试工具：无需安装厂商驱动，直接在网页中完成按键映射、DPI、性能参数与调试校准。
+> Click Sync 是一个基于 Web HID API 的纯前端鼠标配置应用，旨在构建一个 **ALL IN ONE** 的网页驱动解决方案，支持多种品牌的鼠标设备。无需安装任何驱动或软件，直接在浏览器中完成鼠标的所有配置。
 
 ![Click Sync UI](UI/UI1.png)
 ![Click Sync UI](UI/UI2.png)
@@ -33,7 +33,7 @@
 
 ## 背景
 
-Click Sync 是一个纯前端（HTML/CSS/JavaScript）的鼠标配置工具，利用浏览器 **WebHID** 能力与设备通信，让你在 **不安装任何厂商驱动** 的情况下完成配置与测试校准。
+Click Sync 是一个基于 Web HID API 的纯前端鼠标配置应用，旨在构建一个 **ALL IN ONE** 的网页驱动解决方案，支持多种品牌的鼠标设备。无需安装任何驱动或软件，直接在浏览器中完成鼠标的所有配置。
 
 项目目标：
 
@@ -293,5 +293,6 @@ npx http-server . -p 8000
 ## 开源协议
 
 本项目为开源项目。请查看仓库中的 `LICENSE` 文件。
+
 
 
