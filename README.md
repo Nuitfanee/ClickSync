@@ -231,32 +231,32 @@ npx http-server . -p 8000
 
 ## 开发调试工具：WebHID Workbench
 
-仓库内包含一个开发期使用的 **Userscript 工作台**：`WebHID_Workbench.user.js`。它会在目标网页中注入一个浮层面板，用于**采集 WebHID 往返报文、做快照、导出为 JSON，并支持按原始时序复刻已记录的 OUT 报文序列**，便于进行协议研究、兼容性验证与问题定位。fileciteturn8file0L304-L375
+仓库内包含一个开发期使用的 **Userscript 工作台**：`WebHID_Workbench.user.js`。它会在目标网页中注入一个浮层面板，用于**采集 WebHID 往返报文、做快照、导出为 JSON，并支持按原始时序复刻已记录的 OUT 报文序列**，便于进行协议研究、兼容性验证与问题定位。
 
 ### 能做什么
 
-- **自动捕获 WebHID 通信**：Hook `HIDDevice.sendReport / sendFeatureReport / receiveFeatureReport`，并监听 `inputreport` 事件，将报文记录到实时缓冲区与全量日志。fileciteturn8file0L607-L710  
+- **自动捕获 WebHID 通信**：Hook `HIDDevice.sendReport / sendFeatureReport / receiveFeatureReport`，并监听 `inputreport` 事件，将报文记录到实时缓冲区与全量日志。
   方向标记包括 `OUT / IN / sendFeature / receiveFeature`。fileciteturn8file0L276-L280
-- **快照机制（delta window）**：每次“捕获快照”仅保存“上一次快照之后新增”的报文段，避免日志过长难以定位。fileciteturn8file0L209-L234
-- **导出 JSON**：导出内容包含设备 `vid/pid`，以及每个快照的编号、备注与格式化报文行（包含 `usagePage/usage`、方向、`ReportID` 与 Hex）。fileciteturn8file0L251-L297
-- **按时序复刻快照中的 OUT 报文**：从快照中过滤 `dir === 'out'` 的报文，按记录的时间间隔重新发送；再次点击可停止。fileciteturn8file0L304-L375
-- **可插拔解析规则**：内置 `PARSER_RULES`，可针对常见报文做快速识别/解码（如 DPI 表、按键映射、状态报告等），也可以自行添加规则。fileciteturn8file0L21-L66
+- **快照机制（delta window）**：每次“捕获快照”仅保存“上一次快照之后新增”的报文段，避免日志过长难以定位。
+- **导出 JSON**：导出内容包含设备 `vid/pid`，以及每个快照的编号、备注与格式化报文行（包含 `usagePage/usage`、方向、`ReportID` 与 Hex）。
+- **按时序复刻快照中的 OUT 报文**：从快照中过滤 `dir === 'out'` 的报文，按记录的时间间隔重新发送；再次点击可停止。
+- **可插拔解析规则**：内置 `PARSER_RULES`，可针对常见报文做快速识别/解码（如 DPI 表、按键映射、状态报告等），也可以自行添加规则。
 
 ### 安装与使用
 
 1. 安装浏览器 Userscript 管理器（如 Tampermonkey / Violentmonkey）。
 2. 导入脚本：`WebHID_Workbench.user.js`。
-3. 打开脚本已配置的目标站点之一（脚本使用 `@match` 限定注入范围，例如：`hub.rapoo.cn`、`hub.atk.pro`、`rawmtech.com`、`mchose.com.cn`、`chaos.vin` 等）。fileciteturn8file0L6-L12
+3. 打开脚本已配置的目标站点之一（脚本使用 `@match` 限定注入范围，例如：`hub.rapoo.cn`、`hub.atk.pro`、`rawmtech.com`、`mchose.com.cn`、`chaos.vin` 等）。
 4. 在页面中连接设备并进行一次你关心的操作（例如修改 DPI/回报率/按键映射等），让页面产生通信报文。
 5. 在右上角“⚡ WebHID 工作台”浮层中：
-   - 点击 **📸 捕获快照**：为当前操作段打点（建议输入备注，如“DPI 改为 1600”）。fileciteturn8file0L476-L483  
-   - 点击 **💾 导出**：导出所有快照为 JSON 文件，便于后续离线分析与整理。fileciteturn8file0L296-L298  
-   - 点击 **复刻操作**：将该快照内的 OUT 序列按原时序发送（用于复现特定行为/验证兼容性）。fileciteturn8file0L304-L375
+   - 点击 **📸 捕获快照**：为当前操作段打点（建议输入备注，如“DPI 改为 1600”）。
+   - 点击 **💾 导出**：导出所有快照为 JSON 文件，便于后续离线分析与整理。  
+   - 点击 **复刻操作**：将该快照内的 OUT 序列按原时序发送（用于复现特定行为/验证兼容性）。
 
 ### 使用建议
 
-- 建议把一次“功能变更”拆成一个快照：**操作前清空缓冲区 → 操作 → 捕获快照 →（可选）导出**，这样更易对齐一次变更对应的报文段。fileciteturn8file0L236-L240
-- 如需扩展快速识别能力，可在脚本顶部的 `PARSER_RULES` 中添加 `match/decode` 规则。fileciteturn8file0L21-L66
+- 建议把一次“功能变更”拆成一个快照：**操作前清空缓冲区 → 操作 → 捕获快照 →（可选）导出**，这样更易对齐一次变更对应的报文段。
+- 如需扩展快速识别能力，可在脚本顶部的 `PARSER_RULES` 中添加 `match/decode` 规则。
 - 该脚本会注入到匹配域名页面并记录通信数据，**仅建议在可信环境下用于开发/测试**。
 
 
@@ -299,6 +299,7 @@ npx http-server . -p 8000
 ## 开源协议
 
 本项目为开源项目。请查看仓库中的 `LICENSE` 文件。
+
 
 
 
