@@ -9,8 +9,6 @@
 - 🌐 **网站**:  (https://nuitfanee.github.io/ClickSync.github.io/) 
 - 🌐 **网站**:  (https://xn--i8s54d9wak75j.xyz/)
 
-## 快速开始
-点击 [这里](#安装) 跳转到安装步骤...
 ![Click Sync UI](UI/UI1.png)
 ![Click Sync UI](UI/UI2.png)
 ![Click Sync UI](UI/UI4.png)
@@ -301,6 +299,7 @@ npx http-server . -p 8000
 ## 开源协议
 
 本项目为开源项目。请查看仓库中的 `LICENSE` 文件。
+
 
 
 
