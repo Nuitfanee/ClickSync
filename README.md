@@ -200,7 +200,7 @@ npx http-server . -p 8000
 ### 2）写入队列与写入策略（避免频繁写设备）
 
 - `app.js` 提供统一的 `enqueueDevicePatch(patch)`：把 UI 侧的多次变更合并到同一个防抖队列中，再一次性写入设备。
-- `refactor.js` 抽离 `DeviceWriter.writePatch()`：根据设备“家族”选择不同写入策略（例如 Rapoo 家族倾向逐项 `setFeature`；Chaos 设备会对 `modeByte` 相关字段做拆分/批写以保证状态一致性）。
+- `refactor.js` 抽离 `DeviceWriter.writePatch()`：根据设备不同选择不同写入策略（例如 Rapoo ATK 倾向逐项 `setFeature`；Chaos 设备会对 `modeByte` 相关字段做拆分/批写以保证状态一致性）。
 
 ### 3）协议实现的分层（以 `protocol_api_rapoo.js` 为例，如需扩展新设备请参考Rapoo、ATK协议实现；）
 > Chaos大部分代码使用原驱动代码，较为混乱，切勿参考chaos
@@ -231,7 +231,7 @@ npx http-server . -p 8000
 
 ## 开发调试工具：WebHID Workbench
 
-仓库内包含一个开发期使用的 **Userscript 工作台**：`WebHID_Workbench.user.js`。这是一个油猴脚本，关于如何使用请自行搜索，它会在目标网页中注入一个浮层面板，用于**采集 WebHID 往返报文、做快照、导出为 JSON，并支持按原始时序复刻已记录的 OUT 报文序列**，便于进行协议研究、兼容性验证与问题定位。
+仓库内包含一个开发期使用的 **Userscript 工作台**：`WebHID_Workbench.user.js`。这是一个油猴脚本，关于如何使用脚本请自行搜索，它会在目标网页中注入一个浮层面板，用于**采集 WebHID 往返报文、做快照、导出为 JSON，并支持按原始时序复刻已记录的 OUT 报文序列**，便于进行协议研究、兼容性验证与问题定位。
 
 ### 能做什么
 
@@ -299,6 +299,7 @@ npx http-server . -p 8000
 ## 开源协议
 
 本项目为开源项目。请查看仓库中的 `LICENSE` 文件。
+
 
 
 
