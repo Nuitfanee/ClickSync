@@ -4,7 +4,6 @@
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-  // ====== 国际化支持 ======
   // 为嵌入式测试工具提供 i18n 存根函数（默认使用中文）
   window.tr = window.tr || ((zh, en) => zh);
 
@@ -15,7 +14,7 @@
 
   // ====== 设备身份识别（解耦设计，可组合） ======
   // 设计目标：
-  // - 逻辑层：保留"Rapoo 家族"（rapoo + atk）的兼容行为（IS_RAPOO 标志）
+  // - 逻辑层：保留"类 Rapoo "（rapoo + atk）的兼容行为（IS_RAPOO 标志）
   // - 样式层：rapoo / atk / chaos 三者完全隔离，各自拥有独立的 CSS 命名空间
   const __DeviceEnv = window.DeviceEnv;
   const DEVICE_ID = (typeof __DeviceEnv?.normalize === "function")
