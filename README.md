@@ -173,7 +173,7 @@ npx http-server . -p 8000
 ├── nav-match.js                # 灵敏度匹配工具（如仓库中存在）
 ├── rotation-calibration.js     # 角度校准工具（如仓库中存在）
 ├── style.css / theme.css       # 样式与主题
-└── v3p.png                     # UI 截图/资源
+└── v3p.png                     # 鼠标图片样式
 ```
 
 ---
@@ -259,6 +259,7 @@ npx http-server . -p 8000
 ## 开源协议
 
 本项目为开源项目。请查看仓库中的 `LICENSE` 文件（如尚未添加，可在贡献时补充）。
+
 
 
 
