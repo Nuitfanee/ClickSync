@@ -14,7 +14,7 @@ A console application based on the Web HID API for configuring and managing mult
   - 高级性能开关（移动同步、直线修正、纹波修正、辅助压枪等）
   - LED 指示灯控制
   - LOD 静默高度设置
-
+  - 等等
 ### 🧪 测试工具
 
 - **双击检测**：检测鼠标按键的双击问题，统计按下/抬起次数和时间间隔
@@ -24,10 +24,11 @@ A console application based on the Web HID API for configuring and managing mult
 
 ## 支持的设备
 
-- **Chaos**：VID `0x1915`
 - **Rapoo（雷柏）**：VID `0x24ae`
 - **ATK**：VID `0x373b`
-
+- **Chaos**：VID `0x1915`
+- **等等，未来会支持更多鼠标**
+- 
 ## 技术栈
 
 - **纯前端应用**：HTML5 + CSS3 + JavaScript (ES6+)
@@ -77,8 +78,8 @@ atk3/
 ├── protocol_api_atk.js     # ATK 设备协议实现
 ├── protocol_api_chaos.js   # Chaos 设备协议实现
 ├── protocol_api_rapoo.js   # Rapoo 设备协议实现
-├── refactor.js             # 设备适配器重构逻辑
-├── mouse-main.js           # 鼠标主逻辑
+├── refactor.js             # 设备适配器重构UI逻辑
+├── mouse-main.js           # 测试工具的主逻辑
 ├── nav-match.js            # 灵敏度匹配工具
 ├── rotation-calibration.js # 角度校准工具
 ├── style.css               # 主样式文件
