@@ -170,7 +170,7 @@ npx http-server . -p 8000
 ├── device_runtime.js           # 设备识别与 WebHID 过滤器聚合；动态加载协议脚本
 ├── protocol_api_rapoo.js       # Rapoo 协议实现（分层：Driver/Codec/Planner/SPEC/API）
 ├── protocol_api_atk.js         # ATK 协议实现（分层：Driver/Codec/Planner/SPEC/API）
-├── protocol_api_chaos.js       # Chaos 协议实现
+├── protocol_api_chaos.js       # Chaos 协议实现（非标准分层架构，大部分代码使用原驱动代码，较为混乱，需要优化，如需扩展新设备请参考Rapoo、ATK协议实现）
 ├── refactor.js                 # 全局配置 + 设备适配器/写入策略 + UI Variant 应用
 ├── mouse-main.js               # 测试工具主逻辑
 ├── nav-match.js                # 灵敏度匹配工具
@@ -293,3 +293,4 @@ npx http-server . -p 8000
 ## 开源协议
 
 本项目为开源项目。请查看仓库中的 `LICENSE` 文件。
+
