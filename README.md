@@ -170,7 +170,7 @@ npx http-server . -p 8000
 ├── device_runtime.js           # 设备识别与 WebHID 过滤器聚合；动态加载协议脚本
 ├── protocol_api_rapoo.js       # Rapoo 协议实现（分层：Driver/Codec/Planner/SPEC/API）
 ├── protocol_api_atk.js         # ATK 协议实现（分层：Driver/Codec/Planner/SPEC/API）
-├── protocol_api_chaos.js       # Chaos 协议实现（非标准分层架构，大部分代码使用原驱动代码，较为混乱，需要优化，如需扩展新设备请参考Rapoo、ATK协议实现）
+├── protocol_api_chaos.js       # Chaos 协议实现（非标准分层架构，大部分代码使用原驱动代码，较为混乱，如需扩展新设备请参考Rapoo、ATK协议实现）
 ├── refactor.js                 # 全局配置 + 设备适配器/写入策略 + UI Variant 应用
 ├── mouse-main.js               # 测试工具主逻辑
 ├── nav-match.js                # 灵敏度匹配工具
@@ -196,7 +196,7 @@ npx http-server . -p 8000
 - `app.js` 提供统一的 `enqueueDevicePatch(patch)`：把 UI 侧的多次变更合并到同一个防抖队列中，再一次性写入设备。
 - `refactor.js` 抽离 `DeviceWriter.writePatch()`：根据设备“家族”选择不同写入策略（例如 Rapoo 家族倾向逐项 `setFeature`；Chaos 设备会对 `modeByte` 相关字段做拆分/批写以保证状态一致性）。
 
-### 3）协议实现的分层（以 `protocol_api_rapoo.js` 为例）
+### 3）协议实现的分层（以 `protocol_api_rapoo.js` 为例，如需扩展新设备请参考Rapoo、ATK协议实现，切勿参考chaos）
 
 协议文件采用“可系统化扩展”的分层组织，核心思路是：**业务层不拼报文，协议知识集中到规范表与计划器**。
 
@@ -293,4 +293,5 @@ npx http-server . -p 8000
 ## 开源协议
 
 本项目为开源项目。请查看仓库中的 `LICENSE` 文件。
+
 
