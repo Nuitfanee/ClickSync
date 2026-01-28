@@ -5,8 +5,13 @@
 
 > Click Sync 是一个基于 Web HID API 的纯前端鼠标配置应用，旨在构建一个 **ALL IN ONE** 的网页驱动解决方案，支持多种品牌的鼠标设备。无需安装任何驱动或软件，直接在浏览器中完成鼠标的所有配置。
 https://nuitfanee.github.io/ClickSync.github.io
-> ![Web](https://nuitfanee.github.io/ClickSync.github.io)
-> ![Web](https://xn--i8s54d9wak75j.xyz)
+
+## 🔗 体验链接
+- 🌐 **网站**:  (https://nuitfanee.github.io/ClickSync.github.io/) 
+- 🌐 **网站**:  (https://xn--i8s54d9wak75j.xyz/)
+
+## 快速开始
+点击 [这里](#安装) 跳转到安装步骤...
 ![Click Sync UI](UI/UI1.png)
 ![Click Sync UI](UI/UI2.png)
 ![Click Sync UI](UI/UI4.png)
@@ -297,6 +302,7 @@ npx http-server . -p 8000
 ## 开源协议
 
 本项目为开源项目。请查看仓库中的 `LICENSE` 文件。
+
 
 
 
