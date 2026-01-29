@@ -1,7 +1,7 @@
 
 const MOUSE_HID = {
-  usagePage: 65290, // 默认 1K/有线 UsagePage
-  usagePage8K: 65280, // 新增：8K 接收器专用 UsagePage
+  usagePage: 65290, // 1K/有线 UsagePage
+  usagePage8K: 65280, // 8K 接收器
   vendorProductIds: [
     // CHAOS M1
     [0x1915, 0x521c], // 有线
@@ -24,7 +24,7 @@ const MOUSE_HID = {
     [0x1915, 0x550b], // 无线 8K
   ],
   // WebHID requestDevice 可用的默认过滤器
-  // 更新说明：1K 设备/有线模式使用 65290，8K 接收器使用 65280
+  // 1K 设备/有线模式使用 65290，8K 接收器使用 65280
   defaultFilters: [
     // --- CHAOS M1 ---
     { vendorId: 0x1915, productId: 0x521c, usagePage: 65290 }, // 有线
@@ -256,7 +256,7 @@ function decodeModeByteToState(modeByte) {
 function encodeModeByteFromState(stateLike) {
   const s = stateLike && typeof stateLike === "object" ? stateLike : {};
 
-  // 重要：支持“增量更新”。
+  // - 支持“增量更新”。
   // - 如果调用方提供了 modeByte/mode_byte 作为 base，则先以 base 为起点。
   // - 仅当 payload 中“明确出现某字段”时，才更新对应 bit。
   // 这样可以避免 UI 只改一个开关时，其他 bit 被默认值覆盖（刷新页误开/误关）。
