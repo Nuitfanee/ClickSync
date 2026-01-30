@@ -7,7 +7,7 @@
 
 ## 🔗 体验链接
 - 🌐 **网站**:  (https://nuitfanee.github.io/ClickSync.github.io/) 
-- 🌐 **网站**:  (https://xn--i8s54d9wak75j.xyz/)
+- 🌐 **Beta网站**:  (https://xn--i8s54d9wak75j.xyz/)
 
 ![Click Sync UI](UI/UI1.png)
 ![Click Sync UI](UI/UI2.png)
@@ -299,6 +299,7 @@ npx http-server . -p 8000
 ## 开源协议
 
 本项目为开源项目。请查看仓库中的 `LICENSE` 文件。
+
 
 
 
