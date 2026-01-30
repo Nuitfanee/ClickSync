@@ -1,20 +1,37 @@
 
-
-/* ===== refactor.js (merged) ===== */
-
 /**
- * 全局配置中心（Centralization）
- * - 统一管理：防抖、休眠阈值、UI 离散档位、默认轮询率等
- * - 仅存放“数据/常量/纯函数”，不包含任何业务逻辑与 DOM 操作
+ * Manifesto: Registry & Adapter
+ * 本模块定义语义槽位、设备画像与映射规则，是配置与转换的单一事实来源。
+ * 目标是保持 UI 与 Runtime 解耦，所有协议差异通过 profile/adapter 统一表达。
+ *
+ * 禁止事项：
+ * - 这里不做 WebHID 调用；仅做映射、归一化与安全转换。
+ * - UI 不得写设备分支；差异必须落在 profile/adapter。
+ * - 禁止绕过 keyMap/transforms 直连协议键。
  */
+
+// ============================================================
+// 1) AppConfig：公共范围、时序与文案
+// ============================================================
 (function () {
+  /**
+   * 将数值钳制在指定区间内。
+   * 目的：确保写入参数落在设备允许范围内，避免越界写入。
+   *
+   * @param {number} n - 待处理的数值。
+   * @param {number} min - 下界。
+   * @param {number} max - 上界。
+   * @returns {number} 被钳制后的数值。
+   */
   const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
 
   /**
-   * 生成下拉框选项列表
-   * @param {number[]} values - 选项值数组
-   * @param {(v:number)=>string} label - 标签生成函数
-   * @returns {string} HTML 字符串
+   * 生成 select 的 HTML 选项字符串。
+   * 目的：集中生成选项模板，减少分散拼接带来的不一致。
+   *
+   * @param {Array<number|string>} values - 可选值列表。
+   * @param {(value: number|string) => string} label - 展示文案构造器。
+   * @returns {string} HTML 片段。
    */
   function buildSelectOptions(values, label) {
     return values.map((v) => `<option value="${v}">${label(v)}</option>`).join("");
@@ -22,7 +39,7 @@
 
   const AppConfig = {
     timings: {
-      // UI 到设备写入的防抖延迟（毫秒）
+
       debounceMs: {
         slotCount: 120,
         deviceState: 200,
@@ -32,16 +49,16 @@
       },
     },
 
-    // 设备能力范围（纯数据）
+
     ranges: {
       chaos: {
         power: {
-          // Chaos 设备休眠时间选项（7 档，与 index.html 默认选项一致）
+
           sleepSeconds: [10, 30, 50, 60, 120, 900, 1800],
           debounceMs: [1, 2, 4, 8, 15],
         },
         sensor: {
-          // Chaos 传感器配置（不强制覆盖，保持旧设备兼容性）
+
           angleDeg: { min: -20, max: 20, step: 1, hint: "" },
           feel: null,
         },
@@ -49,9 +66,9 @@
 
       rapoo: {
         power: {
-          // Rapoo 设备休眠时间选项：2 分钟到 120 分钟（秒）
+
           sleepSeconds: Array.from({ length: 119 }, (_, i) => (i + 2) * 60),
-          // Rapoo 设备防抖选项：0ms 到 32ms
+
           debounceMs: Array.from({ length: 33 }, (_, i) => i),
         },
         sensor: {
@@ -60,7 +77,7 @@
         },
         polling: {
           basicHz: [125, 250, 500, 1000, 2000, 4000, 8000],
-          // 高级面板轮询循环按钮的候选值（若设备或固件有限制，可在适配器中覆盖）
+
           advHz: [1000, 2000, 4000, 8000],
         },
         texts: {
@@ -69,7 +86,7 @@
           lod: { code: "005 // Glass Mode", title: "玻璃模式", desc: "适配玻璃表面" },
           led: { code: "006 // Low Batt Warn", title: "LED低电量提示", desc: "当低电量时，有led指示灯提示" },
 
-          // 性能模式描述
+
           perfMode: {
             low:   { color: "#00A86B", text: "均衡模式， 游戏娱乐，开心无虑" },
             hp:    { color: "#000000", text: "火力模式， 电竞游戏，轻松拿捏" },
@@ -81,18 +98,18 @@
 
       atk: {
         power: {
-          // ATK 设备休眠时间选项：30s, 1m, 2m, 3m, 5m, 20m, 25m, 30m
+
           sleepSeconds: [30, 60, 120, 180, 300, 1200, 1500, 1800],
-          // ATK 设备防抖选项：0, 1, 2, 4, 8, 15, 20
+
           debounceMs: [0, 1, 2, 4, 8, 15, 20],
         },
         sensor: {
-          // ATK 传感器配置（复用 Rapoo 的传感器范围）
+
           angleDeg: { min: -30, max: 30, step: 1, hint: "范围 -30° ~ 30°" },
           feel: { min: 1, max: 11, step: 1, unit: "挡", name: "引擎高度", sub: "范围 1 - 11 挡" },
         },
         polling: {
-          // ATK 设备回报率选项：125 - 8000
+
           basicHz: [125, 250, 500, 1000, 2000, 4000, 8000],
           advHz: [1000, 2000, 4000, 8000],
         },
@@ -102,7 +119,7 @@
           lod: { code: "005 // Glass Mode", title: "玻璃模式", desc: "适配玻璃表面，开启后状态会同步至设备" },
           led: { code: "006 // Low Batt Warn", title: "LED低电量提示", desc: "当低电量时，鼠标灯效会频繁闪烁" },
 
-          // 性能模式描述
+
           perfMode: {
             low:   { color: "#00A86B", text: "基础模式，该模式下鼠标传感器处于低性能状态,续航长,适合日常办公" },
             hp:    { color: "#000000", text: "ATK绝杀竞技固件，该模式下鼠标传感器处于高性能状态,扫描频率高,操控更跟手 " },
@@ -110,7 +127,7 @@
             oc:    { color: "#4F46E5", text: "ATK绝杀竞技固件MAX，该模式下传感器性能将达到极限,静态扫描帧率≥20000,延迟进一步降低,移动轨迹更精准 " },
           },
 
-          // ATK 灯效配置
+
           lights: {
             dpi: [
               { val: 0, label: "关闭", cls: "atk-mode-0" },
@@ -137,199 +154,419 @@
   window.AppConfig = AppConfig;
 })();
 
-/**
- * 设备适配层（Decoupling + Extensibility）
- * - DeviceEnv：设备识别与族群归一
- * - DeviceAdapters：数据驱动的 UI 适配器注册表（策略/适配器模式）
- * - DeviceWriter：写入策略抽离（保持后端接口兼容）
- */
+
+// ============================================================
+// 2) 设备画像与适配器（注册表 + 翻译）
+// ============================================================
 (function () {
-  const normalize = (id) => {
+  const clamp = window.AppConfig?.utils?.clamp || ((n, min, max) => Math.min(max, Math.max(min, n)));
+
+  /**
+   * 规范化设备 ID。
+   * 目的：统一设备 ID 入口，避免别名导致的分支与漂移。
+   *
+   * @param {string} id - 设备标识。
+   * @returns {string} 规范化后的设备标识。
+   */
+  const normalizeDeviceId = (id) => {
     const x = String(id || "").toLowerCase();
     if (x === "rapoo") return "rapoo";
     if (x === "atk") return "atk";
     return "chaos";
   };
 
-  const familyOf = (id) => {
-    const x = normalize(id);
-    return (x === "rapoo" || x === "atk") ? "rapoo" : "chaos";
+  /**
+   * 将输入安全转换为 number。
+   * 目的：过滤 NaN/非法值，避免协议层接收不可预期数据。
+   *
+   * @param {unknown} v - 待转换的值。
+   * @returns {number|undefined} 合法数值或 undefined。
+   */
+  const toNumber = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
   };
 
-  window.DeviceEnv = { normalize, familyOf };
+  /**
+   * 将输入安全转换为 boolean。
+   * 目的：统一布尔归一化，保持 0/1 与 true/false 的一致映射。
+   *
+   * @param {unknown} raw - 原始值。
+   * @returns {boolean|undefined} 布尔值或 undefined。
+   */
+  const readBool = (raw) => (raw == null ? undefined : !!raw);
 
-  function createAdapter(deviceId) {
-    const id = normalize(deviceId);
-    const cfg = window.AppConfig?.ranges?.[id] || window.AppConfig?.ranges?.chaos;
+  /**
+   * 将输入安全转换为 number（只读）。
+   * 目的：读取回包时过滤无效值，避免 UI 接收 null/undefined。
+   *
+   * @param {unknown} raw - 原始值。
+   * @returns {number|undefined} 合法数值或 undefined。
+   */
+  const readNumber = (raw) => (raw == null ? undefined : toNumber(raw));
 
-    return {
-      id,
-      family: familyOf(id),
+  const rapooTexts = window.AppConfig?.ranges?.rapoo?.texts || {};
+  const atkTexts = window.AppConfig?.ranges?.atk?.texts || {};
 
-      // 纯数据：UI 文案/范围/选项
-      ui: {
-        landingTitle: cfg?.texts?.landingTitle,
-        landingCaption: cfg?.texts?.landingCaption,
-        lod: cfg?.texts?.lod,
-        led: cfg?.texts?.led,
-        perfMode: cfg?.texts?.perfMode,
-        lights: cfg?.texts?.lights,
+  /**
+   * 所有适配器共享的标准 Key 映射。
+   * 目的：稳定语义槽位到固件 Key 的映射，
+   * 支持数组以实现多 Key 回退/兼容。
+   */
+  const KEYMAP_COMMON = {
+    pollingHz: ["pollingHz", "polling_rate", "pollingRateHz", "reportRateHz", "reportHz", "polling"],
+    sleepSeconds: ["sleepSeconds", "sleep_timeout"],
+    debounceMs: ["debounceMs", "debounce_ms"],
+    performanceMode: "performanceMode",
+    motionSync: "motionSync",
+    linearCorrection: "linearCorrection",
+    rippleControl: "rippleControl",
+    sensorAngle: "sensorAngle",
+  };
+
+  /**
+   * 共享的值转换器（单位/语义归一化）。
+   * 目的：统一人类可读单位与协议编码之间的转换，
+   * 协议层常要求字节/位域/枚举，必须集中转换。
+   */
+  const TRANSFORMS_COMMON = {
+    pollingHz: {
+      write: (v) => toNumber(v),
+      read: (raw) => readNumber(raw),
+    },
+    sleepSeconds: {
+      write: (v) => toNumber(v),
+      read: (raw) => readNumber(raw),
+    },
+    debounceMs: {
+      write: (v) => toNumber(v),
+      read: (raw) => readNumber(raw),
+    },
+    motionSync: { write: (v) => !!v, read: readBool },
+    linearCorrection: { write: (v) => !!v, read: readBool },
+    rippleControl: { write: (v) => !!v, read: readBool },
+    sensorAngle: {
+      write: (v) => toNumber(v),
+      read: (raw) => readNumber(raw),
+    },
+  };
+
+
+  /**
+   * 读取表面手感的兼容降级逻辑。
+   * 目的：在字段缺失时通过历史字段推算，保证兼容。
+   *
+   * @param {unknown} raw - 直接读取的原始值。
+   * @param {Object} ctx - 上下文（包含 cfg）。
+   * @returns {number|undefined} 归一化后的等级。
+   */
+  const readSurfaceFeelFallback = (raw, ctx) => {
+    const direct = readNumber(raw);
+    if (direct != null) return direct;
+
+    const mm = toNumber(ctx?.cfg?.opticalEngineHeightMm);
+    if (mm != null) {
+      const level = Math.round(mm * 10) - 6;
+      return clamp(level, 1, 11);
+    }
+
+    const lh = ctx?.cfg?.lodHeight;
+    if (lh != null) {
+      const l = String(lh).toLowerCase();
+      const mmFallback = l === "low" ? 0.7 : (l === "high" ? 1.7 : 1.2);
+      const level = Math.round(mmFallback * 10) - 6;
+      return clamp(level, 1, 11);
+    }
+
+    return undefined;
+  };
+
+  const BaseRapooProfile = {
+    id: "rapoo",
+    ui: {
+      landingTitle: rapooTexts.landingTitle,
+      landingCaption: rapooTexts.landingCaption,
+      lod: rapooTexts.lod,
+      led: rapooTexts.led,
+      perfMode: rapooTexts.perfMode,
+      lights: rapooTexts.lights,
+    },
+    ranges: window.AppConfig?.ranges?.rapoo,
+    keyMap: {
+      ...KEYMAP_COMMON,
+      surfaceModePrimary: "glassMode",
+      surfaceModeSecondary: null,
+      primaryLedFeature: "ledLowBattery",
+      surfaceFeel: "opticalEngineLevel",
+      keyScanningRate: "keyScanningRate",
+      wirelessStrategyMode: "wirelessStrategy",
+      commProtocolMode: "commProtocol",
+    },
+    transforms: {
+      ...TRANSFORMS_COMMON,
+      surfaceModePrimary: { write: (v) => !!v, read: readBool },
+      primaryLedFeature: { write: (v) => !!v, read: readBool },
+      surfaceFeel: { write: (v) => toNumber(v), read: readSurfaceFeelFallback },
+      keyScanningRate: { write: (v) => toNumber(v), read: readNumber },
+      wirelessStrategyMode: {
+        write: (v) => (!!v ? "full" : "smart"),
+        read: (raw) => {
+          if (raw == null) return undefined;
+          if (typeof raw === "string") return raw.toLowerCase() === "full";
+          return !!raw;
+        },
       },
-
-      ranges: cfg,
-    };
-  }
-
-  const adapters = {
-    chaos: createAdapter("chaos"),
-    rapoo: createAdapter("rapoo"),
-    atk: createAdapter("atk"),
+      commProtocolMode: {
+        write: (v) => (!!v ? "initial" : "efficient"),
+        read: (raw) => {
+          if (raw == null) return undefined;
+          if (typeof raw === "string") return raw.toLowerCase() === "initial";
+          return !!raw;
+        },
+      },
+    },
+    features: {
+      hasPrimarySurfaceToggle: true,
+      hasSecondarySurfaceToggle: false,
+      hasPrimaryLedFeature: true,
+      hasMotionSync: true,
+      hasLinearCorrection: true,
+      hasRippleControl: true,
+      hasKeyScanRate: true,
+      hasWirelessStrategy: true,
+      hasCommProtocol: true,
+      hasLongRange: false,
+      hasAtkLights: false,
+      hasDpiColors: false,
+      showHeightViz: true,
+      hideSportPerfMode: false,
+      supportsBatteryRequest: false,
+      batteryPollMs: 120000,
+      batteryPollTag: "2min",
+      enterDelayMs: 0,
+    },
   };
 
-  window.DeviceAdapters = {
-    getAdapter(id) {
-      return adapters[normalize(id)] || adapters.chaos;
+  const AtkProfile = {
+    ...BaseRapooProfile,
+    id: "atk",
+    ui: {
+      ...BaseRapooProfile.ui,
+      landingTitle: atkTexts.landingTitle,
+      landingCaption: atkTexts.landingCaption,
+      lod: atkTexts.lod,
+      led: atkTexts.led,
+      perfMode: atkTexts.perfMode,
+      lights: atkTexts.lights,
+    },
+    ranges: window.AppConfig?.ranges?.atk,
+    keyMap: {
+      ...BaseRapooProfile.keyMap,
+      surfaceModePrimary: null,
+      primaryLedFeature: null,
+      keyScanningRate: null,
+      wirelessStrategyMode: null,
+      commProtocolMode: null,
+      longRangeMode: "longRangeMode",
+      dpiLightEffect: "dpiLightEffect",
+      receiverLightEffect: "receiverLightEffect",
+    },
+    transforms: {
+      ...BaseRapooProfile.transforms,
+      longRangeMode: { write: (v) => !!v, read: readBool },
+      dpiLightEffect: { write: (v) => toNumber(v), read: readNumber },
+      receiverLightEffect: { write: (v) => toNumber(v), read: readNumber },
+    },
+    features: {
+      ...BaseRapooProfile.features,
+      hasPrimarySurfaceToggle: false,
+      hasSecondarySurfaceToggle: false,
+      hasPrimaryLedFeature: false,
+      hasKeyScanRate: false,
+      hasWirelessStrategy: false,
+      hasCommProtocol: false,
+      hasLongRange: true,
+      hasAtkLights: true,
+      hasDpiColors: true,
+      hideSportPerfMode: true,
+      supportsBatteryRequest: true,
+      batteryPollMs: 60000,
+      batteryPollTag: "60s",
+      enterDelayMs: 120,
+    },
+  };
+
+  const ChaosProfile = {
+    id: "chaos",
+    ui: {},
+    ranges: window.AppConfig?.ranges?.chaos,
+    keyMap: {
+      ...KEYMAP_COMMON,
+      surfaceModePrimary: "lodHeight",
+      surfaceModeSecondary: "glassMode",
+      primaryLedFeature: ["ledEnabled", "rgb_switch", "ledRaw"],
+      surfaceFeel: "sensorFeel",
+    },
+    transforms: {
+      ...TRANSFORMS_COMMON,
+      surfaceModePrimary: {
+        write: (v) => (!!v ? "low" : "high"),
+        read: (raw) => {
+          if (raw == null) return undefined;
+          if (typeof raw === "string") return raw.toLowerCase() === "low";
+          return !!raw;
+        },
+      },
+      surfaceModeSecondary: { write: (v) => !!v, read: readBool },
+      primaryLedFeature: { write: (v) => !!v, read: readBool },
+      surfaceFeel: { write: (v) => toNumber(v), read: readNumber },
+      sleepSeconds: {
+        write: (v) => toNumber(v),
+        read: (raw, ctx) => {
+          const direct = readNumber(raw);
+          if (direct != null) return direct;
+          const legacy = toNumber(ctx?.cfg?.sleep16);
+          if (legacy == null) return undefined;
+          const map = window.ProtocolApi?.MOUSE_HID?.sleepCodeToSeconds || {};
+          if (map[String(legacy)] != null) return map[String(legacy)];
+          const values = Object.values(map);
+          if (values.includes(legacy)) return legacy;
+          return legacy;
+        },
+      },
+    },
+    features: {
+      hasPrimarySurfaceToggle: true,
+      hasSecondarySurfaceToggle: true,
+      hasPrimaryLedFeature: true,
+      hasMotionSync: true,
+      hasLinearCorrection: true,
+      hasRippleControl: true,
+      hasKeyScanRate: false,
+      hasWirelessStrategy: false,
+      hasCommProtocol: false,
+      hasLongRange: false,
+      hasAtkLights: false,
+      hasDpiColors: false,
+      showHeightViz: false,
+      hideSportPerfMode: false,
+      supportsBatteryRequest: true,
+      batteryPollMs: 60000,
+      batteryPollTag: "60s",
+      enterDelayMs: 0,
     },
   };
 
   /**
-   * 设备配置写入策略
-   * 保持与 hidApi 和 ProtocolApi 的接口协议兼容
-   * 
-   * 写入规则：
-   * - Chaos 设备：非 modeByte 类键使用 setFeature；modeByte 使用 setBatchFeatures（需提供 base）
-   * - Rapoo 家族：全部使用 setFeature（避免 setBatchFeatures 行为差异）
-   * 
-   * @param {Object} params - 写入参数
-   * @param {Object} params.hidApi - HID API 实例
-   * @param {Object} params.ProtocolApi - 协议 API 对象
-   * @param {Object} params.payload - 要写入的配置对象
-   * @param {string} params.deviceId - 设备 ID
-   * @param {string} params.deviceFamily - 设备家族
-   * @param {Function} params.getLastChaosModeByte - 获取 Chaos 设备最后 modeByte 的函数
-   * @param {Function} params.setLastChaosModeByte - 设置 Chaos 设备 modeByte 的函数
+   * DEVICE_PROFILES 是跨品牌能力复用的继承树。
+   * 目的：通过组合/覆盖复用能力配置，保持 UI 槽位稳定并隔离品牌差异。
    */
-  async function writePatch({
-    hidApi,
-    ProtocolApi,
-    payload,
-    deviceId,
-    deviceFamily,
-    getLastChaosModeByte,
-    setLastChaosModeByte,
-  }) {
+  const DEVICE_PROFILES = {
+    chaos: ChaosProfile,
+    rapoo: BaseRapooProfile,
+    atk: AtkProfile,
+  };
+
+
+  /**
+   * 从设备画像创建运行期适配器。
+   * 目的：提供面向 UI 的只读快照，隔离内部配置结构。
+   *
+   * @param {Object} profile - 设备画像。
+   * @returns {Object} 适配器对象。
+   */
+  function createAdapter(profile) {
+    const cfg = profile?.ranges || window.AppConfig?.ranges?.chaos;
+    return {
+      id: profile.id,
+      ui: profile.ui || {},
+      ranges: cfg,
+      keyMap: profile.keyMap || {},
+      transforms: profile.transforms || {},
+      features: profile.features || {},
+    };
+  }
+
+  const adapters = {
+    chaos: createAdapter(DEVICE_PROFILES.chaos),
+    rapoo: createAdapter(DEVICE_PROFILES.rapoo),
+    atk: createAdapter(DEVICE_PROFILES.atk),
+  };
+
+  window.DeviceAdapters = {
+    /**
+     * 获取指定设备的适配器。
+     * 目的：提供统一适配器入口，避免 UI 直接依赖 profile。
+     *
+     * @param {string} id - 设备标识。
+     * @returns {Object} 适配器实例。
+     */
+    getAdapter(id) {
+      return adapters[normalizeDeviceId(id)] || adapters.chaos;
+    },
+  };
+
+  /**
+   * 规范化 keyMap 的映射值为数组。
+   * 目的：统一单值/多值映射形态，简化写入与读取流程。
+   *
+   * @param {string|string[]|null|undefined} mapVal - 映射值。
+   * @returns {string[]} 规范化后的 key 列表。
+   */
+  const normalizeKeyList = (mapVal) => {
+    if (!mapVal) return [];
+    if (Array.isArray(mapVal)) return mapVal.filter(Boolean);
+    return [mapVal];
+  };
+
+
+  /**
+   * 将标准 Key 的补丁通过适配器写入固件空间。
+   * 目的：将标准写入入口集中化，确保统一转换与审计。
+   *
+   * @param {Object} args
+   * @param {Object} args.hidApi - WebHID 包装器（需提供 setFeature）。
+   * @param {Object} args.adapter - 提供 keyMap/transforms 的适配器。
+   * @param {Object} args.payload - UI 层标准 Key 补丁。
+   * @returns {Promise<void>} 写入完成的 Promise。
+   */
+  async function writePatch({ hidApi, adapter, payload }) {
     if (!payload || typeof payload !== "object") return;
-    if (!hidApi) return;
+    if (!hidApi || typeof hidApi.setFeature !== "function") return;
+    if (!adapter) return;
 
-    // 协议层别名归一化处理
-    try {
-      ProtocolApi?.normalizeKeyAliases?.(payload, [
-        "pollingRate", "polling_rate",
-        "sleepTimeout", "sleep_timeout",
-        "debounceMs", "debounce_ms",
-        "dpi", "dpi1", "dpi2", "dpi3", "dpi4", "dpi5",
-        "ledEnabled", "led_enabled",
-        "sensorAngle", "sensor_angle",
-        "feel", "feelValue",
-        "rippleControl", "ripple_control",
-        "glassMode", "glass_mode",
-        "modeByte", "mode_byte",
-        "performanceMode", "performance_mode",
-        "lodHeight", "lod_height",
-        "motionSync", "motion_sync",
-        "linearCorrection", "linear_correction",
-      ]);
-    } catch (e) {
-      // ignore
+    const mapped = {};
+    for (const [stdKey, v] of Object.entries(payload)) {
+      const keys = normalizeKeyList(adapter?.keyMap?.[stdKey]);
+      if (!keys.length) continue;
+      const transformer = adapter?.transforms?.[stdKey];
+      const outVal = transformer?.write ? transformer.write(v, { payload, adapter }) : v;
+      if (outVal === undefined) continue;
+      mapped[keys[0]] = outVal;
     }
 
-    if (deviceFamily === "rapoo") {
-      if (typeof hidApi.setFeature !== "function") return;
-      for (const [k, v] of Object.entries(payload)) {
-        await hidApi.setFeature(k, v);
-      }
-      return;
-    }
-
-    // Chaos 写入策略：将 modeByte 相关键与其他键分离
-    const modeKeys = new Set([
-      // modeByte 本身
-      "modeByte",
-      "mode_byte",
-
-      // 性能模式位（bit4/5/7）
-      "performanceMode",
-      "performance_mode",
-
-      // LOD 位（bit0）
-      "lodHeight",
-      "lod",
-      "lod_height",
-
-      // 功能开关位（bit1/2/3）
-      "motionSync",
-      "motion_sync",
-      "linearCorrection",
-      "linear_correction",
-      "rippleControl",
-      "ripple_control",
-
-      // 玻璃模式位（bit6）
-      "glassMode",
-      "glass_mode",
-    ]);
-
-    const modePatch = {};
-    const otherPatch = {};
-    for (const [k, v] of Object.entries(payload)) {
-      if (modeKeys.has(k)) modePatch[k] = v;
-      else otherPatch[k] = v;
-    }
-
-    // 步骤 1：先写入其他键（避免批量写入覆盖某些特性）
-    if (typeof hidApi.setFeature === "function") {
-      for (const [k, v] of Object.entries(otherPatch)) {
-        await hidApi.setFeature(k, v);
-      }
-    }
-
-    // 步骤 2：再写入 modeByte 相关键（需提供 base，避免刷新或误操作导致开关状态错误）
-    if (Object.keys(modePatch).length && typeof hidApi.setBatchFeatures === "function") {
-      const base = (typeof getLastChaosModeByte === "function") ? getLastChaosModeByte() : null;
-      if (base != null && !("modeByte" in modePatch) && !("mode_byte" in modePatch)) {
-        modePatch.modeByte = base;
-      }
-
-      await hidApi.setBatchFeatures(modePatch);
-
-      // 更新 base 值，确保连续操作多个开关时状态一致
-      try {
-        const nextMb = ProtocolApi?.encodeModeByteFromState?.(modePatch);
-        const n = Number(nextMb);
-        if (!Number.isNaN(n) && typeof setLastChaosModeByte === "function") {
-          setLastChaosModeByte(n);
-        }
-      } catch (e) {
-        // 忽略编码错误
-      }
+    for (const [k, v] of Object.entries(mapped)) {
+      await hidApi.setFeature(k, v);
     }
   }
 
   window.DeviceWriter = { writePatch };
 })();
 
-/**
- * UI 变体层（Decoupling）
- * - 仅做“UI配置/DOM 映射/可见性/文案/范围”
- * - 不进行任何 hid 写入，不依赖业务逻辑状态
- */
+
+// ============================================================
+// 3) DeviceUI：语义槽位 -> 视图变体
+// ============================================================
 (function () {
   const { buildSelectOptions } = window.AppConfig?.utils || {};
 
   /**
-   * 缓存元素的原始 HTML 内容
-   * @param {HTMLElement} el - 目标元素
-   * @param {string} key - 缓存键名
+   * 缓存元素原始 innerHTML。
+   * 目的：保留初始模板以支持可逆切换。
+   *
+   * @param {HTMLElement|null} el - 目标元素。
+   * @param {string} key - 缓存键。
+   * @returns {void} 无返回值。
    */
   function cacheInnerHtml(el, key) {
     if (!el) return;
@@ -338,9 +575,12 @@
   }
 
   /**
-   * 恢复元素的原始 HTML 内容
-   * @param {HTMLElement} el - 目标元素
-   * @param {string} key - 缓存键名
+   * 恢复元素原始 innerHTML。
+   * 目的：恢复初始模板，避免多次切换造成 DOM 污染。
+   *
+   * @param {HTMLElement|null} el - 目标元素。
+   * @param {string} key - 缓存键。
+   * @returns {void} 无返回值。
    */
   function restoreInnerHtml(el, key) {
     if (!el) return;
@@ -349,10 +589,13 @@
   }
 
   /**
-   * 应用下拉框选项
-   * @param {HTMLSelectElement} selectEl - 下拉框元素
-   * @param {number[]} values - 选项值数组
-   * @param {Function} labelFn - 标签生成函数
+   * 将数值列表应用到 select 元素。
+   * 目的：统一选项渲染出口，避免配置分散。
+   *
+   * @param {HTMLSelectElement|null} selectEl - 下拉框。
+   * @param {Array<number|string>} values - 值列表。
+   * @param {(value: number|string) => string} labelFn - 文案生成函数。
+   * @returns {void} 无返回值。
    */
   function applySelectOptions(selectEl, values, labelFn) {
     if (!selectEl || !Array.isArray(values)) return;
@@ -360,16 +603,20 @@
   }
 
   /**
-   * 自动设置滑块轨道间隔
-   * 根据最大值、最小值和步进自动计算刻度密度，确保视觉上不拥挤
-   * 
-   * @param {HTMLElement} root - 根元素容器
+   * 安装滑轨刻度的自动对齐逻辑。
+   * 目的：按范围/步长设置刻度节奏，保证可读性与反馈一致。
+   *
+   * @param {Document|HTMLElement} root - 作用域根节点。
+   * @returns {void} 无返回值。
    */
   function installAutoTrackInterval(root) {
     /**
-     * 更新单个滑块的轨道间隔
-     * @param {HTMLInputElement} input - 滑块输入元素
-     * @param {HTMLElement} customTrack - 自定义轨道元素
+     * 计算并写入滑轨刻度间距。
+     * 目的：控制刻度密度，平衡性能与可读性。
+     *
+     * @param {HTMLInputElement} input - range 输入。
+     * @param {HTMLElement} customTrack - 轨道元素。
+     * @returns {void} 无返回值。
      */
     const updateTrackInterval = (input, customTrack) => {
       if (!input || !customTrack) return;
@@ -379,7 +626,6 @@
       const range = max - min;
       if (range <= 0) return;
 
-      // 根据步进计算密度：如果总步数过多，则倍增步进直到视觉上不拥挤（限制在约 20 个刻度内）
       let effectiveStep = step;
       let count = range / effectiveStep;
 
@@ -387,10 +633,9 @@
         effectiveStep *= 2;
         count = range / effectiveStep;
       }
-      
+
       if (count < 1) count = 1;
 
-      // 转换为百分比并设置 CSS 变量
       const interval = (effectiveStep / range) * 100;
       customTrack.style.setProperty("--track-interval", `${interval}%`);
     };
@@ -407,38 +652,41 @@
   }
 
   /**
-   * 应用设备 UI 变体
-   * 根据设备类型调整 UI 配置、文案、范围和可见性
-   * 
-   * @param {Object} params - 变体参数
-   * @param {string} params.deviceId - 设备 ID
-   * @param {string} params.family - 设备家族
-   * @param {Object} params.adapter - 设备适配器对象
-   * @param {HTMLElement} params.root - 根元素容器
+   * 按语义槽位与能力开关应用 UI 变体。
+   * 目的：以能力标记驱动 UI 变体，避免设备分支进入 UI。
+   *
+   * @param {Object} args
+   * @param {string} args.deviceId - 规范化设备 ID。
+   * @param {Object} args.adapter - 适配器（包含 UI/feature 配置）。
+   * @param {Document|HTMLElement} args.root - DOM 根节点。
+   * @returns {void} 无返回值。
    */
-  function applyVariant({ deviceId, family, adapter, root }) {
+  function applyVariant({ deviceId, adapter, root }) {
     const doc = root || document;
     const cfg = adapter?.ranges || window.AppConfig?.ranges?.chaos;
+    const ui = adapter?.ui || {};
+    const features = adapter?.features || {};
 
-    // 起始页标题和提示文案
     const landingLayer = doc.getElementById("landing-layer");
     const landingCaption = landingLayer?.querySelector(".caption");
     const verticalTitle = landingLayer?.querySelector(".vertical-title");
-    if (verticalTitle && adapter?.ui?.landingTitle) verticalTitle.textContent = adapter.ui.landingTitle;
-    if (landingCaption && adapter?.ui?.landingCaption) landingCaption.textContent = adapter.ui.landingCaption;
+    if (verticalTitle && ui?.landingTitle) verticalTitle.textContent = ui.landingTitle;
+    if (landingCaption && ui?.landingCaption) landingCaption.textContent = ui.landingCaption;
 
-    // 基础性能页：回报率下拉框（缓存原始内容）
     const pollingSelect = doc.getElementById("pollingSelect");
     if (pollingSelect) cacheInnerHtml(pollingSelect, "pollingSelect");
+    if (pollingSelect && cfg?.polling?.basicHz) {
+      applySelectOptions(pollingSelect, cfg.polling.basicHz, (hz) => (hz >= 1000 ? `${hz / 1000}k` : String(hz)));
+    } else if (pollingSelect) {
+      restoreInnerHtml(pollingSelect, "pollingSelect");
+    }
 
-      // 高级面板：传感器手感（Chaos）或光学引擎高度（Rapoo 家族）
-      const feelInput = doc.getElementById("feelInput");
+    const feelInput = doc.getElementById("feelInput");
     const feelDisp = doc.getElementById("feel_disp");
     const feelCard = feelInput?.closest(".slider-card");
     const feelName = feelCard?.querySelector(".slider-name");
     const feelSub = feelCard?.querySelector(".slider-sub");
 
-    // 缓存 Feel 滑块原始文案和范围，避免设备切换时互相污染
     if (feelInput && !feelInput.dataset.__orig_min) {
       feelInput.dataset.__orig_min = String(feelInput.min ?? "");
       feelInput.dataset.__orig_max = String(feelInput.max ?? "");
@@ -450,9 +698,15 @@
       feelDisp.dataset.__orig_unit = String(feelDisp.dataset.unit ?? "");
     }
 
-    // 引擎高度可视化：Rapoo 家族显示，Chaos 设备隐藏（Chaos 使用传感器手感）
     const heightBlock = doc.getElementById("heightBlock");
     const heightVizWrap = heightBlock?.closest?.(".height-viz") || heightBlock?.parentElement || null;
+    /**
+     * 切换高度可视化模块显示状态。
+     * 目的：按能力显示/隐藏高度可视化，避免无效提示。
+     *
+     * @param {boolean} visible - 是否显示。
+     * @returns {void} 无返回值。
+     */
     const __setHeightVizVisible = (visible) => {
       const target = (heightVizWrap && heightVizWrap !== feelCard) ? heightVizWrap : heightBlock;
       if (!target) return;
@@ -460,20 +714,18 @@
       target.style.display = visible ? (target.dataset.__orig_display || "") : "none";
     };
 
-    // 高级面板：LOD 开关（bitLOD）
     const lodInput = doc.getElementById("bitLOD");
     const lodItem = lodInput?.closest("label.advShutterItem");
     const lodCode = lodItem?.querySelector(".label-code");
     const lodTitle = lodItem?.querySelector(".label-title");
     const lodDesc = lodItem?.querySelector(".label-desc");
+    const ledItem = doc.getElementById("ledToggle")?.closest(".advShutterItem");
 
-    // 高级面板：bit6 项（Chaos 设备使用，Rapoo 家族隐藏）
     const b6 = doc.getElementById("bit6");
     const b6Item = b6?.closest("label.advShutterItem");
 
     const rapooPollingCycle = doc.getElementById("rapooPollingCycle");
 
-    // 休眠和防抖下拉框（隐藏控件，由滑块同步）
     const sleepSel = doc.getElementById("sleepSelect");
     const sleepInput = doc.getElementById("sleepInput");
     const debounceSel = doc.getElementById("debounceSelect");
@@ -482,169 +734,113 @@
     if (sleepSel) cacheInnerHtml(sleepSel, "sleepSelect");
     if (debounceSel) cacheInnerHtml(debounceSel, "debounceSelect");
 
-    if (family === "rapoo") {
-      __setHeightVizVisible(true);
-      // 基础性能页：回报率选项
-      if (pollingSelect && cfg?.polling?.basicHz) {
-        applySelectOptions(pollingSelect, cfg.polling.basicHz, (hz) => (hz >= 1000 ? `${hz/1000}k` : String(hz)));
-      }
-
-      // 高级面板：手感滑块（Rapoo 家族显示为"引擎高度"）
-      const feelCfg = cfg?.sensor?.feel;
-      if (feelInput && feelCfg) {
-        feelInput.min = String(feelCfg.min);
-        feelInput.max = String(feelCfg.max);
-        feelInput.step = String(feelCfg.step || 1);
-        if (feelName) feelName.textContent = feelCfg.name || "引擎高度";
-        if (feelSub) feelSub.textContent = feelCfg.sub || "";
-        if (feelDisp) feelDisp.dataset.unit = feelCfg.unit || "";
-      }
-
-      // LOD 开关文案
-      if (adapter?.ui?.lod) {
-        if (lodCode) lodCode.textContent = adapter.ui.lod.code || "";
-        if (lodTitle) lodTitle.textContent = adapter.ui.lod.title || "";
-        if (lodDesc) lodDesc.textContent = adapter.ui.lod.desc || "";
-      }
-
-      // 隐藏 Chaos 的 bit6 项，显示 Rapoo 轮询循环按钮
-      if (b6Item) b6Item.style.display = "none";
-      if (rapooPollingCycle) rapooPollingCycle.style.display = "block";
-
-      // Power: sleep
-      const sleepSeconds = cfg?.power?.sleepSeconds;
-      if (sleepSel && Array.isArray(sleepSeconds)) {
-        // 智能显示单位：小于 60 秒显示 s，否则显示 m
-        applySelectOptions(sleepSel, sleepSeconds, (sec) => {
-            return sec < 60 ? `${sec}s` : `${Math.round(sec / 60)}m`;
-        });
-
-        if (sleepInput) {
-          sleepInput.min = "0";
-          sleepInput.max = String(Math.max(0, sleepSeconds.length - 1));
-          sleepInput.step = "1";
-        }
-        // 更新休眠范围描述文案
-        const sleepCard = sleepInput?.closest(".slider-card");
-        const sub = sleepCard?.querySelector(".slider-sub");
-        if (sub) {
-            const minS = sleepSeconds[0];
-            const maxS = sleepSeconds[sleepSeconds.length-1];
-            const minT = minS < 60 ? `${minS}s` : `${minS/60}min`;
-            const maxT = maxS < 60 ? `${maxS}s` : `${maxS/60}min`;
-            sub.textContent = `范围 ${minT} - ${maxT}`;
-        }
-      }
-
-      // Power: debounce
-      const debounceMs = cfg?.power?.debounceMs;
-      if (debounceSel && Array.isArray(debounceMs)) {
-        applySelectOptions(debounceSel, debounceMs, (ms) => String(ms));
-        if (debounceInput) {
-             debounceInput.min = "0";
-             debounceInput.max = String(Math.max(0, debounceMs.length - 1));
-             debounceInput.step = "1";
-        }
-        // 更新防抖范围描述文案
-        const debCard = debounceInput?.closest(".slider-card");
-        const sub = debCard?.querySelector(".slider-sub");
-        if (sub && debounceMs.length > 0) {
-            sub.textContent = `范围 ${debounceMs[0]}ms - ${debounceMs[debounceMs.length-1]}ms`;
-        }
-      }
-
-      // 传感器角度范围
-      const angleCfg = cfg?.sensor?.angleDeg;
-      const angleInput = doc.getElementById("angleInput");
-      if (angleInput && angleCfg) {
-        angleInput.min = String(angleCfg.min);
-        angleInput.max = String(angleCfg.max);
-        if (angleCfg.step != null) angleInput.step = String(angleCfg.step);
-        const angleCard = angleInput.closest(".slider-card");
-        const angleSub = angleCard?.querySelector(".slider-sub");
-        if (angleSub && angleCfg.hint) angleSub.textContent = angleCfg.hint;
-      }
-
-      // LED 开关文案
-      if (adapter?.ui?.led) {
-        const ledItem = doc.getElementById("ledToggle")?.closest(".advShutterItem");
-        if (ledItem) {
-          const title = ledItem.querySelector(".label-title");
-          const desc = ledItem.querySelector(".label-desc");
-          const code = ledItem.querySelector(".label-code");
-          if (title) title.textContent = adapter.ui.led.title || "";
-          if (desc) desc.textContent = adapter.ui.led.desc || "";
-          if (code) code.textContent = adapter.ui.led.code || "";
-        }
-      }
-
-      // ATK 设备专属显隐逻辑
-      const isAtk = (deviceId === 'atk');
-      
-      // 获取需要控制显隐的元素
-      const lodItem = doc.getElementById("bitLOD")?.closest(".advShutterItem");
-      const ledItem = doc.getElementById("ledToggle")?.closest(".advShutterItem");
-      
-      const atkDpiLight = doc.getElementById("atkDpiLightCycle");
-      const atkRxLight = doc.getElementById("atkReceiverLightCycle");
-      const atkLongRange = doc.getElementById("atkLongRangeModeItem");
-
-      if (isAtk) {
-          // ATK: 隐藏不兼容的功能
-          if (rapooPollingCycle) rapooPollingCycle.style.display = "none";
-          if (lodItem) lodItem.style.display = "none";
-          if (ledItem) ledItem.style.display = "none";
-
-          // ATK: 显示专属功能
-          if (atkDpiLight) atkDpiLight.style.display = "block";
-          if (atkRxLight) atkRxLight.style.display = "block";
-          if (atkLongRange) atkLongRange.style.display = "block";
-          
-          // ATK: 隐藏 Basic 页面的 Sport 模式
-          const sportItem = doc.querySelector('.basicItem[data-perf="sport"]');
-          if (sportItem) sportItem.style.display = 'none';
-
-      } else {
-          // Rapoo: 恢复默认显示
-          if (rapooPollingCycle) rapooPollingCycle.style.display = "block";
-          if (lodItem) lodItem.style.display = "block";
-          if (ledItem) ledItem.style.display = "block";
-
-          // Rapoo: 隐藏 ATK 专属功能
-          if (atkDpiLight) atkDpiLight.style.display = "none";
-          if (atkRxLight) atkRxLight.style.display = "none";
-          if (atkLongRange) atkLongRange.style.display = "none";
-          
-          // Rapoo: 恢复 Sport 模式
-          const sportItem = doc.querySelector('.basicItem[data-perf="sport"]');
-          if (sportItem) sportItem.style.display = '';
-      }
-
-    } else {
-      // Chaos：恢复被 Rapoo 家族修改过的内容，确保设备切换时状态正确
-
-      // Feel 滑块：恢复原始文案和范围，避免从 Rapoo 家族切回时残留"引擎高度"配置
-      if (feelInput && feelInput.dataset.__orig_min != null) {
-        feelInput.min = feelInput.dataset.__orig_min;
-        feelInput.max = feelInput.dataset.__orig_max;
-        if (feelInput.dataset.__orig_step != null) feelInput.step = feelInput.dataset.__orig_step;
-      }
+    const feelCfg = cfg?.sensor?.feel;
+    if (feelInput && feelCfg) {
+      feelInput.min = String(feelCfg.min);
+      feelInput.max = String(feelCfg.max);
+      feelInput.step = String(feelCfg.step || 1);
+      if (feelName) feelName.textContent = feelCfg.name || "";
+      if (feelSub) feelSub.textContent = feelCfg.sub || "";
+      if (feelDisp) feelDisp.dataset.unit = feelCfg.unit || "";
+    } else if (feelInput && feelInput.dataset.__orig_min != null) {
+      feelInput.min = feelInput.dataset.__orig_min;
+      feelInput.max = feelInput.dataset.__orig_max;
+      if (feelInput.dataset.__orig_step != null) feelInput.step = feelInput.dataset.__orig_step;
       if (feelName && feelName.dataset.__orig_text != null) feelName.textContent = feelName.dataset.__orig_text;
       if (feelSub && feelSub.dataset.__orig_text != null) feelSub.textContent = feelSub.dataset.__orig_text;
       if (feelDisp && feelDisp.dataset.__orig_unit != null) feelDisp.dataset.unit = feelDisp.dataset.__orig_unit;
+    }
 
-      // Chaos 设备不显示"引擎高度可视化"组件（Chaos 使用传感器手感）
-      __setHeightVizVisible(false);
+    __setHeightVizVisible(!!features.showHeightViz);
 
-      if (pollingSelect) restoreInnerHtml(pollingSelect, "pollingSelect");
-      if (b6Item) b6Item.style.display = "";
-      if (rapooPollingCycle) rapooPollingCycle.style.display = "none";
+    if (ui?.lod) {
+      if (lodCode) lodCode.textContent = ui.lod.code || "";
+      if (lodTitle) lodTitle.textContent = ui.lod.title || "";
+      if (lodDesc) lodDesc.textContent = ui.lod.desc || "";
+    }
 
-      if (sleepSel) restoreInnerHtml(sleepSel, "sleepSelect");
-      if (debounceSel) restoreInnerHtml(debounceSel, "debounceSelect");
-      
-      const sportItem = doc.querySelector('.basicItem[data-perf="sport"]');
-      if (sportItem) sportItem.style.display = '';
+    if (ui?.led) {
+      if (ledItem) {
+        const title = ledItem.querySelector(".label-title");
+        const desc = ledItem.querySelector(".label-desc");
+        const code = ledItem.querySelector(".label-code");
+        if (title) title.textContent = ui.led.title || "";
+        if (desc) desc.textContent = ui.led.desc || "";
+        if (code) code.textContent = ui.led.code || "";
+      }
+    }
+
+    if (lodItem) lodItem.style.display = features.hasPrimarySurfaceToggle ? "" : "none";
+    if (ledItem) ledItem.style.display = features.hasPrimaryLedFeature ? "" : "none";
+    if (b6Item) b6Item.style.display = features.hasSecondarySurfaceToggle ? "" : "none";
+    if (rapooPollingCycle) rapooPollingCycle.style.display = features.hasKeyScanRate ? "block" : "none";
+
+    const rapooSwitches = doc.getElementById("basicRapooSwitches");
+    if (rapooSwitches) {
+      rapooSwitches.style.display = (features.hasWirelessStrategy || features.hasCommProtocol) ? "" : "none";
+    }
+
+    const atkDpiLight = doc.getElementById("atkDpiLightCycle");
+    const atkRxLight = doc.getElementById("atkReceiverLightCycle");
+    const atkLongRange = doc.getElementById("atkLongRangeModeItem");
+
+    if (atkDpiLight) atkDpiLight.style.display = features.hasAtkLights ? "block" : "none";
+    if (atkRxLight) atkRxLight.style.display = features.hasAtkLights ? "block" : "none";
+    if (atkLongRange) atkLongRange.style.display = features.hasLongRange ? "block" : "none";
+
+    const sportItem = doc.querySelector('.basicItem[data-perf="sport"]');
+    if (sportItem) sportItem.style.display = features.hideSportPerfMode ? "none" : "";
+
+    const sleepSeconds = cfg?.power?.sleepSeconds;
+    if (sleepSel && Array.isArray(sleepSeconds)) {
+      applySelectOptions(sleepSel, sleepSeconds, (sec) => {
+        return sec < 60 ? `${sec}s` : `${Math.round(sec / 60)}m`;
+      });
+
+      if (sleepInput) {
+        sleepInput.min = "0";
+        sleepInput.max = String(Math.max(0, sleepSeconds.length - 1));
+        sleepInput.step = "1";
+      }
+      const sleepCard = sleepInput?.closest(".slider-card");
+      const sub = sleepCard?.querySelector(".slider-sub");
+      if (sub) {
+        const minS = sleepSeconds[0];
+        const maxS = sleepSeconds[sleepSeconds.length - 1];
+        const minT = minS < 60 ? `${minS}s` : `${minS / 60}min`;
+        const maxT = maxS < 60 ? `${maxS}s` : `${maxS / 60}min`;
+        sub.textContent = `范围：${minT} - ${maxT}`;
+      }
+    } else if (sleepSel) {
+      restoreInnerHtml(sleepSel, "sleepSelect");
+    }
+
+    const debounceMs = cfg?.power?.debounceMs;
+    if (debounceSel && Array.isArray(debounceMs)) {
+      applySelectOptions(debounceSel, debounceMs, (ms) => String(ms));
+      if (debounceInput) {
+        debounceInput.min = "0";
+        debounceInput.max = String(Math.max(0, debounceMs.length - 1));
+        debounceInput.step = "1";
+      }
+      const debCard = debounceInput?.closest(".slider-card");
+      const sub = debCard?.querySelector(".slider-sub");
+      if (sub && debounceMs.length > 0) {
+        sub.textContent = `范围：${debounceMs[0]}ms - ${debounceMs[debounceMs.length - 1]}ms`;
+      }
+    } else if (debounceSel) {
+      restoreInnerHtml(debounceSel, "debounceSelect");
+    }
+
+    const angleCfg = cfg?.sensor?.angleDeg;
+    const angleInput = doc.getElementById("angleInput");
+    if (angleInput && angleCfg) {
+      angleInput.min = String(angleCfg.min);
+      angleInput.max = String(angleCfg.max);
+      if (angleCfg.step != null) angleInput.step = String(angleCfg.step);
+      const angleCard = angleInput.closest(".slider-card");
+      const angleSub = angleCard?.querySelector(".slider-sub");
+      if (angleSub && angleCfg.hint) angleSub.textContent = angleCfg.hint;
     }
 
     installAutoTrackInterval(doc);
