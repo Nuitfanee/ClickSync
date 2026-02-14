@@ -3,320 +3,331 @@
 ![WebHID](https://img.shields.io/badge/WebHID-enabled-blue)
 ![JavaScript](https://img.shields.io/badge/JavaScript-vanilla-yellow)
 
-> Click Sync 是一个基于 Web HID API 的鼠标网页驱动，旨在构建一个 **ALL IN ONE** 的鼠标网页驱动解决方案，支持多种品牌的鼠标设备。无需安装任何驱动或软件，直接在浏览器中完成鼠标的所有配置。
+Click Sync 是一个基于 WebHID 的多品牌鼠标网页驱动与调试工作台，当前代码已完成运行时与适配层重构。  
+Click Sync is a WebHID-based browser workbench for cross-brand mouse configuration, with a refactored runtime and adapter architecture.
 
-## 🔗 体验链接
-- 🌐 **网站**:  (https://nuitfanee.github.io/ClickSync.github.io/) 
-- 🌐 **Beta网站**:  (https://xn--i8s54d9wak75j.xyz/)
+当前实现覆盖品牌：`Logitech`、`Rapoo`、`ATK`、`Chaos`。  
+Currently implemented brands: `Logitech`, `Rapoo`, `ATK`, `Chaos`.
 
-![Click Sync UI](UI/UI1.png)
-![Click Sync UI](UI/UI2.png)
-![Click Sync UI](UI/UI4.png)
-![Click Sync UI](UI/UI3.png)
+<a id="toc"></a>
+## 目录 / Table of Contents
 
----
+1. [背景 / Background](#background)
+2. [重构更新要点 / What Changed](#what-changed)
+3. [支持设备 / Supported Devices](#supported-devices)
+4. [功能矩阵 / Feature Matrix](#feature-matrix)
+5. [快速开始 / Quick Start](#quick-start)
+6. [使用流程 / Usage Flow](#usage-flow)
+7. [架构说明 / Architecture](#architecture)
+8. [公开接口契约 / Public API Contracts](#public-api-contracts)
+9. [WebHID Workbench / WebHID Workbench](#webhid-workbench)
+10. [常见问题 / FAQ](#faq)
+11. [资源与链接 / Resources & Links](#resources)
+12. [开源协议 / License](#license)
+13. [贡献 / Contributing](#contributing)
 
-## 目录
+<a id="background"></a>
+## 背景 / Background
 
-- [背景](#背景)
-- [功能特性](#功能特性)
-- [UI 设计风格](#ui-设计风格)
-- [支持的设备](#支持的设备)
-- [浏览器要求](#浏览器要求)
-- [快速开始](#快速开始)
-- [用法](#用法)
-- [项目结构](#项目结构)
-- [架构说明（面向开发者）](#架构说明面向开发者)
-- [开发调试工具：WebHID Workbench](#开发调试工具webhid-workbench)
-- [常见问题](#常见问题)
-- [贡献](#贡献)
-- [主要维护者](#主要维护者)
-- [开源协议](#开源协议)
+本项目是纯前端静态工程（`index.html` + 脚本文件），核心目标是把不同品牌/协议差异抽象到统一语义层，让 UI 以统一方式完成连接、读取、写入和测试。  
+This is a static frontend project (`index.html` + scripts). The goal is to hide protocol differences behind a unified semantic layer so the UI can connect/read/write/test consistently.
 
----
+沿用旧版 README 的定位：这是一个 `ALL IN ONE` 的鼠标网页驱动方案。  
+Keeping the original README positioning: this is an `ALL IN ONE` browser mouse-driver solution.
 
-## 背景
+旧版 README 的核心能力描述在当前代码中仍成立：
 
-你是否也遇到过这样的烦恼？不同品牌的鼠标，要去记不同的官网、找不同的驱动网页——雷柏一个、ATK一个、迈从又一个……记不住，找起来也麻烦。
-Click Sync 就是为解决这个问题而生。它是一个全品牌通用的网页版鼠标配置中心，让你只需记住一个网址，就能在浏览器中直接管理多个品牌的鼠标设置。无需安装任何驱动或软件，打开即用，全面支持按键映射、DPI、灯光、高级参数设置等功能。
-用一个工具，统一所有鼠标。
+- WebHID 设备连接与自动识别
+- 参数配置：按键映射、DPI、回报率、品牌高级参数
+- 测试工具：双击检测、轮询率检测、灵敏度匹配、角度校准
+- 页面主模块：`keys`、`dpi`、`basic`、`advanced`、`testtools`
 
-项目目标：
+<a id="what-changed"></a>
+## 重构更新要点 / What Changed
 
-- **即开即用**：打开网页即可连接设备并配置（需在安全上下文 `https` / `localhost` 下使用）。
-- **多设备类型适配**：按设备类型动态加载对应协议脚本，并通过适配器层统一 UI 与能力范围。
-- **配置 + 测试一体**：除常规配置外，内置双击检测、轮询率检测、灵敏度匹配、角度校准等工具页。
+- 运行时识别改为注册表驱动：`device_runtime.js` 通过 `VID + usagePage/usage` 识别设备，并按当前选择动态加载 `protocol_api_*.js`。
+- 适配层统一：`refactor.js` 提供 `window.DeviceAdapters`、`window.DeviceWriter.writePatch`、`window.DeviceReader`，将“标准语义 key”映射到协议层。
+- 写入链路重构：`app.js` 使用 `enqueueDevicePatch()` 做 patch 合并与防抖写入，写入前必须通过首轮配置同步门禁（`__writesEnabled`）。
+- 写入回显一致性：`app.js` 引入 write-intent 机制（`readStandardValueWithIntent`），避免 UI 在回包延迟阶段闪回旧值。
+- 连接握手优化：`connectHid()` 中先挂一次性 `onConfig` 监听，再发 `requestConfig`，降低丢包窗口。
+- Logitech 专属高级能力已接入：配置槽、双回报率（有线/无线）、板载内存、Lightforce、Surface、BHOP、DPI LOD 等。
+- Logitech keymap 机型变体图已接入：`image/GPW.png` 与 `image/GPW_DEX.png`。
+- 本次 README 更新仅是文档重写，不改变运行时代码接口。  
+  This README update is documentation-only and does not change runtime APIs.
 
-> 说明：WebHID 通常仅在桌面端 Chromium 系浏览器可用；移动端与部分浏览器可能不支持。
+<a id="supported-devices"></a>
+## 支持设备 / Supported Devices
 
----
+### 运行时识别矩阵 / Runtime Detection Matrix
 
-## 功能特性
+以下为 `device_runtime.js` 的设备识别规则（运行时层，不等于协议层完整兼容列表）：
 
-### 核心配置
+| 品牌 / Brand | 运行时识别规则（VID/Usage） / Runtime Fingerprint | 代码位置 / Source |
+|---|---|---|
+| Rapoo | `vendorId 0x24AE` + `usagePage 0xFF00` + `usage 14/15` | `device_runtime.js` |
+| ATK | `vendorId 0x373B` + `usagePage 0xFF02` + `usage 0x0002` | `device_runtime.js` |
+| Chaos | `vendorId 0x1915` + `usagePage 65290 (0xFF0A)` 或 `65280 (0xFF00)` | `device_runtime.js` |
+| Logitech | `vendorId 0x046D` + `usagePage 0xFF00`，`usage 0x01/0x02`（含无 usage 宽松分支） | `device_runtime.js` |
 
-- **按键映射**：自定义鼠标按键功能映射（按键 → 动作/键值）。
-- **DPI 设置**：支持 1–6 档 DPI；可调整档位数量与每档数值。
-- **基础性能**
-  - 回报率（Polling Rate）：125 / 250 / 500 / 1000 / 2000 / 4000 / 8000 Hz（不同设备/固件可能限制可选项）
-  - 性能模式：低功耗 / 标准 / 竞技 / 超频（具体文案与可用项可由设备适配器覆盖）
-- **高级参数**（随设备/固件差异，UI 会自动裁剪不可用项）
-  - 电源管理：休眠时间、按键防抖
-  - 传感器调校：角度修正、手感/高度类参数（部分设备以“引擎高度”等方式呈现）
-  - 功能开关：Motion Sync、直线修正（Linear/Angle Correction）、纹波抑制（Ripple Control）、玻璃模式（Glass Mode）等
-  - 指示灯：DPI/接收器灯效（部分设备提供专属灯效设置）
-  - LOD：抬起静默高度（Low/High）
+### 协议层已知机型/白名单 / Protocol-Level Known Models
 
-> 注：本项目以“语义配置项”组织功能，最终由协议层转换为设备寄存器/报文写入；README 中列举的高级项以代码中已实现的字段为准。
+以下为协议文件中的明确过滤范围或已知 PID 族：
 
-### 测试与校准工具
+| 品牌 / Brand | 协议范围 / Protocol Scope | 说明 / Notes |
+|---|---|---|
+| Chaos | `protocol_api_chaos.js` 明确列出 `M1/M1 PRO/M2 PRO/M3 PRO` 的有线、无线 1K、无线 8K PID 族 | 例如 `0x521c/0x520c/0x520b` 到 `0x551c/0x550c/0x550b` |
+| Logitech | `protocol_api_logitech.js` 当前 `defaultFilters` 指向 `productId 0xC54D`（含 usage `0x01/0x02` 与兜底） | 运行时可识别更宽 Logitech 设备，但协议兼容取决于 HID++ 特性布局 |
+| Rapoo | `protocol_api_rapoo.js` 使用 `vendorId 0x24AE` + `usagePage 0xFF00`（含 usage `14/2` 与兜底） | 与运行时过滤存在“识别更宽/更窄”差异，属正常分层设计 |
+| ATK | `protocol_api_atk.js` 使用 `vendorId 0x373B` + `usagePage 0xFF02` + `usage 0x0002` | 与运行时一致 |
 
-- **双击检测**：统计按下/抬起次数与时间间隔，用于诊断按键抖动/双击问题。
-- **轮询率检测**：实时显示回报率相关指标，验证设备与链路表现。
-- **灵敏度匹配**：帮助在不同鼠标之间对齐相同移动灵敏度，便于无缝切换。
-- **角度校准**：用于轨迹拟合/角度锁定相关测试与校准。
+### 兼容性说明 / Compatibility Note
 
----
+- 同品牌不代表所有型号、所有固件版本都完全等价。  
+- 运行时“能识别”不等于协议层“全能力可写”。  
+- 真实可用能力以 `refactor.js` 的 adapter `features` 与设备回包为准。  
+- Same brand does not imply full equivalence across all models/firmware. Runtime detection and protocol capability are intentionally separated.
 
-## UI 设计风格
+<a id="feature-matrix"></a>
+## 功能矩阵 / Feature Matrix
 
-本项目 UI 采用 **Neo‑Brutalism（新野兽主义）** 设计语言，面向“硬件调试工具”场景强调清晰、强对比与可操作性。
+以下矩阵基于 `refactor.js` 中各品牌 adapter 的 `features/ranges/keyMap/transforms/actions`。
 
-- **High Contrast**：纯白/深黑为基色，高饱和电光紫/蓝作为强调色。
-- **Hard Shadows**：厚重实体投影强化模块边界与“可点击”的物理感。
-- **Grid Layout**：隐约网格线强调对齐、秩序与工具属性。
-- **Bold Typography**：超粗标题 + 空心/实心字对比，强化层级与信息密度控制。
-- **Tech‑Futuristic**：参数可视化（回报率/模式字节/原始数值）搭配开关与进度条，形成“极客实验室”氛围。
-- **UX 亮点**：启动页“SYSTEM READY”仪式感与沉浸状态反馈；工具页布局整齐、数据直观。
+### 核心能力 / Core Capabilities
 
-视觉关键词：**Neo‑Brutalism · High Contrast · Bold Typography · Tech‑Futuristic · Grid Layout · Hard Shadows**
+| 品牌 / Brand | DPI 轴 / DPI Axis | 回报率 / Polling | 配置槽 / Config Slots | DPI LOD | 电量策略 / Battery Strategy |
+|---|---|---|---|---|---|
+| Logitech | 双轴（高级轴）/ Dual-axis | 双路：有线+无线 / Dual path (wired+wireless) | 支持 / Yes | 支持 / Yes | `supportsBatteryRequest=false`（不走主动轮询） |
+| Rapoo | 双轴（高级轴）/ Dual-axis | 单路 / Single path | 不支持 / No | 不支持 / No | `supportsBatteryRequest=false`，默认 `120000ms` |
+| ATK | 双轴（高级轴）/ Dual-axis | 单路 / Single path | 不支持 / No | 不支持 / No | 支持主动请求，默认 `60000ms` |
+| Chaos | 单轴主路径 / Single-axis main path | 单路 / Single path | 不支持 / No | 不支持 / No | 支持主动请求，默认 `60000ms` |
 
----
+### 高级能力 / Advanced Capabilities
 
-## 支持的设备
+| 品牌 / Brand | Motion/Linear/Ripple | Key Scan | Wireless Strategy/Comm Protocol | Long Range | 灯效 / Lighting | Onboard | Lightforce | Surface | BHOP | 备注 / Notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Logitech | 否 / No | 否 / No | 否 / No | 否 / No | 非 ATK 灯效路径 / non-ATK path | 是 / Yes | 是 / Yes | 是（`auto/on/off`） | 是 / Yes | 高级面板、配置槽、双回报率 |
+| Rapoo | 是 / Yes | 是 / Yes | 是 / Yes | 否 / No | 主 LED 与相关项 / primary LED path | 否 / No | 否 / No | 否（非 Logitech surface） | 否 / No | 含通信策略开关 |
+| ATK | 是 / Yes | 否 / No | 否 / No | 是 / Yes | ATK 灯效 + DPI 色彩 / ATK lights + DPI colors | 否 / No | 否 / No | 否 / No | 否 / No | 含长距离模式 |
+| Chaos | 是 / Yes | 否 / No | 否 / No | 否 / No | 基础 LED 路径 / basic LED path | 否 / No | 否 / No | 双 Surface Toggle（主/次） | 否 / No | 兼容旧字段映射 |
 
-项目通过 **VID + Usage Page/Usage** 识别设备类型，并在发起 `navigator.hid.requestDevice()` 时合并过滤器。
+### Logitech Keymap 变体 / Logitech Keymap Variants
 
-| 类型 | 识别规则（摘要） | VID | 过滤器（摘要） | 状态 |
-|---|---|---:|---|---|
-| Rapoo（雷柏） | `vendorId=0x24ae` 且存在 `usagePage=0xff00` 的厂商集合 | `0x24ae` | `usagePage=0xff00, usage=14/15` | ✅ |
-| ATK | `vendorId=0x373b` 且存在 `usagePage=0xff02, usage=0x0002` | `0x373b` | `usagePage=0xff02, usage=0x0002` | ✅ |
-| Chaos | `vendorId=0x1915` | `0x1915` | 优先 `usagePage=0xFF0A`，兼容 `0xFF00` | ✅ |
+- 默认图：`image/GPW.png`
+- 机型变体图：`image/GPW_DEX.png`（匹配如 `PRO X 2 DEX`）
+- 按钮位点在变体中可独立定义，避免同图映射误差。  
+  Variant-specific points are supported to avoid incorrect button overlays across models.
 
-> 计划：持续扩展更多鼠标品牌/型号；新增设备通常需要补充识别规则、协议实现与能力范围（见下文“架构说明”）。
+<a id="quick-start"></a>
+## 快速开始 / Quick Start
 
----
+WebHID 需要安全上下文，请使用 `http://localhost` 或 `https`。  
+WebHID requires secure context: use `http://localhost` or `https`.
 
-## 浏览器要求
+不推荐 `file://` 直接打开页面，WebHID 在多数浏览器下通常不可用。  
+`file://` is not recommended; WebHID is usually unavailable there.
 
-### ✅ 推荐
-
-- Chrome / Edge（Chromium）89+（需支持 WebHID）
-
-### ❌ 不支持 / 可能不支持
-
-- Firefox、Safari、移动端浏览器及其它非 Chromium 内核浏览器（视实现而定）
-
-> WebHID 还要求**安全上下文**：`https` 或 `http://localhost`。直接用 `file://` 打开通常不可用或体验不稳定。
-
----
-
-## 快速开始
-
-本项目为静态网页应用，无需构建依赖。
-
-1. 克隆仓库或下载源码
-2. 通过本地静态服务器启动（推荐，满足 WebHID 安全上下文要求）：
+1. 进入项目目录。
+2. 启动本地静态服务（任选其一）：
 
 ```bash
-# 方式 1：直接使用 Chrome / Edge 打开 index.html 。
-
-# 方式 B：Python
+# Python
 python -m http.server 8000
 
-# 方式 C：Node.js（需已安装 node）
+# Node.js
 npx http-server . -p 8000
 ```
 
-3. 打开页面：
+3. 打开 `http://localhost:8000/index.html`。
+4. 使用 Chromium 桌面浏览器（Chrome/Edge）。
+
+<a id="usage-flow"></a>
+## 使用流程 / Usage Flow
+
+1. 在 Landing 页面通过用户手势触发连接（首次授权必须用户操作）。  
+   First-time authorization must be user-gesture initiated.
+2. 运行时连接入口走 `DeviceRuntime.connect(...)`，自动识别设备类型并可触发品牌切换。
+3. 连接握手开始时写入门禁关闭（`__writesEnabled=false`）。
+4. `app.js` 先挂 `waitForNextConfig(...)` 的一次性监听，再触发 `requestDeviceConfig()`。
+5. 收到首轮配置后应用 UI，并开启写入门禁（`__writesEnabled=true`）。
+6. UI 修改经 `enqueueDevicePatch()` 合并后进入 `DeviceWriter.writePatch(...)`，避免高频竞态写入。
+7. 已授权设备支持自动探测（`autoConnect`），并监听 `navigator.hid` 的 `connect/disconnect` 事件。
+8. 主页面模块（延续旧 README 命名）：
+   `keys`（按键映射）、`dpi`（DPI 档位与范围）、`basic`（基础性能/回报率）、`advanced`（高级项）、`testtools`（测试工具）。
+9. 顶部工具栏支持语言切换、主题切换与配置槽切换（按设备能力显示）。
+
+<a id="architecture"></a>
+## 架构说明 / Architecture
 
-- `http://localhost:8000/index.html`
+### 四层结构 / Four Layers
 
----
+1. Runtime 层（`device_runtime.js`）  
+   设备识别、设备选择、自动连接、动态协议加载（`ensureProtocolLoaded`）。
+2. Adapter/Writer/Reader 层（`refactor.js`）  
+   语义映射、能力约束、统一读写入口（`DeviceAdapters`/`DeviceWriter`/`DeviceReader`）。
+3. Protocol 层（`protocol_api_*.js`）  
+   品牌协议实现，负责底层报文和配置回包事件。
+4. UI Orchestration 层（`app.js`）  
+   连接生命周期、写入队列、回显一致性、状态同步与页面交互。
 
-## 用法
+### 数据流 / Data Flow
 
-### 1）连接设备
+- 写入链路 / Write path  
+  `UI change` -> `enqueueDevicePatch` -> `DeviceWriter.writePatch` -> `hidApi.setFeature / setBatchFeatures` -> `device`.
 
-1. 使用支持 WebHID 的桌面浏览器打开页面；
-2. 在启动页点击触发区域（例如 “Hold to Initiate System”）或点击“连接/Connect”按钮；
-3. 在浏览器弹窗中选择鼠标设备并授权；
-4. 连接成功后进入主配置界面。
+- 读取链路 / Read path  
+  `device report` -> `hidApi.onConfig / onBattery / onRawReport` -> `DeviceReader.requestConfig/getCachedConfig/readStandardValue` -> `applyConfigToUi`.
 
-> 浏览器不会允许网页“静默自动连接”未授权设备；首次必须由用户在弹窗中手动选择并授权。
+### 新增设备接入 Checklist / Add-New-Device Checklist
 
-### 2）配置与测试
+1. 在 `device_runtime.js` 增加识别规则与过滤器（`DEVICE_REGISTRY`）。
+2. 新增 `protocol_api_<brand>.js` 并实现最小兼容接口。
+3. 在 `refactor.js` 新增 profile（`ranges/features/keyMap/transforms/actions`）。
+4. 保持 UI 走语义 patch，不直接硬编码协议字段。
+5. 验证连接、首轮配置同步、写入门禁、断连恢复。
+6. 验证 `onConfig/onBattery/onRawReport` 事件回路。
+7. 验证高频写入时防抖与 write-intent 回显一致性。
+8. 更新 README 对应矩阵与兼容性说明。
 
-- **按键映射**：选择按钮位置 → 从动作列表中选择映射项。
-- **DPI 设置**：调整档位数量与每档 DPI；界面变化会通过防抖队列合并写入，避免频繁下发。
-- **基础性能**：回报率/性能模式等通过统一的“设备补丁队列”写入（合并多项变更为一次写入）。
-- **高级参数**：不同设备会自动显示/隐藏不兼容项（例如 Rapoo/ATK 的差异项）。
-- **测试工具**：在工具页中运行双击/回报率/灵敏度/角度相关测试。
+<a id="public-api-contracts"></a>
+## 公开接口契约 / Public API Contracts
 
----
+本节描述当前运行时对外契约（文档用途，不改变代码）。  
+This section documents current runtime contracts (documentation only).
 
-## 项目结构
+### `window.DeviceRuntime`
 
-> 下面列出核心文件，便于快速定位。
+- `getSelectedDevice(): string`
+- `setSelectedDevice(device, { reload = true }?)`
+- `requestDevice(): Promise<HIDDevice | null>`
+- `autoConnect({ preferredType }?): Promise<{ device, candidates, detectedType }>`
+- `connect(mode?, opts?): Promise<{ device, candidates, detectedType, preferredType }>`
+- `ensureProtocolLoaded(): Promise<{ device, ProtocolApi }>`
 
-```
-.
-├── index.html                  # 主页面与 UI 结构
-├── app.js                      # 应用层：连接流程、页面交互、配置读写与写入队列
-├── device_runtime.js           # 设备识别与 WebHID 过滤器聚合；动态加载协议脚本
-├── protocol_api_rapoo.js       # Rapoo 协议实现（分层：Driver/Codec/Planner/SPEC/API）
-├── protocol_api_atk.js         # ATK 协议实现（分层：Driver/Codec/Planner/SPEC/API）
-├── protocol_api_chaos.js       # Chaos 协议实现（非标准分层架构，大部分代码使用原驱动代码，代码水平低，较为混乱，如需扩展新设备请参考Rapoo、ATK协议实现）
-├── refactor.js                 # 全局配置 + 设备适配器/写入策略 + UI Variant 应用
-├── mouse-main.js               # 测试工具主逻辑
-├── nav-match.js                # 灵敏度匹配工具
-├── rotation-calibration.js     # 角度校准工具
-├── style.css / theme.css       # 样式与主题
-└── v3p.png                     # 鼠标样式图片
-```
+### `window.DeviceAdapters`
 
----
+- `getAdapter(id): Adapter`
+- `Adapter` 语义：
+  - `features`：能力开关（UI 显隐与策略分支依据）
+  - `ranges`：范围配置（DPI/回报率/槽位等）
+  - `keyMap`：标准语义键 -> 协议键映射
+  - `transforms`：读写转换（标准值 <-> 协议值）
+  - `actions`：需要专用方法时的动作映射
 
-## 架构说明（面向开发者）
+### `window.DeviceWriter.writePatch`
 
-### 1）运行时识别与协议加载
+- 入参：`{ hidApi, adapter, payload }`
+- `payload`：标准语义 patch（如 `pollingHz`, `motionSync`, `onboardMemoryMode`）
+- 返回：`{ writtenStdPatch, mappedPatch }`
+  - `writtenStdPatch`：成功写入的标准键集合
+  - `mappedPatch`：最终映射到协议键并写出的 patch
 
-- `device_runtime.js` 维护 `DEVICE_REGISTRY`（设备注册表），每个条目包含：
-  - `match(device)`：识别规则（基于 `vendorId` 与 HID Collections 的 Usage Page/Usage）
-  - `filters`：用于 `navigator.hid.requestDevice()` 的精确过滤器
-- 用户授权后通过 `identifyDeviceType()` 判断设备类型；页面也会通过 `localStorage` 保存上一次选择（`device.selected`）。
-- `ensureProtocolLoaded()` 会按设备类型动态加载 `protocol_api_*.js`，并要求协议脚本导出 `window.ProtocolApi` 供上层使用。
+### `window.DeviceReader`
 
-### 2）写入队列与写入策略（避免频繁写设备）
+- `requestConfig({ hidApi })`
+- `getCachedConfig({ hidApi })`
+- `readStandardValue({ cfg, adapter, key })`
 
-- `app.js` 提供统一的 `enqueueDevicePatch(patch)`：把 UI 侧的多次变更合并到同一个防抖队列中，再一次性写入设备。
-- `refactor.js` 抽离 `DeviceWriter.writePatch()`：根据设备不同选择不同写入策略（例如 Rapoo ATK 倾向逐项 `setFeature`；Chaos 设备会对 `modeByte` 相关字段做拆分/批写以保证状态一致性）。
+### `window.ProtocolApi` 最小兼容面 / Minimal Compatibility Surface
 
-### 3）协议实现的分层（以 `protocol_api_rapoo.js` 为例，如需扩展新设备请参考Rapoo、ATK协议实现；）
-> Chaos大部分代码使用原驱动代码，较为混乱，切勿参考chaos
+协议实现应至少提供以下能力：
 
-协议文件采用“可系统化扩展”的分层组织，核心思路是：**业务层不拼报文，协议知识集中到规范表与计划器**。
-- **UniversalHidDriver**：传输层，只负责把命令送到设备
-- **ProtocolCodec**：编码层，生成 A5A5 写 / A5A4 读指令
-- **TRANSFORMERS**：转换层，语义值 → 协议值/字节数组
-- **SPEC**：规范层（最关键）：每个语义配置项的 `validate / encode / plan / deps / priority`
-- **CommandPlanner**：计划层：补齐依赖、排序、去重（last-write-wins），生成最终命令序列
-- **MouseMouseHidApi**：对外 API：提供 `requestConfig()`、订阅 `onConfig/onBattery/onRawReport` 等能力
+- `requestConfig()`
+- `setFeature(key, value)` 与/或 `setBatchFeatures(payload)`
+- `onConfig(cb)`、`onBattery(cb)`、`onRawReport(cb)`
 
-> 设计目标：新增/调整功能时，尽量只改动 `SPEC/TRANSFORMERS`，降低对上层业务与 UI 的侵入。
+<a id="webhid-workbench"></a>
+## WebHID Workbench / WebHID Workbench
 
-### 4）UI Variant（设备差异化呈现）
+仓库中的调试脚本为：`WebHID_Workbench.js`。  
+The debug userscript in this repo is `WebHID_Workbench.js`.
 
-- `refactor.js` 提供 `DeviceAdapters`（纯数据：文案/范围/选项）与 `DeviceUI.applyVariant()`（按设备类型显示/隐藏控件、替换文案与范围）。
-- 设备切换时会做“恢复/回滚”，避免不同设备的 UI 状态残留影响下一次渲染。
+### 功能边界 / Scope
 
-### 5）新增设备/协议的建议流程
+- 通过 hook `HIDDevice` 的 `sendReport`、`sendFeatureReport`、`receiveFeatureReport`、`inputreport` 捕获报文。
+- 支持快照（增量窗口）、日志导出（JSON）、报文回放（Replay）。
+- 提供解析规则入口（`PARSER_RULES`）用于开发调试。
+- 面向开发/测试，不是生产运行时主链路。  
+  It is for development/testing and is not part of the main production runtime flow.
 
-1. 在 `device_runtime.js` 的 `DEVICE_REGISTRY` 中添加新设备类型：补充 `match()` 与 `filters`（尽量使用厂商集合的 Usage Page/Usage 进行精确过滤）。
-2. 新增 `protocol_api_<brand>.js`：保证导出 `window.ProtocolApi`，并提供与现有 API 兼容的读写入口（例如 `setFeature / setBatchFeatures / requestConfig` 等）。
-3. 在 `refactor.js` 的 `AppConfig.ranges` 与 `DeviceAdapters` 中补充该设备的能力范围与文案（以及需要裁剪的 UI 项）。
-4. 在 UI 层（`index.html` / `app.js`）补充必要的绑定与展示（优先走 `enqueueDevicePatch` + Writer 策略）。
+### 使用方式 / Usage
 
----
+1. 用 Tampermonkey/Violentmonkey 安装脚本。
+2. 导入 `WebHID_Workbench.js`。
+3. 在脚本 `@match` 覆盖站点打开页面后使用悬浮调试面板。
 
-## 开发调试工具：WebHID Workbench
+### `@match` 目标域（来自当前脚本）/ Target Domains
 
-仓库内包含一个开发期使用的 **Userscript 工作台**：`WebHID_Workbench.user.js`。这是一个油猴脚本，关于如何使用脚本请自行搜索，它会在目标网页中注入一个浮层面板，用于**采集 WebHID 往返报文、做快照、导出为 JSON，并支持按原始时序复刻已记录的 OUT 报文序列**，便于进行协议研究、兼容性验证与问题定位。
+- `https://hub.rapoo.cn/*`
+- `https://hub.atk.pro/*`
+- `https://www.rawmtech.com/*`
+- `https://www.mchose.com.cn/*`
+- `https://hub.miracletek.net/*`
+- `https://www.chaos.vin/*`
+- `https://chaos.vin/*`
 
-### 能做什么
+<a id="faq"></a>
+## 常见问题 / FAQ
 
-- **自动捕获 WebHID 通信**：Hook `HIDDevice.sendReport / sendFeatureReport / receiveFeatureReport`，并监听 `inputreport` 事件，将报文记录到实时缓冲区与全量日志。
-  方向标记包括 `OUT / IN / sendFeature / receiveFeature`。fileciteturn8file0L276-L280
-- **快照机制（delta window）**：每次“捕获快照”仅保存“上一次快照之后新增”的报文段，避免日志过长难以定位。
-- **导出 JSON**：导出内容包含设备 `vid/pid`，以及每个快照的编号、备注与格式化报文行（包含 `usagePage/usage`、方向、`ReportID` 与 Hex）。
-- **按时序复刻快照中的 OUT 报文**：从快照中过滤 `dir === 'out'` 的报文，按记录的时间间隔重新发送；再次点击可停止。
-- **可插拔解析规则**：内置 `PARSER_RULES`，可针对常见报文做快速识别/解码（如 DPI 表、按键映射、状态报告等），也可以自行添加规则。
+### 1) 点击连接无弹窗 / No device picker popup
 
-### 安装与使用
+- 必须由用户手势触发（点击/按键事件内调用）。
+- 必须处于 `https` 或 `http://localhost`。
+- 使用 Chromium 桌面浏览器并确认 WebHID 可用。
 
-1. 安装浏览器 Userscript 管理器（如 Tampermonkey / Violentmonkey）。
-2. 导入脚本：`WebHID_Workbench.user.js`。
-3. 打开脚本已配置的目标站点之一（脚本使用 `@match` 限定注入范围，例如：`hub.rapoo.cn`、`hub.atk.pro`、`rawmtech.com`、`mchose.com.cn`、`chaos.vin` 等）。
-4. 在页面中连接设备并进行一次你关心的操作（例如修改 DPI/回报率/按键映射等），让页面产生通信报文。
-5. 在右上角“⚡ WebHID 工作台”浮层中：
-   - 点击 **📸 捕获快照**：为当前操作段打点（建议输入备注，如“DPI 改为 1600”）。
-   - 点击 **💾 导出**：导出所有快照为 JSON 文件，便于后续离线分析与整理。  
-   - 点击 **复刻操作**：将该快照内的 OUT 序列按原时序发送（用于复现特定行为/验证兼容性）。
+### 2) 设备可见但项目里不出现 / Device visible in OS but not matched
 
-### 使用建议
+- 先看是否命中运行时过滤（`VID + usagePage/usage`）。
+- 检查设备 `collections` 是否与 `device_runtime.js` 规则一致。
+- 若为新型号，需补充 Runtime 识别规则与协议层支持。
 
-- 建议把一次“功能变更”拆成一个快照：**操作前清空缓冲区 → 操作 → 捕获快照 →（可选）导出**，这样更易对齐一次变更对应的报文段。
-- 如需扩展快速识别能力，可在脚本顶部的 `PARSER_RULES` 中添加 `match/decode` 规则。
-- 该脚本会注入到匹配域名页面并记录通信数据，**仅建议在可信环境下用于开发/测试**。
+### 3) 修改后写入不生效 / Writes not taking effect
 
+- 首轮配置未完成前写入被门禁拦截（`__writesEnabled`）。
+- 写入走防抖队列，短时间内会先合并再下发。
+- 写入失败会触发一次配置重拉（`write-failure-reconcile`），请查看控制台日志定位。
 
-## 常见问题
+<a id="resources"></a>
+## 资源与链接 / Resources & Links
 
-### 为什么点了“连接”没有弹出设备选择窗口？
+### 本地资源状态 / Local Assets
 
-- 需要 **用户手势** 触发（点击/按键等）才能调用 `navigator.hid.requestDevice()`。
-- 确认在 `https` 或 `http://localhost` 下打开；直接 `file://` 打开通常不满足安全上下文。
-- 确认浏览器为 Chromium 系并启用了 WebHID（Chrome/Edge 89+）。
+- Keymap 资源存在：`image/GPW.png`、`image/GPW_DEX.png`、`image/default.png`
+- 旧版 README 的 UI 截图引用已移除（仓库无 `UI/` 目录）
+- 文档已清理异常引用标记
 
-### 设备能被系统识别，但列表里找不到？
+### 资源状态表 / Resource Status Table
 
-- 本项目会带过滤器请求设备（VID + Usage Page/Usage），如果设备暴露的 HID 集合不匹配当前规则，可能会被过滤掉。
-- 处理方式：在 `device_runtime.js` 中扩展该设备的 `filters/match()`（建议先打印 `device.collections` 观察 Usage Page/Usage）。
+| 资源 / Resource | 当前状态 / Status | 说明 / Notes |
+|---|---|---|
+| 旧版 UI 截图引用 | 已移除失效引用 / removed | 仓库无 `UI/` 目录，不再保留误导性引用 |
+| Keymap 图片 `image/GPW.png` `image/GPW_DEX.png` | 可用 / available | Logitech 机型变体映射正在使用 |
+| `LICENSE` 文件 | 缺失 / missing | 需补充后再声明许可证类型 |
+| 体验外链 | 保留 / kept | 本次仅文档更新，不做外链可达性探测 |
 
-### 修改配置后没有写入设备？
+### 项目与体验链接 / Project Links
 
-- UI 变更会进入写入防抖队列；在连接成功并收到一次设备配置同步后，才会开启写入（避免“初始化状态”误写回设备）。
-- 若写入失败，查看控制台日志（可能是设备未打开、权限丢失或协议不匹配）。
+- GitHub: `https://github.com/Nuitfanee/ClickSync`
+- 体验地址（保留，不在本次离线文档更新中做可达性探测）  
+  Demo links (kept as-is, no reachability check in this doc-only update):
+  - `https://nuitfanee.github.io/ClickSync.github.io/`
+  - `https://xn--i8s54d9wak75j.xyz/`
 
----
+<a id="license"></a>
+## 开源协议 / License
 
-## 贡献
+当前仓库未检测到 `LICENSE` 文件。  
+No `LICENSE` file is currently present in this repository.
 
-欢迎通过 Issue / PR 参与贡献：
+建议后续补充许可证文件后，再在 README 中声明具体协议类型。  
+Please add a license file first, then declare the specific license type in README.
 
-- **新设备支持**：补充 `DEVICE_REGISTRY` 识别规则 + `protocol_api_xxx.js` + 适配器能力范围
-- **新功能**：优先扩展 `SPEC/TRANSFORMERS`（协议层），再接入 UI
-- **Bug 修复**：请提供复现步骤与设备信息（品牌/VID/固件版本/浏览器版本）
+<a id="contributing"></a>
+## 贡献 / Contributing
 
----
+欢迎通过 Issue / PR 参与改进：
 
-## 主要维护者
+1. 新设备接入优先补齐 Runtime 识别 + Adapter 映射 + Protocol API。
+2. 缺陷反馈请附：设备型号、VID/PID、浏览器版本、复现步骤。
+3. 文档变更请同步更新设备矩阵与功能矩阵，避免“代码事实与 README 偏离”。
 
-- [@Nuitfanee](https://github.com/Nuitfanee)
-
----
-
-## 开源协议
-
-本项目为开源项目。请查看仓库中的 `LICENSE` 文件。
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+维护者 / Maintainer: [@Nuitfanee](https://github.com/Nuitfanee)
