@@ -17,7 +17,7 @@ Currently implemented brands: `Logitech`, `Rapoo`, `ATK`, `Chaos`.
 - 🌐 **Beta网站**: https://xn--i8s54d9wak75j.xyz/
 
 ![Click Sync UI](image/UI1.png)
-![Click Sync UI](image/UI21.png)
+![Click Sync UI](image/UI2.png)
 ![Click Sync UI](image/UI3.png)
 ![Click Sync UI](image/UI4.png)
 ![Click Sync UI](image/UI5.png)
