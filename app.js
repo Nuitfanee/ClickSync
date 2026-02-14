@@ -1,67 +1,124 @@
 
+/**
+ * Manifesto: UI Layer & Orchestration
+ * 本文件负责 UI 交互与数据调度，严禁包含任何设备协议细节，
+ * 所有设备差异必须由适配器表达。
+ *
+ * 禁止事项：
+ * - UI 中禁止直接使用固件 Key，必须走 adapter keyMap。
+ * - UI 中禁止设备 if 分支，只能用 feature 能力开关。
+ * - 设备写入必须走 enqueueDevicePatch 以实现防抖与并发保护。
+ */
 
+// ============================================================
+// 1) 启动与适配器解析（无设备逻辑）
+// ============================================================
+/**
+ * 应用启动入口（IIFE）。
+ * 目的：避免泄露全局变量，并确保启动顺序在模块加载时立即执行。
+ *
+ * @returns {Promise<void>} 启动完成的 Promise。
+ */
 (async () => {
+  /**
+   * 查询单个 DOM 元素。
+   * 目的：集中 DOM 查询入口，避免重复调用 querySelector。
+   * @param {any} sel - 参数 sel。
+   * @returns {any} 返回结果。
+   */
   const $ = (sel) => document.querySelector(sel);
+  /**
+   * 查询 DOM 元素列表。
+   * 目的：集中 DOM 列表查询入口，减少分散查询。
+   * @param {any} sel - 参数 sel。
+   * @returns {any} 返回结果。
+   */
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-  // 为嵌入式测试工具提供 i18n 存根函数（默认使用中文）
+  let __connectInFlight = false;
+  let __connectPending = null;
+
+
+  /**
+   * 兜底翻译函数。
+   * 目的：在多语言模块未就绪时提供最小可用文本，避免 UI 空白。
+   *
+   * @param {string} zh - 中文文本。
+   * @param {string} en - 英文文本。
+   * @returns {string} 兜底文本（默认中文）。
+   */
   window.tr = window.tr || ((zh, en) => zh);
 
-  // ====== 设备运行时环境 ======
-  // 获取设备运行时管理器（支持 Chaos / Rapoo / ATK 等设备类型）
+
   const DeviceRuntime = window.DeviceRuntime;
   const SELECTED_DEVICE = DeviceRuntime?.getSelectedDevice?.() || "chaos";
 
-  // ====== 设备身份识别（解耦设计，可组合） ======
-  // 设计目标：
-  // - 逻辑层：保留"类 Rapoo "（rapoo + atk）的兼容行为（IS_RAPOO 标志）
-  // - 样式层：rapoo / atk / chaos 三者完全隔离，各自拥有独立的 CSS 命名空间
-  const __DeviceEnv = window.DeviceEnv;
-  const DEVICE_ID = (typeof __DeviceEnv?.normalize === "function")
-    ? __DeviceEnv.normalize(SELECTED_DEVICE)
-    : (SELECTED_DEVICE || "chaos");
-  const DEVICE_FAMILY = (typeof __DeviceEnv?.familyOf === "function")
-    ? __DeviceEnv.familyOf(DEVICE_ID)
-    : ((DEVICE_ID === "rapoo" || DEVICE_ID === "atk") ? "rapoo" : "chaos");
 
-  // 遗留兼容标志：用于逻辑层兼容（rapoo + atk 共享部分行为）
-  const IS_RAPOO = (DEVICE_FAMILY === "rapoo");
-  const IS_ATK = (DEVICE_ID === "atk");
+  const DEVICE_ID = SELECTED_DEVICE || "chaos";
 
-  // 样式隔离：为每个设备类型设置独立的 CSS 类名，避免样式污染
-  document.body.dataset.device = DEVICE_ID;
-  document.body.classList.toggle("device-rapoo", DEVICE_ID === "rapoo");
-  document.body.classList.toggle("device-atk", DEVICE_ID === "atk");
-  document.body.classList.toggle("device-chaos", DEVICE_ID === "chaos");
 
-  // ====== 获取设备适配器 ======
-  // 用于全局配置和 UI 变体应用
   const adapter = window.DeviceAdapters?.getAdapter?.(DEVICE_ID) || window.DeviceAdapters?.getAdapter?.(SELECTED_DEVICE);
+  const adapterFeatures = adapter?.features || {};
+  /**
+   * 检查能力开关。
+   * 目的：用于判断能力开关状态，避免分散判断。
+   * @param {any} key - 参数 key。
+   * @returns {any} 返回结果。
+   */
+  const hasFeature = (key) => !!adapterFeatures[key];
 
-  // ====== 设备运行时初始化 ======
-  // 注意：设备选择器已移除，改为基于 HID 设备特征自动识别
 
-  // ====== 起始页层管理 ======
-  // 起始页：设备未连接前的覆盖层，采用 SPA 架构覆盖在主应用之上
+  const resolvedDeviceId = adapter?.id || DEVICE_ID;
+  if (document.body) {
+    document.body.dataset.device = resolvedDeviceId;
+    Array.from(document.body.classList)
+      .filter((cls) => cls.startsWith("device-"))
+      .forEach((cls) => document.body.classList.remove(cls));
+    document.body.classList.add(`device-${resolvedDeviceId}`);
+  }
+
+  // ============================================================
+  // 2) 标准语义读取（由 refactor.js 下沉实现）
+  // ============================================================
+  /**
+   * 读取标准 Key 的配置值。
+   * 目的：屏蔽协议字段差异，保证 UI 读取一致性。
+   * @param {any} cfg - 参数 cfg。
+   * @param {any} key - 参数 key。
+   * @returns {any} 返回结果。
+   */
+  const readStandardValue = (cfg, key) => {
+    const reader = window.DeviceReader;
+    return reader?.readStandardValue?.({ cfg, adapter, key });
+  };
+
+
+  // ============================================================
+  // 3) Landing 层与过渡编排（仅 UI）
+  // ============================================================
   const __landingLayer = document.getElementById("landing-layer");
   const __appLayer = document.getElementById("app-layer");
   const __landingCaption = document.getElementById("landingCaption") || __landingLayer?.querySelector(".center-caption");
   const __triggerZone = document.getElementById("trigger-zone");
-  const __landingCanvas = document.getElementById("surreal-canvas"); // 遗留元素（已在 Optical Slice 版本中移除）
-  const __landingLiquid = __landingLayer?.querySelector(".liquid-overlay"); // 遗留元素（已在 Optical Slice 版本中移除）
 
-  // ====== 设备特定 UI 变体应用 ======
-  // 仅影响 Rapoo 设备的 UI 配置
-  function __applyDeviceVariantOnce() {
-    // UI 变体仅负责"UI 配置/文案/范围/可见性"等展示层逻辑，不涉及任何设备写入操作
+
+  /**
+   * 内部应用设备。
+   * 目的：集中应用配置，确保入口一致。
+   * @returns {any} 返回结果。
+   */
+  function __applyDeviceVariantOnce({ deviceName = "", cfg = null, keymapOnly = false } = {}) {
+
     try {
       const registry = window.DeviceAdapters;
-      const adapter = registry?.getAdapter?.(DEVICE_ID) || registry?.getAdapter?.(SELECTED_DEVICE);
+      const runtimeDeviceId = window.DeviceRuntime?.getSelectedDevice?.() || DEVICE_ID;
+      const adapter = registry?.getAdapter?.(runtimeDeviceId) || registry?.getAdapter?.(DEVICE_ID) || registry?.getAdapter?.(SELECTED_DEVICE);
       window.DeviceUI?.applyVariant?.({
-        deviceId: DEVICE_ID,
-        family: DEVICE_FAMILY,
+        deviceId: runtimeDeviceId,
         adapter,
         root: document,
+        deviceName: String(deviceName || cfg?.deviceName || "").trim(),
+        keymapOnly: !!keymapOnly,
       });
     } catch (err) {
       console.warn("[variant] apply failed", err);
@@ -70,8 +127,10 @@
 
   __applyDeviceVariantOnce();
 
-  // ====== Rapoo 按键扫描率循环按钮 ======
-  // 提供循环切换按键扫描率的功能，带有平滑的滑动动画效果
+
+  // ============================================================
+  // 4) 能力驱动的 UI 循环控件（适配器门控）
+  // ============================================================
   const POLLING_RATES = [1000, 2000, 4000, 8000];
   const RATE_COLORS = {
     1000: 'rate-color-1000',
@@ -79,85 +138,176 @@
     4000: 'rate-color-4000',
     8000: 'rate-color-8000'
   };
+  const CYCLE_ANIM_DURATION_MS = 500;
+  const CYCLE_ANIM_FALLBACK_MS = CYCLE_ANIM_DURATION_MS + 80;
+  const POLLING_CROSSHAIR_STEP_DEG = 90;
+  const cycleAnimStateMap = new WeakMap();
+
+  function getCycleAnimState(container) {
+    let state = cycleAnimStateMap.get(container);
+    if (!state) {
+      state = { token: 0, timerId: null, onEnd: null, nextLayer: null };
+      cycleAnimStateMap.set(container, state);
+    }
+    return state;
+  }
+
+  function getCycleVisualParts(container) {
+    return {
+      baseLayer: container?.querySelector('.shutter-bg-base'),
+      nextLayer: container?.querySelector('.shutter-bg-next'),
+      textEl: container?.querySelector('.cycle-text'),
+    };
+  }
+
+  function cancelCycleAnim(container) {
+    if (!container) return;
+    const state = getCycleAnimState(container);
+    state.token += 1;
+    if (state.timerId != null) {
+      clearTimeout(state.timerId);
+      state.timerId = null;
+    }
+    if (state.nextLayer && state.onEnd) {
+      state.nextLayer.removeEventListener('transitionend', state.onEnd);
+    }
+    state.onEnd = null;
+    state.nextLayer = null;
+    container.classList.remove('is-animating');
+  }
+
+  function commitCycleVisual(container, value, label, colorClass, syncForm) {
+    if (!container) return;
+    const { baseLayer, nextLayer, textEl } = getCycleVisualParts(container);
+    cancelCycleAnim(container);
+    if (nextLayer) nextLayer.className = 'shutter-bg-next ' + colorClass;
+    if (baseLayer) baseLayer.className = 'shutter-bg-base ' + colorClass;
+    if (textEl) textEl.textContent = label;
+    if (typeof syncForm === 'function') syncForm(value);
+  }
+
+  function animateCycleVisual(container, value, label, colorClass, syncForm) {
+    if (!container) return;
+    const { baseLayer, nextLayer, textEl } = getCycleVisualParts(container);
+    if (!baseLayer || !nextLayer || !textEl) {
+      commitCycleVisual(container, value, label, colorClass, syncForm);
+      return;
+    }
+
+    cancelCycleAnim(container);
+    if (typeof syncForm === 'function') syncForm(value);
+
+    const state = getCycleAnimState(container);
+    const token = state.token + 1;
+    state.token = token;
+
+    nextLayer.className = 'shutter-bg-next ' + colorClass;
+    void nextLayer.offsetWidth;
+    container.classList.add('is-animating');
+
+    const finalize = () => {
+      const activeState = cycleAnimStateMap.get(container);
+      if (!activeState || activeState.token !== token) return;
+      if (activeState.timerId != null) {
+        clearTimeout(activeState.timerId);
+        activeState.timerId = null;
+      }
+      if (activeState.nextLayer && activeState.onEnd) {
+        activeState.nextLayer.removeEventListener('transitionend', activeState.onEnd);
+      }
+      activeState.onEnd = null;
+      activeState.nextLayer = null;
+      textEl.textContent = label;
+      baseLayer.className = 'shutter-bg-base ' + colorClass;
+      container.classList.remove('is-animating');
+    };
+
+    const onEnd = (event) => {
+      if (event.target !== nextLayer) return;
+      if (event.propertyName && event.propertyName !== 'transform') return;
+      finalize();
+    };
+
+    state.onEnd = onEnd;
+    state.nextLayer = nextLayer;
+    nextLayer.addEventListener('transitionend', onEnd, { passive: true });
+    state.timerId = setTimeout(finalize, CYCLE_ANIM_FALLBACK_MS);
+  }
+
+  function rotateCycleCrosshair(container, stepDeg = POLLING_CROSSHAIR_STEP_DEG) {
+    const crosshair = container?.querySelector('.crosshair');
+    if (!crosshair) return;
+    const prevDeg = Number(crosshair.dataset.rotateDeg || 0);
+    const nextDeg = prevDeg + Number(stepDeg || 0);
+    crosshair.dataset.rotateDeg = String(nextDeg);
+    crosshair.style.transform = `rotate(${nextDeg}deg)`;
+  }
 
   /**
-   * 更新按键扫描率循环按钮的 UI 状态
-   * @param {number} rate - 目标扫描率值
-   * @param {boolean} animate - 是否播放动画（默认 true）
+   * 更新轮询率。
+   * 目的：在轮询率变化时同步 UI 与配置，避免显示与实际值偏离。
+   * @param {any} rate - 参数 rate。
+   * @param {any} animate - 参数 animate。
+   * @returns {any} 返回结果。
    */
   function updatePollingCycleUI(rate, animate = true) {
     const container = document.getElementById('rapooPollingCycle');
     if (!container) return;
-
-    const baseLayer = container.querySelector('.shutter-bg-base');
-    const nextLayer = container.querySelector('.shutter-bg-next');
-    const textEl = container.querySelector('.cycle-text');
     const selectEl = document.getElementById('rapooPollingSelectAdv');
-    
-    const colorClass = RATE_COLORS[rate] || RATE_COLORS[1000];
-    const displayRate = rate >= 1000 ? (rate / 1000) + 'k' : rate;
+    const parsedRate = Number(rate);
+    const resolvedRate = POLLING_RATES.includes(parsedRate) ? parsedRate : POLLING_RATES[0];
+    const colorClass = RATE_COLORS[resolvedRate] || RATE_COLORS[1000];
+    const displayRate = resolvedRate >= 1000 ? (resolvedRate / 1000) + 'k' : String(resolvedRate);
+    const syncForm = (nextValue) => {
+      container.dataset.value = String(nextValue);
+      container.classList.toggle('is-selected', Number(nextValue) !== POLLING_RATES[0]);
+      if (selectEl) selectEl.value = String(nextValue);
+    };
 
     if (!animate) {
-      // 初始化或静默更新：直接设置状态，不播放动画
-      baseLayer.className = 'shutter-bg-base ' + colorClass;
-      textEl.textContent = displayRate;
-      if (selectEl) selectEl.value = rate;
+      commitCycleVisual(container, resolvedRate, displayRate, colorClass, syncForm);
       return;
     }
 
-    // 播放滑动动画流程：
-    // 1. 设置下一层的背景颜色
-    nextLayer.className = 'shutter-bg-next ' + colorClass;
-    
-    // 2. 添加动画类，触发 CSS transition 过渡效果
-    container.classList.add('is-animating');
-
-    // 3. 动画结束后更新最终状态
-    setTimeout(() => {
-      textEl.textContent = displayRate;
-      // 将当前背景层更新为新颜色
-      baseLayer.className = 'shutter-bg-base ' + colorClass;
-      // 移除动画类，重置滑块位置
-      container.classList.remove('is-animating');
-      // 同步更新隐藏的 select 元素值
-      if (selectEl) selectEl.value = rate;
-    }, 500); // 与 CSS transition 持续时间保持一致
+    rotateCycleCrosshair(container);
+    animateCycleVisual(container, resolvedRate, displayRate, colorClass, syncForm);
   }
 
   /**
-   * 初始化 Rapoo 按键扫描率循环按钮
-   * 点击按钮时循环切换预设的扫描率值
+   * 初始化轮询率。
+   * 目的：在轮询率变化时同步 UI 与配置，避免显示与实际值偏离。
+   * @returns {any} 返回结果。
    */
   function initRapooPollingCycle() {
     const cycleBtn = document.getElementById('rapooPollingCycle');
-    if (!cycleBtn || !IS_RAPOO) return;
+    if (!cycleBtn || !hasFeature("hasKeyScanRate")) return;
 
     cycleBtn.addEventListener('click', () => {
-      // 获取当前选中的扫描率值（从隐藏的 select 元素或内存中读取）
       const selectEl = document.getElementById('rapooPollingSelectAdv');
-      const currentHz = Number(selectEl?.value || 1000);
-      let nextIdx = POLLING_RATES.indexOf(currentHz) + 1;
-      if (nextIdx >= POLLING_RATES.length) nextIdx = 0;
-      
+      const datasetHz = Number(cycleBtn.dataset.value);
+      const selectHz = Number(selectEl?.value);
+      const currentHz = Number.isFinite(datasetHz)
+        ? datasetHz
+        : (Number.isFinite(selectHz) ? selectHz : POLLING_RATES[0]);
+      const currentIdx = POLLING_RATES.indexOf(currentHz);
+      const nextIdx = ((currentIdx >= 0 ? currentIdx : 0) + 1) % POLLING_RATES.length;
+
       const nextHz = POLLING_RATES[nextIdx];
-      
-      // 执行 UI 动画更新
+
+      cycleBtn.dataset.value = String(nextHz);
+      if (selectEl) selectEl.value = String(nextHz);
       updatePollingCycleUI(nextHz, true);
-      
-      // 写入设备：通过统一的设备补丁队列机制
-      // 仅修改按键扫描率，不影响回报率设置
+
       if (typeof enqueueDevicePatch === 'function') {
         enqueueDevicePatch({ keyScanningRate: nextHz });
       }
     });
   }
 
-  // 初始化循环按钮
+
   initRapooPollingCycle();
 
-  // ====== ATK 设备灯效循环控制 ======
-  // 定义灯效选项与对应的 CSS 颜色类
-  // 优先从 refactor.js 的设备适配器中读取配置，否则使用默认值
+
   const ATK_DPI_LIGHT_OPTS = adapter?.ui?.lights?.dpi || [
       { val: 0, label: "关闭", cls: "atk-mode-0" },
       { val: 1, label: "常亮", cls: "atk-mode-1" },
@@ -171,149 +321,139 @@
   ];
 
   /**
-   * 更新 ATK 灯效循环按钮的 UI 状态
-   * @param {string} id - 按钮容器元素 ID
-   * @param {number} value - 目标灯效值
-   * @param {Array} options - 灯效选项数组
-   * @param {boolean} animate - 是否播放动画（默认 true）
+   * 更新atk、cycle。
+   * 目的：在状态变化时同步 UI 或数据，避免不一致。
+   * @param {any} id - 参数 id。
+   * @param {any} value - 参数 value。
+   * @param {any} options - 参数 options。
+   * @param {any} animate - 参数 animate。
+   * @returns {any} 返回结果。
    */
   function updateAtkCycleUI(id, value, options, animate = true) {
       const container = document.getElementById(id);
-      if (!container) return;
-      
-      const baseLayer = container.querySelector('.shutter-bg-base');
-      const nextLayer = container.querySelector('.shutter-bg-next');
-      const textEl = container.querySelector('.cycle-text');
-      
-      const opt = options.find(o => o.val === value) || options[0];
+      if (!container || !Array.isArray(options) || !options.length) return;
+
+      const numericValue = Number(value);
+      const opt = options.find(o => Number(o.val) === numericValue) || options[0];
+      const defaultVal = Number(options[0]?.val);
       const colorClass = opt.cls;
+      const syncForm = (nextValue) => {
+          container.dataset.value = String(nextValue);
+          container.classList.toggle('is-selected', Number(nextValue) !== defaultVal);
+      };
 
       if (!animate) {
-          // 初始化/回显模式：直接设置 Base 层颜色，不播放动画
-          baseLayer.className = 'shutter-bg-base ' + colorClass;
-          textEl.textContent = opt.label;
-          container.dataset.value = value;
+          commitCycleVisual(container, opt.val, opt.label, colorClass, syncForm);
           return;
       }
 
-      // 交互模式：播放滑动动画
-      // 流程：Next 层设置新颜色 -> 滑入动画 -> 动画结束后重置状态
-      nextLayer.className = 'shutter-bg-next ' + colorClass;
-      container.classList.add('is-animating');
-      
-      setTimeout(() => {
-          textEl.textContent = opt.label;
-          baseLayer.className = 'shutter-bg-base ' + colorClass;
-          container.classList.remove('is-animating');
-          container.dataset.value = value;
-      }, 500); // 与 CSS transition 持续时间（0.5s）保持一致
+      animateCycleVisual(container, opt.val, opt.label, colorClass, syncForm);
   }
 
   /**
-   * 初始化 ATK 灯效循环按钮
-   * 为 DPI 灯效和接收器灯效分别绑定循环切换逻辑
+   * 初始化灯效。
+   * 目的：集中初始化与事件绑定，避免重复绑定或顺序问题。
+   * @returns {any} 返回结果。
    */
   function initAtkLightCycles() {
+      if (!hasFeature("hasAtkLights")) return;
       /**
-       * 为指定按钮绑定循环切换逻辑
-       * @param {string} id - 按钮元素 ID
-       * @param {string} key - 设备配置键名
-       * @param {Array} options - 灯效选项数组
+       * 处理bind、cycle逻辑。
+       * 目的：统一处理bind、cycle相关流程，保证行为一致。
+       * @param {any} id - 参数 id。
+       * @param {any} key - 参数 key。
+       * @param {any} options - 参数 options。
+       * @returns {any} 返回结果。
        */
       const bindCycle = (id, key, options) => {
           const btn = document.getElementById(id);
           if (!btn) return;
-          
+
           btn.addEventListener('click', () => {
-              const cur = Number(btn.dataset.value || 0);
-              const curIdx = options.findIndex(o => o.val === cur);
-              // 循环切换逻辑：到达末尾后回到第一个选项
-              const nextIdx = (curIdx + 1) % options.length;
+              const datasetVal = Number(btn.dataset.value);
+              const firstVal = Number(options[0]?.val);
+              const cur = Number.isFinite(datasetVal)
+                  ? datasetVal
+                  : (Number.isFinite(firstVal) ? firstVal : 0);
+              const curIdx = options.findIndex(o => Number(o.val) === cur);
+
+              const nextIdx = ((curIdx >= 0 ? curIdx : 0) + 1) % options.length;
               const nextVal = options[nextIdx].val;
-              
-              // 1. 更新 UI 动画效果
+
+              btn.dataset.value = String(nextVal);
               updateAtkCycleUI(id, nextVal, options, true);
-              // 2. 发送设备配置指令
+
               enqueueDevicePatch({ [key]: nextVal });
           });
       };
 
-      // 绑定 DPI 灯效和接收器灯效循环按钮
+
       bindCycle('atkDpiLightCycle', 'dpiLightEffect', ATK_DPI_LIGHT_OPTS);
       bindCycle('atkReceiverLightCycle', 'receiverLightEffect', ATK_RX_LIGHT_OPTS);
   }
 
-  // 初始化灯效循环按钮监听
+
   initAtkLightCycles();
 
 
-  // 记录转场动画的起点坐标（鼠标点击位置），用于液体转场效果的中心点定位
   let __landingClickOrigin = null;
 
-  // 自动检测到的已授权设备（仅用于 UI 提示和预选，不会自动触发连接）
+
   let __autoDetectedDevice = null;
 
-  // ====== 手动连接保护锁 ======
-  // 用途：用户主动发起连接时，短时间内忽略 WebHID connect 事件，避免重复自动连接
-  // 原理：浏览器在 requestDevice() 授权成功后也会触发一次 navigator.hid 的 connect 事件，
-  //      这会被热插拔监听器捕获并触发 initAutoConnect，导致"黑色扩张动画"重复播放
+
   let __manualConnectGuardUntil = 0;
   /**
-   * 激活手动连接保护锁
-   * @param {number} ms - 保护持续时间（毫秒），默认 3000ms
+   * 内部处理arm、manual逻辑。
+   * 目的：统一连接流程并处理并发保护，避免重复连接或状态错乱。
+   * @param {any} ms - 参数 ms。
+   * @returns {any} 返回结果。
    */
   const __armManualConnectGuard = (ms = 3000) => {
     const dur = Math.max(0, Number(ms) || 0);
     __manualConnectGuardUntil = Date.now() + dur;
   };
   /**
-   * 检查手动连接保护锁是否处于激活状态
-   * @returns {boolean} 是否在保护期内
+   * 内部检查manual、connect。
+   * 目的：用于判断manual、connect状态，避免分散判断。
+   * @returns {any} 返回结果。
    */
   const __isManualConnectGuardOn = () => Date.now() < __manualConnectGuardUntil;
 
 
+  /**
+   * 内部设置app、inert。
+   * 目的：提供统一读写入口，降低耦合。
+   * @param {any} inert - 参数 inert。
+   * @returns {any} 返回结果。
+   */
   function __setAppInert(inert) {
     if (!__appLayer) return;
     try { __appLayer.inert = inert; } catch (_) {}
     __appLayer.setAttribute("aria-hidden", inert ? "true" : "false");
   }
 
+  /**
+   * 内部设置Landing。
+   * 目的：集中管理 Landing 状态切换与动画时序，避免交互状态冲突。
+   * @param {any} text - 参数 text。
+   * @returns {any} 返回结果。
+   */
   function __setLandingCaption(text) {
     if (!__landingCaption) return;
     __landingCaption.textContent = text;
   }
 
-  function __resetLandingLiquidInstant() {
-    if (!__landingLiquid) return;
-
-    // 回到初始态：遮罩为 0%，不透明；清掉 inline，让 CSS class 负责动画
-    const prevTransition = __landingLiquid.style.transition;
-    const prevDelay = __landingLiquid.style.transitionDelay;
-
-    __landingLiquid.style.transition = "none";
-    __landingLiquid.style.transitionDelay = "0s";
-    __landingLiquid.style.opacity = "1";
-    __landingLiquid.style.clipPath = "circle(0% at 50% 50%)";
-
-    // force reflow
-    void __landingLiquid.offsetHeight;
-
-    __landingLiquid.style.clipPath = "";
-    __landingLiquid.style.transition = prevTransition || "";
-    __landingLiquid.style.transitionDelay = prevDelay || "";
-  }
-
-
 /**
- * 显示起始页
- * 用于设备断开连接或初始化时显示起始页覆盖层
- * @param {string} reason - 显示原因（用于调试，可选）
+ * 显示Landing。
+ * 目的：集中管理 Landing 状态切换与动画时序，避免交互状态冲突。
+ * @param {any} reason - 参数 reason。
+ * @returns {any} 返回结果。
  */
 function showLanding(reason = "") {
     if (!__landingLayer) return;
 
-    // 清理所有起始页状态类（Optical Slice 设计）
+
     document.body.classList.remove("landing-cover", "landing-reveal", "landing-covered", "landing-hovering", "landing-drop");
     document.body.classList.remove("landing-precharge", "landing-charging", "landing-system-ready", "landing-ready-zoom", "landing-ready-out", "landing-holding");
     document.body.classList.add("landing-active");
@@ -321,45 +461,51 @@ function showLanding(reason = "") {
     __landingLayer.style.display = "";
     __landingLayer.setAttribute("aria-hidden", "false");
 
-    // 起始页覆盖期间禁用主应用交互，避免误操作
+
     __setAppInert(true);
 
-    // 恢复触发区域的可点击状态
+
     if (__triggerZone) __triggerZone.style.pointerEvents = "";
 
-    // 重置提示文案：连接失败或断开后回到默认提示
+
     __setLandingCaption("Hold to Initiate System");
 
-    // 清空转场动画起点坐标
+
     __landingClickOrigin = null;
   }
 
 
 /**
- * 通过液体转场动画进入主应用
- * 注意：保留此函数名以便在 connectHid 中复用"连接成功后进入主应用"的调用点
- * @param {Object|null} origin - 转场动画起点坐标（可选）
+ * 处理enter、app逻辑。
+ * 目的：统一处理enter、app相关流程，保证行为一致。
+ * @param {any} origin - 参数 origin。
+ * @returns {any} 返回结果。
  */
 function enterAppWithLiquidTransition(origin = null) {
     if (!__landingLayer) return;
     if (__landingLayer.getAttribute("aria-hidden") === "true") return;
 
-    // 防抖处理：如果已经在"系统就绪"状态，则不再重复执行
+
     if (document.body.classList.contains("landing-system-ready")) return;
 
-    // 禁用起始页触发区域，避免用户连续点击
+
     if (__triggerZone) __triggerZone.style.pointerEvents = "none";
 
-    // 进入"系统就绪"过场动画：让主应用在后台恢复清晰（由 flash 遮罩覆盖）
+
     document.body.classList.remove("landing-ready-zoom", "landing-ready-out");
     document.body.classList.add("landing-system-ready", "landing-reveal");
     document.body.classList.remove("landing-precharge", "landing-charging", "landing-holding");
 
     __setLandingCaption("SYSTEM READY");
 
-    // 过场动画期间主应用仍保持 inert 状态，避免误操作
+
     __setAppInert(true);
 
+    /**
+     * 处理finish逻辑。
+     * 目的：统一处理finish相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const finish = () => {
       if (!__landingLayer) return;
 
@@ -380,44 +526,52 @@ function enterAppWithLiquidTransition(origin = null) {
 
       __setAppInert(false);
 
-      // 恢复触发区（下次断开还会用到）
+
       if (__triggerZone) __triggerZone.style.pointerEvents = "";
 
       __landingClickOrigin = null;
     };
 
+    /**
+     * 处理run、transition逻辑。
+     * 目的：统一处理run、transition相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const runTransition = () => {
-      // 毫秒数完全保持原版 720/520/220/560 比例
+
       window.setTimeout(() => {
         try { document.body.classList.add("landing-ready-zoom"); } catch (_) {}
       }, 720);
 
       window.setTimeout(() => {
         try { document.body.classList.add("landing-ready-out"); } catch (_) {}
-      }, 1240); // 720 + 520
+      }, 1240);
 
       window.setTimeout(() => {
         try { document.body.classList.add("landing-drop"); } catch (_) {}
-      }, 1500); // 1240 + 220 + 40
+      }, 1500);
 
-      window.setTimeout(finish, 2140); // 1500 + 560 + 80
+      window.setTimeout(finish, 2140);
     };
 
-    // 配置读取的门闩逻辑：在 runTransition 之前等待，但不改变内部动画的执行节奏
+
     const gateP = window.__LANDING_ENTER_GATE_PROMISE__;
     const waitP = (gateP && typeof gateP.then === "function") ? gateP : Promise.resolve();
 
     Promise.race([
       waitP.catch(() => {}),
-      new Promise((r) => setTimeout(r, 6000)), // 稳健超时
+      new Promise((r) => setTimeout(r, 6000)),
     ]).then(runTransition, runTransition);
   }
 
 
-  // ====== Landing canvas engine ======
-
+  /**
+   * 初始化 Landing 画布引擎。
+   * 目的：建立 Landing 交互渲染循环，确保过渡稳定。
+   * @returns {any} 返回结果。
+   */
   function initLandingCanvasEngine() {
-    // Re-purposed: Optical Slice landing engine (no canvas).
+
     if (!__landingLayer) return null;
 
     const layerSolid = document.getElementById("layer-solid");
@@ -427,29 +581,43 @@ function enterAppWithLiquidTransition(origin = null) {
 
     if (!layerSolid) return null;
 
-    // Mouse position
+
     let mouseX = window.innerWidth / 2;
     let mouseY = window.innerHeight / 2;
 
-    // Smooth follow
+
     let currentX = mouseX;
     let currentY = mouseY;
 
-    // Mask radius
+
     let maskRadius = 150;
     let targetRadius = 150;
 
     let holding = false;
 
-    // Click/Tap: auto wipe to full black before opening WebHID chooser
-    // { start, dur, from, to, cx, cy, onDone }
+
     let autoWipe = null;
 
-    // 空闲停帧后由事件唤醒 RAF（避免起始页偶发丢帧/高 CPU）
+
+    /**
+     * 内部处理wake、loop逻辑。
+     * 目的：统一处理wake、loop相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     let __wakeLoop = () => {};
 
+    /**
+     * 检查Landing。
+     * 目的：用于判断Landing状态，避免分散判断。
+     * @returns {any} 返回结果。
+     */
     const isLandingVisible = () => __landingLayer.getAttribute("aria-hidden") !== "true";
 
+    /**
+     * 启动hold。
+     * 目的：统一处理hold相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const startHold = () => {
       if (!isLandingVisible()) return;
       if (document.body.classList.contains("landing-charging")) return;
@@ -461,6 +629,11 @@ function enterAppWithLiquidTransition(origin = null) {
       __wakeLoop();
     };
 
+    /**
+     * 处理end、hold逻辑。
+     * 目的：统一处理end、hold相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const endHold = () => {
       if (autoWipe) return;
       holding = false;
@@ -469,10 +642,16 @@ function enterAppWithLiquidTransition(origin = null) {
       __wakeLoop();
     };
 
-    // opts:
-    // - durationMs: number
-    // - toRadius: number (optional, if provided will animate to this radius instead of full-screen maxR)
-    // - endFullCover: boolean (default true). If false, do NOT force full cover at the end.
+
+    /**
+     * 处理自动流程逻辑。
+     * 目的：统一处理自动流程相关流程，保证行为一致。
+     * @param {any} cx - 参数 cx。
+     * @param {any} cy - 参数 cy。
+     * @param {any} onDone - 参数 onDone。
+     * @param {any} opts - 参数 opts。
+     * @returns {any} 返回结果。
+     */
     const beginAutoWipe = (cx, cy, onDone, opts = {}) => {
       if (!isLandingVisible()) return false;
       if (document.body.classList.contains("landing-charging")) return false;
@@ -490,7 +669,7 @@ function enterAppWithLiquidTransition(origin = null) {
       const toR = Number.isFinite(opts.toRadius) ? Number(opts.toRadius) : maxR;
       const endFullCover = (opts.endFullCover !== false);
 
-      // Lock center to click point
+
       mouseX = cx; mouseY = cy;
       currentX = cx; currentY = cy;
 
@@ -511,7 +690,7 @@ function enterAppWithLiquidTransition(origin = null) {
       return true;
     };
 
-    // Pointer events (bind on trigger-zone so it feels like “press to charge”)
+
     if (__triggerZone) {
       __triggerZone.addEventListener("pointerdown", (e) => {
         try { __triggerZone.setPointerCapture(e.pointerId); } catch (_) {}
@@ -534,11 +713,11 @@ function enterAppWithLiquidTransition(origin = null) {
       __wakeLoop();
     }, { passive: true });
 
-    // RAF loop（优化：空闲自动停帧 + 减少重复 style 写入）
+
     let __rafId = 0;
     let __paused = false;
 
-    // Cache: 避免每帧重复写同样的 style（会触发样式计算）
+
     let __lastClip = "";
     let __lastOutlineT = "";
     let __lastRingT = "";
@@ -546,12 +725,24 @@ function enterAppWithLiquidTransition(origin = null) {
     let __lastRingOp = "";
     let __lastDotOp = "";
 
+    /**
+     * 内部设置clip。
+     * 目的：提供统一读写入口，降低耦合。
+     * @param {any} v - 参数 v。
+     * @returns {any} 返回结果。
+     */
     const __setClip = (v) => {
       if (v !== __lastClip) {
         layerSolid.style.clipPath = v;
         __lastClip = v;
       }
     };
+    /**
+     * 内部设置outline。
+     * 目的：提供统一读写入口，降低耦合。
+     * @param {any} v - 参数 v。
+     * @returns {any} 返回结果。
+     */
     const __setOutlineT = (v) => {
       if (!layerOutline) return;
       if (v !== __lastOutlineT) {
@@ -559,6 +750,12 @@ function enterAppWithLiquidTransition(origin = null) {
         __lastOutlineT = v;
       }
     };
+    /**
+     * 内部设置光环。
+     * 目的：提供统一读写入口，降低耦合。
+     * @param {any} v - 参数 v。
+     * @returns {any} 返回结果。
+     */
     const __setRingT = (v) => {
       if (!cursorRing) return;
       if (v !== __lastRingT) {
@@ -566,6 +763,12 @@ function enterAppWithLiquidTransition(origin = null) {
         __lastRingT = v;
       }
     };
+    /**
+     * 内部设置指示点。
+     * 目的：提供统一读写入口，降低耦合。
+     * @param {any} v - 参数 v。
+     * @returns {any} 返回结果。
+     */
     const __setDotT = (v) => {
       if (!cursorDot) return;
       if (v !== __lastDotT) {
@@ -573,6 +776,12 @@ function enterAppWithLiquidTransition(origin = null) {
         __lastDotT = v;
       }
     };
+    /**
+     * 内部设置光环。
+     * 目的：提供统一读写入口，降低耦合。
+     * @param {any} v - 参数 v。
+     * @returns {any} 返回结果。
+     */
     const __setRingOpacity = (v) => {
       if (!cursorRing) return;
       if (v !== __lastRingOp) {
@@ -580,6 +789,12 @@ function enterAppWithLiquidTransition(origin = null) {
         __lastRingOp = v;
       }
     };
+    /**
+     * 内部设置指示点。
+     * 目的：提供统一读写入口，降低耦合。
+     * @param {any} v - 参数 v。
+     * @returns {any} 返回结果。
+     */
     const __setDotOpacity = (v) => {
       if (!cursorDot) return;
       if (v !== __lastDotOp) {
@@ -588,9 +803,19 @@ function enterAppWithLiquidTransition(origin = null) {
       }
     };
 
+    /**
+     * 内部检查charging、or。
+     * 目的：用于判断charging、or状态，避免分散判断。
+     * @returns {any} 返回结果。
+     */
     const __isChargingOrReady = () =>
       document.body.classList.contains("landing-charging") || document.body.classList.contains("landing-system-ready");
 
+    /**
+     * 内部检查keep、running。
+     * 目的：用于判断keep、running状态，避免分散判断。
+     * @returns {any} 返回结果。
+     */
     const __shouldKeepRunning = () => {
       if (__paused) return false;
       if (!isLandingVisible() || document.hidden) return false;
@@ -604,6 +829,11 @@ function enterAppWithLiquidTransition(origin = null) {
       return false;
     };
 
+    /**
+     * 内部启动loop。
+     * 目的：统一处理loop相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const __startLoop = () => {
       if (__paused) return;
       if (__rafId) return;
@@ -611,23 +841,33 @@ function enterAppWithLiquidTransition(origin = null) {
       __rafId = requestAnimationFrame(__tick);
     };
 
+    /**
+     * 内部停止loop。
+     * 目的：统一处理loop相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const __stopLoop = () => {
       if (__rafId) cancelAnimationFrame(__rafId);
       __rafId = 0;
     };
 
-    // 让事件（pointermove/hold/autoWipe）可唤醒动画
+
     __wakeLoop = __startLoop;
 
+    /**
+     * 内部处理tick逻辑。
+     * 目的：统一处理tick相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     function __tick() {
       __rafId = 0;
 
       if (!__shouldKeepRunning()) {
-        // 空闲：停止 RAF（下一次事件会唤醒）
+
         return;
       }
 
-      // Charging / ready: full cover
+
       if (__isChargingOrReady()) {
         layerSolid.style.transform = "none";
         __setClip("circle(150% at 50% 50%)");
@@ -641,7 +881,7 @@ function enterAppWithLiquidTransition(origin = null) {
         __setDotOpacity("");
       }
 
-      // Auto wipe (click/tap)
+
       if (autoWipe) {
         const now = performance.now();
         const t = Math.min(1, (now - autoWipe.start) / autoWipe.dur);
@@ -681,7 +921,7 @@ function enterAppWithLiquidTransition(origin = null) {
         return;
       }
 
-      // 1) Smooth cursor follow
+
       currentX += (mouseX - currentX) * 0.15;
       currentY += (mouseY - currentY) * 0.15;
 
@@ -693,7 +933,7 @@ function enterAppWithLiquidTransition(origin = null) {
       __setRingT(`translate(${rx}px, ${ry}px) translate(-50%, -50%)`);
       __setDotT(`translate(${mx}px, ${my}px) translate(-50%, -50%)`);
 
-      // 2) Radius easing
+
       if (holding) {
         maskRadius += (targetRadius - maskRadius) * 0.018;
         layerSolid.style.transform = "none";
@@ -705,7 +945,7 @@ function enterAppWithLiquidTransition(origin = null) {
       const rr = Math.round(maskRadius * 10) / 10;
       __setClip(`circle(${rr}px at ${rx}px ${ry}px)`);
 
-      // 3) Subtle parallax (skip on holding)
+
       if (!holding) {
         const px = (window.innerWidth / 2 - currentX) * 0.02;
         const py = (window.innerHeight / 2 - currentY) * 0.02;
@@ -719,10 +959,10 @@ function enterAppWithLiquidTransition(origin = null) {
       __startLoop();
     }
 
-    // 首帧启动（后续空闲会自动停帧）
+
     __startLoop();
 
-    // aria-hidden / tab 切换时停止动画，避免后台耗电
+
     try {
       const mo = new MutationObserver(() => {
         if (!isLandingVisible() || document.hidden || __paused) __stopLoop();
@@ -755,12 +995,19 @@ function enterAppWithLiquidTransition(origin = null) {
 
   const __landingFx = initLandingCanvasEngine();
 
-  // 起始页：从“CONNECTING(全屏黑)”反向回到初始态（用于 WebHID 选择器点了取消/未选择设备）
+
+  /**
+   * 内部处理Landing逻辑。
+   * 目的：集中管理 Landing 状态切换与动画时序，避免交互状态冲突。
+   * @param {any} origin - 参数 origin。
+   * @param {any} opts - 参数 opts。
+   * @returns {any} 返回结果。
+   */
   function __reverseLandingToInitial(origin = null, opts = {}) {
     if (!__landingLayer) return;
     if (__landingLayer.getAttribute("aria-hidden") === "true") return;
 
-    // 先解除 charging 对 clip-path 的强制覆盖
+
     document.body.classList.remove(
       "landing-precharge",
       "landing-charging",
@@ -774,7 +1021,7 @@ function enterAppWithLiquidTransition(origin = null) {
     document.body.classList.add("landing-active");
     __setAppInert(true);
 
-    // 反向动画期间先禁用点击，结束后再恢复
+
     if (__triggerZone) __triggerZone.style.pointerEvents = "none";
 
     const cx = Number.isFinite(origin?.x) ? origin.x : window.innerWidth / 2;
@@ -792,7 +1039,7 @@ function enterAppWithLiquidTransition(origin = null) {
       { durationMs: dur, toRadius: 150, endFullCover: false }
     );
 
-    // 兜底：如果引擎不可用/启动失败，直接回到初始态
+
     if (!ok) {
       try { __landingFx?.reset?.(); } catch (_) {}
       __setLandingCaption("Hold to Initiate System");
@@ -800,18 +1047,28 @@ function enterAppWithLiquidTransition(origin = null) {
     }
   }
 
-  // 起始页交互：点击 -> 立即变黑（全屏充能）并弹出连接窗口
+
   if (__triggerZone && __landingLayer) {
+    /**
+     * 处理begin、precharge逻辑。
+     * 目的：统一处理begin、precharge相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const beginPrecharge = () => {
-      // 进入“充能/连接中”视觉（蓝色提示等），但不强制 clipPath 直接全屏。
-      // 这样透镜扩张还能正常播放，且不会出现“全屏后白字停着”的阶段。
+
+
       document.body.classList.add("landing-precharge");
       document.body.classList.remove("landing-holding");
       __setLandingCaption("CONNECTING...");
     };
 
+    /**
+     * 处理begin、charging逻辑。
+     * 目的：统一处理begin、charging相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const beginCharging = () => {
-      // 扩张结束态 = 充能/连接中态（全黑覆盖 + 蓝色提示）
+
       document.body.classList.remove("landing-precharge");
       document.body.classList.add("landing-charging");
       document.body.classList.remove("landing-holding");
@@ -819,13 +1076,12 @@ function enterAppWithLiquidTransition(origin = null) {
     };
 
     __triggerZone.addEventListener("click", (e) => {
-      // 手动连接：打开选择器前先上锁，避免授权产生的 connect 事件触发二次自动连接
+
       __armManualConnectGuard(3000);
-      // 记录点击位置（仍保留变量，便于后续扩展）
+
       if (e && e.clientX) __landingClickOrigin = { x: e.clientX, y: e.clientY };
 
-      // 先做一次“透镜扩张到全屏”过渡（更慢、无抖动）。
-      // 注意：扩张期间就进入“连接中”视觉；扩张结束后立即 connectHid（不再额外等待）。
+
       if (__triggerZone) __triggerZone.style.pointerEvents = "none";
       beginPrecharge();
 
@@ -833,13 +1089,13 @@ function enterAppWithLiquidTransition(origin = null) {
       const cy = (e && Number.isFinite(e.clientY)) ? e.clientY : window.innerHeight / 2;
 
       const startOk = __landingFx?.beginAutoWipe?.(cx, cy, () => {
-        // 扩张结束：立即进入全黑“充能/连接中”状态，并立刻触发 WebHID 连接窗口
+
         beginCharging();
-        // 用 0ms 排队，避免在 RAF 清理同帧里触发造成状态竞争；体感仍是“结束就弹窗”。
+
         setTimeout(() => connectHid(true, false), 0);
       }, { durationMs: 100 });
 
-      // Fallback：如果视觉引擎没初始化成功，就用定时器兜底
+
       if (!startOk) {
         setTimeout(() => {
           beginCharging();
@@ -848,7 +1104,7 @@ function enterAppWithLiquidTransition(origin = null) {
       }
     });
 
-    // 键盘可达性：Enter/Space 触发点击
+
     __triggerZone.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " " ) {
         e.preventDefault();
@@ -858,14 +1114,16 @@ function enterAppWithLiquidTransition(origin = null) {
   }
 
 
-
-  // ====== xSelect 自定义下拉组件 ======
-  // 自绘下拉菜单，采用玻璃卡片风格设计
-  // 使用 Portal 模式挂载到 body，避免被父容器的 overflow 或圆角裁剪
   const xSelectMap = new WeakMap();
   const xSelectOpen = new Set();
   let xSelectGlobalHooksInstalled = false;
 
+  /**
+   * 关闭all。
+   * 目的：统一选项构建与应用，避免选项与值不匹配。
+   * @param {any} exceptWrap - 参数 exceptWrap。
+   * @returns {any} 返回结果。
+   */
   function closeAllXSelect(exceptWrap = null) {
     for (const inst of Array.from(xSelectOpen)) {
       if (exceptWrap && inst.wrap === exceptWrap) continue;
@@ -873,16 +1131,27 @@ function enterAppWithLiquidTransition(origin = null) {
     }
   }
 
+  /**
+   * 处理reposition、open逻辑。
+   * 目的：在尺寸或状态变化时重新计算布局，避免错位。
+   * @returns {any} 返回结果。
+   */
   function repositionOpenXSelect() {
     for (const inst of Array.from(xSelectOpen)) inst.position();
   }
 
+  /**
+   * 处理create逻辑。
+   * 目的：统一选项构建与应用，避免选项与值不匹配。
+   * @param {any} selectEl - 参数 selectEl。
+   * @returns {any} 返回结果。
+   */
   function createXSelect(selectEl) {
     if (!selectEl || xSelectMap.has(selectEl)) return;
     const parent = selectEl.parentNode;
     if (!parent) return;
 
-    // 容器（仍在原位置，负责布局/焦点/箭头样式）
+
     const wrap = document.createElement("div");
     wrap.className = "xSelectWrap";
 
@@ -897,7 +1166,7 @@ function enterAppWithLiquidTransition(origin = null) {
     valueEl.className = "xSelectValue";
     trigger.appendChild(valueEl);
 
-    // 下拉菜单：挂到 body（portal），避免被任何 overflow/圆角裁剪
+
     const menu = document.createElement("div");
     menu.className = "xSelectMenu xSelectMenuPortal";
     menu.setAttribute("role", "listbox");
@@ -930,35 +1199,35 @@ function enterAppWithLiquidTransition(origin = null) {
 
         const gap = 8;
 
-        // Portal 菜单使用 position:fixed（见 CSS），因此直接用 viewport 坐标
+
         let left = r.left;
         let top = r.bottom + gap;
         const width = Math.max(120, r.width);
 
-        // 先设置基础尺寸，便于测量高度
+
         menu.style.width = `${width}px`;
         menu.style.left = `${left}px`;
         menu.style.top = `${top}px`;
 
-        // 视口边界处理（需要先确保显示）
+
         const mr = menu.getBoundingClientRect();
         const viewportW = window.innerWidth;
         const viewportH = window.innerHeight;
 
-        // 横向溢出就向左挪
+
         const overflowRight = mr.right - (viewportW - gap);
         if (overflowRight > 0) {
           left = Math.max(gap, left - overflowRight);
           menu.style.left = `${left}px`;
         }
-        // 横向过左
+
         const overflowLeft = gap - mr.left;
         if (overflowLeft > 0) {
           left = left + overflowLeft;
           menu.style.left = `${left}px`;
         }
 
-        // 纵向：如果下面放不下且上面空间足够，则向上翻转
+
         const menuH = menu.offsetHeight || mr.height || 0;
         const spaceBelow = viewportH - r.bottom - gap;
         const spaceAbove = r.top - gap;
@@ -1011,7 +1280,7 @@ function enterAppWithLiquidTransition(origin = null) {
         if (menu.classList.contains("open")) return;
         closeAllXSelect(wrap);
         wrap.classList.add("open");
-        // 让 DPI 顶部面板在选择下拉项时依旧保持“悬浮”效果
+
         inst._hostPanel = wrap.closest?.(".dpiMetaItem") || null;
         if (inst._hostPanel) inst._hostPanel.classList.add("xSelectActive");
         trigger.setAttribute("aria-expanded", "true");
@@ -1028,7 +1297,7 @@ function enterAppWithLiquidTransition(origin = null) {
       close() {
         if (!menu.classList.contains("open")) return;
         wrap.classList.remove("open");
-        // 关闭时移除“悬浮”锁定
+
         if (inst._hostPanel) inst._hostPanel.classList.remove("xSelectActive");
         inst._hostPanel = null;
         trigger.setAttribute("aria-expanded", "false");
@@ -1041,11 +1310,11 @@ function enterAppWithLiquidTransition(origin = null) {
       },
     };
 
-    // option 变化时自动刷新（例如动态填充）
+
     const mo = new MutationObserver(() => inst.refresh());
     mo.observe(selectEl, { childList: true });
 
-    // 原生 select value 变化时同步（例如外部触发了 change）
+
     selectEl.addEventListener("change", () => inst.sync());
 
     trigger.addEventListener("click", (e) => {
@@ -1088,7 +1357,7 @@ function enterAppWithLiquidTransition(origin = null) {
     xSelectMap.set(selectEl, inst);
     inst.refresh();
 
-    // 全局：点击空白关闭；滚动/缩放时重定位（不再直接关闭）
+
     if (!xSelectGlobalHooksInstalled) {
       xSelectGlobalHooksInstalled = true;
 
@@ -1119,88 +1388,145 @@ function enterAppWithLiquidTransition(origin = null) {
     }
   }
 
+  /**
+   * 初始化selects。
+   * 目的：集中初始化与事件绑定，避免重复绑定或顺序问题。
+   * @returns {any} 返回结果。
+   */
   function initXSelects() {
     $$("select.input").forEach((sel) => createXSelect(sel));
   }
 
-  
+
         const navLinks = $("#navLinks");
-  const langBtn = $("#langBtn"); // 兼容：旧语言切换按钮(新UI中可能不存在)
+  const disconnectBtn = $("#disconnectBtn");
+  const langBtn = $("#langBtn");
+  const langBtnLabel = $("#langBtnLabel");
   const themeBtn = $("#themeBtn");
   const themePath = $("#themePath");
+  const topSlotBtns = $$(".topSlotBtn");
+  const topDeviceName = $("#topDeviceName");
+  const topBatteryWrap = $("#topBatteryWrap");
+  const topBatteryPercent = $("#topBatteryPercent");
+  const topBatteryFill = $("#topBatteryFill");
 
-// 初始化自绘下拉（替代原生 select 下拉菜单）
+
   initXSelects();
 
-  // ====== 顶部设备卡片(直接连接) ======
-  // 说明：已移除弹出式“设备连接面板”，点击卡片即开始连接；连接后可再次点击以断开(会二次确认)。
-  const deviceWidget = $("#deviceWidget");
+
   const deviceStatusDot = $("#deviceStatusDot");
   const widgetDeviceName = $("#widgetDeviceName");
-  const widgetDeviceMeta = $("#widgetDeviceMeta"); // 新UI中可能不存在
+  const widgetDeviceMeta = $("#widgetDeviceMeta");
 
-  // 用于在无面板的情况下保存状态（供电量/固件回包更新 UI）
+
   let currentDeviceName = "";
   let currentBatteryText = "";
   let currentFirmwareText = "";
 
-  // ====== HID 连接状态管理 ======
-  // 仅在收到 config 回包后才算"真正连接"
-  // 避免鼠标未连接时误显示 HID 已连接状态
+
   let hidLinked = false;
   let hidConnecting = false;
 
-  // ====== 电量自动读取机制 ======
-  // 策略：进入页面/刷新时读取一次，之后定时刷新（仅在设备连接时才会请求）
+
   let batteryTimer = null;
+
+  function parseBatteryPercent(rawBatteryText) {
+    const txt = String(rawBatteryText ?? "").trim();
+    if (!txt) return null;
+    const numeric = Number(txt.replace(/[^\d.]+/g, ""));
+    if (!Number.isFinite(numeric)) return null;
+    return Math.max(0, Math.min(100, Math.round(numeric)));
+  }
+
+  function renderTopDeviceMeta(connected, deviceName = "", batteryText = "") {
+    if (topDeviceName) {
+      const name = connected ? (deviceName || "已连接设备") : "未连接设备";
+      topDeviceName.textContent = name;
+      topDeviceName.title = name;
+    }
+
+    const batteryPercent = parseBatteryPercent(batteryText);
+    if (topBatteryPercent) {
+      topBatteryPercent.textContent = batteryPercent == null ? "--%" : `${batteryPercent}%`;
+    }
+    if (topBatteryFill) {
+      topBatteryFill.style.width = batteryPercent == null ? "0%" : `${batteryPercent}%`;
+    }
+    if (topBatteryWrap) {
+      topBatteryWrap.classList.toggle("is-mid", batteryPercent != null && batteryPercent > 20 && batteryPercent <= 60);
+      topBatteryWrap.classList.toggle("is-low", batteryPercent != null && batteryPercent <= 20);
+    }
+  }
+
+
   /**
-   * 安全地请求设备电量信息
-   * @param {string} reason - 请求原因（用于日志记录，可选）
+   * 安全请求电量。
+   * 目的：在连接状态可用时触发请求，避免无效调用。
+   * @param {any} reason - 参数 reason。
+   * @returns {Promise<any>} 异步结果。
    */
   async function requestBatterySafe(reason = "") {
     if (!isHidReady()) return;
+    if (adapterFeatures.supportsBatteryRequest === false) return;
     try {
       await hidApi.requestBattery();
       if (reason) log(`已刷新电量(${reason})`);
     } catch (e) {
-      // 不打断主流程：偶发失败允许下次再试
+
       logErr(e, "请求电量失败");
     }
   }
+
+
   /**
-   * 启动电量自动读取定时器
-   * Rapoo：状态包为被动上报，每 2 分钟做一次"电量刷新"（从最近一次状态包解析值同步到 UI）
-   * Chaos：保持 60 秒间隔
+   * 启动电量、自动流程。
+   * 目的：统一电量读取与展示节奏，避免频繁请求或状态滞后。
+   * @returns {any} 返回结果。
    */
   function startBatteryAutoRead() {
     if (batteryTimer) return;
-    // 进入页面/刷新或连接完成时先读取一次
+    if (adapterFeatures.supportsBatteryRequest === false) return;
+
     requestBatterySafe("首次");
-    // 根据设备类型设置不同的刷新间隔
-    const intervalMs = IS_RAPOO ? 120_000 : 60_000;
-    batteryTimer = setInterval(() => requestBatterySafe(IS_RAPOO ? "2min" : "60s"), intervalMs);
+
+    const intervalMs = Number.isFinite(Number(adapterFeatures.batteryPollMs))
+      ? Number(adapterFeatures.batteryPollMs)
+      : 360_000;
+    const tag = adapterFeatures.batteryPollTag || "auto";
+    batteryTimer = setInterval(() => requestBatterySafe(tag), intervalMs);
   }
+
+
   /**
-   * 停止电量自动读取定时器
+   * 停止电量、自动流程。
+   * 目的：统一电量读取与展示节奏，避免频繁请求或状态滞后。
+   * @returns {any} 返回结果。
    */
   function stopBatteryAutoRead() {
     if (batteryTimer) clearInterval(batteryTimer);
     batteryTimer = null;
   }
-  // ====== 设备状态更新函数 ======
+
   /**
-   * 更新顶部设备卡片的状态显示
-   * @param {boolean} connected - 是否已连接
-   * @param {string} deviceName - 设备名称（可选）
-   * @param {string} battery - 电量信息（可选）
-   * @param {string} firmware - 固件版本信息（可选）
+   * 更新设备、状态。
+   * 目的：在状态变化时同步 UI 或数据，避免不一致。
+   * @param {any} connected - 参数 connected。
+   * @param {any} deviceName - 参数 deviceName。
+   * @param {any} battery - 参数 battery。
+   * @param {any} firmware - 参数 firmware。
+   * @returns {any} 返回结果。
    */
   function updateDeviceStatus(connected, deviceName = "", battery = "", firmware = "") {
-    // 更新设备卡片的状态指示器
+    if (disconnectBtn) {
+      disconnectBtn.disabled = !connected;
+      disconnectBtn.setAttribute("aria-disabled", connected ? "false" : "true");
+      disconnectBtn.title = connected ? "断开当前设备连接" : "当前无设备连接";
+    }
+
     if (connected) {
       deviceStatusDot?.classList.add("connected");
 
-      // 构建状态后缀文本
+
       let statusSuffix = "";
       if (deviceName && deviceName.includes("有线")) {
         statusSuffix = " 充电中";
@@ -1208,44 +1534,53 @@ function enterAppWithLiquidTransition(origin = null) {
         statusSuffix = ` 电量 ${battery}`;
       }
       const nameText = (deviceName) + statusSuffix;
-      
+
       if (widgetDeviceName) widgetDeviceName.textContent = nameText;
       if (widgetDeviceMeta) widgetDeviceMeta.textContent = "点击断开";
+      renderTopDeviceMeta(true, deviceName || currentDeviceName || "", battery || currentBatteryText || "");
     } else {
       deviceStatusDot?.classList.remove("connected");
       if (widgetDeviceName) widgetDeviceName.textContent = "未连接设备";
       if (widgetDeviceMeta) widgetDeviceMeta.textContent = "点击连接";
+      renderTopDeviceMeta(false, "", "");
     }
 
-    // 保存当前状态，供后续电量/固件回包刷新 UI 时使用
+
     if (connected) {
       if (deviceName) currentDeviceName = deviceName;
       if (battery) currentBatteryText = battery;
       if (firmware) currentFirmwareText = firmware;
     } else {
-      // 断开连接时清空所有状态
+
       currentDeviceName = "";
       currentBatteryText = "";
       currentFirmwareText = "";
     }
   }
 
-  // ====== UI 同步辅助工具 ======
-  // UI 锁定机制：防止用户正在编辑时被设备回包覆盖
+
   const uiLocks = new Set();
-  // 写入防抖器：避免短时间内多次写入操作
+
   const writeDebouncers = new Map();
-  // 操作链：确保设备操作按顺序执行，避免并发冲突
+  let __writeSeqCounter = 0;
+  const __intentByKey = new Map();
+  const __INTENT_TTL_MS = 3000;
+
   let opChain = Promise.resolve();
   let opInFlight = false;
 
   /**
-   * 使用互斥锁执行异步任务
-   * 确保设备操作按顺序执行，避免并发写入导致的状态冲突
-   * @param {Function} task - 要执行的异步任务函数
-   * @returns {Promise} 任务执行结果的 Promise
+   * 互斥执行任务。
+   * 目的：串行化关键写入与读取，避免竞态。
+   * @param {any} task - 参数 task。
+   * @returns {any} 返回结果。
    */
   function withMutex(task) {
+    /**
+     * 处理run逻辑。
+     * 目的：统一处理run相关流程，保证行为一致。
+     * @returns {Promise<any>} 异步结果。
+     */
     const run = async () => {
       opInFlight = true;
       try { return await task(); }
@@ -1257,25 +1592,39 @@ function enterAppWithLiquidTransition(origin = null) {
   }
 
   /**
-   * 检查 HID 设备是否已打开
-   * @returns {boolean} 设备是否已打开
+   * 检查HID。
+   * 目的：用于判断HID状态，避免分散判断。
+   * @returns {any} 返回结果。
    */
   function isHidOpened() {
     return !!(hidApi && hidApi.device && hidApi.device.opened);
   }
 
   /**
-   * 检查 HID 设备是否已就绪（已打开且已收到配置回包）
-   * @returns {boolean} 设备是否已就绪
+   * 检查HID。
+   * 目的：用于判断HID状态，避免分散判断。
+   * @returns {any} 返回结果。
    */
   function isHidReady() {
     return isHidOpened() && hidLinked;
   }
+/**
+ * 锁定逻辑。
+ * 目的：串行化关键操作，避免并发竞争导致状态不一致。
+ * @param {any} el - 参数 el。
+ * @returns {any} 返回结果。
+ */
 function lockEl(el) {
     if (!el) return;
     if (!el.id) el.id = `__autogen_${Math.random().toString(36).slice(2, 10)}`;
     uiLocks.add(el.id);
   }
+  /**
+   * 解锁逻辑。
+   * 目的：统一处理逻辑相关流程，保证行为一致。
+   * @param {any} el - 参数 el。
+   * @returns {any} 返回结果。
+   */
   function unlockEl(el) {
     if (!el || !el.id) return;
     uiLocks.delete(el.id);
@@ -1289,6 +1638,13 @@ function lockEl(el) {
     if (el && (el.matches("input,select,textarea"))) unlockEl(el);
   });
 
+  /**
+   * 安全设置输入值。
+   * 目的：避免 UI 回填时触发额外事件或锁冲突。
+   * @param {any} el - 参数 el。
+   * @param {any} value - 参数 value。
+   * @returns {any} 返回结果。
+   */
   function safeSetValue(el, value) {
     if (!el) return;
     if (el.id && uiLocks.has(el.id)) return;
@@ -1296,12 +1652,27 @@ function lockEl(el) {
     if (el.value !== v) el.value = v;
     if (el.tagName === "SELECT") xSelectMap.get(el)?.sync?.();
   }
+  /**
+   * 安全设置勾选状态。
+   * 目的：避免 UI 回填时触发额外事件或锁冲突。
+   * @param {any} el - 参数 el。
+   * @param {any} checked - 参数 checked。
+   * @returns {any} 返回结果。
+   */
   function safeSetChecked(el, checked) {
     if (!el) return;
     if (el.id && uiLocks.has(el.id)) return;
     el.checked = !!checked;
   }
 
+  /**
+   * 按键维度执行防抖。
+   * 目的：合并高频触发，降低写入抖动。
+   * @param {any} key - 参数 key。
+   * @param {any} ms - 参数 ms。
+   * @param {any} fn - 参数 fn。
+   * @returns {any} 返回结果。
+   */
   function debounceKey(key, ms, fn) {
     if (writeDebouncers.has(key)) clearTimeout(writeDebouncers.get(key));
     const t = setTimeout(() => {
@@ -1311,39 +1682,45 @@ function lockEl(el) {
     writeDebouncers.set(key, t);
   }
 
-  // ---- Theme ----
+
   const THEME_KEY = "mouse_console_theme";
   const prefersDark =
     window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
   const savedTheme = localStorage.getItem(THEME_KEY);
 
+  /**
+   * 应用主题。
+   * 目的：集中应用配置，确保入口一致。
+   * @param {any} theme - 参数 theme。
+   * @returns {any} 返回结果。
+   */
   function applyTheme(theme) {
-    // 强制 dark 为 false，确保不会给 body 添加 "dark" class
-    const dark = false; 
+    const dark = theme === "dark";
     document.body.classList.toggle("dark", dark);
 
-    // 始终显示太阳（亮色）图标的路径数据
     themePath?.setAttribute(
       "d",
-      "M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"
+      dark
+        ? "M12 2v2m0 16v2m10-10h-2M4 12H2m15.07 7.07-1.41-1.41M8.34 8.34 6.93 6.93m0 10.14 1.41-1.41m8.73-8.73 1.41-1.41M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"
+        : "M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"
     );
+    themeBtn?.setAttribute("aria-label", dark ? "切换浅色模式" : "切换深色模式");
   }
 
-  // 核心：强制调用 light
-  // 无论系统偏好或上次存储如何，强制初始化为亮色模式
-  applyTheme("light");
 
-  // 禁用按钮点击，防止误触进入暗色
-  // 注释掉这段代码以禁用点击切换功能
-  /*
+  const initialTheme =
+    savedTheme === "dark" || savedTheme === "light"
+      ? savedTheme
+      : (prefersDark ? "dark" : "light");
+  applyTheme(initialTheme);
   themeBtn?.addEventListener("click", () => {
-    const next = document.body.classList.contains("dark") ? "light" : "dark";
-    localStorage.setItem(THEME_KEY, next);
+    const cur = document.body.classList.contains("dark") ? "dark" : "light";
+    const next = cur === "dark" ? "light" : "dark";
+    try { localStorage.setItem(THEME_KEY, next); } catch (_) {}
     applyTheme(next);
   });
-  */
 
-  // ---- Language (zh/en) ----
+
   const LANG_KEY = "mouse_console_lang";
   const savedLang = localStorage.getItem(LANG_KEY) || "zh";
 
@@ -1360,6 +1737,12 @@ function lockEl(el) {
     },
   };
 
+  /**
+   * 应用语言。
+   * 目的：集中应用配置，确保入口一致。
+   * @param {any} lang - 参数 lang。
+   * @returns {any} 返回结果。
+   */
   function applyLang(lang) {
     const pack = dict[lang] || dict.zh;
     const _heroTitleEl = $("#heroTitle");
@@ -1370,16 +1753,16 @@ function lockEl(el) {
 
     $$(".sidebar .nav-item").forEach((a) => {
       const k = a.getAttribute("data-key");
-      // 只更新 .nav-text 的内容，避免覆盖图标 svg
+
       const span = a.querySelector('.nav-text');
       if (span && k && pack.nav[k]) {
           span.textContent = pack.nav[k];
       }
     });
 
-    const footNote = $("#footNote");
-    if (footNote) footNote.innerHTML = `© <span id="year">${new Date().getFullYear()}</span> · ${pack.foot}`;
     document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+    if (langBtnLabel) langBtnLabel.textContent = lang === "zh" ? "EN" : "中";
+    langBtn?.setAttribute("aria-label", lang === "zh" ? "Switch to English" : "切换中文");
   }
 
   applyLang(savedLang);
@@ -1390,25 +1773,113 @@ function lockEl(el) {
     applyLang(next);
   });
 
-  // === 导航逻辑适配 (.nav-item) ===
-  // 选择 sidebar 内的 items
-  const sidebarItems = $$(".sidebar .nav-item");
 
-  // 替换 setActiveByHash 函数
-  function setActiveByHash() {
+  const TOP_CONFIG_SLOT_LABELS = ["壹", "贰", "叁", "肆", "伍"];
+  const __hasConfigSlots = hasFeature("hasConfigSlots");
+  let __uiTopConfigSlotCount = 1;
+  let __uiTopActiveConfigSlotIndex = 0;
+
+  function renderTopConfigSlots({ slotCount = 1, activeIndex = 0 } = {}) {
+    if (!topSlotBtns.length) return;
+
+    if (!__hasConfigSlots) {
+      __uiTopConfigSlotCount = 1;
+      __uiTopActiveConfigSlotIndex = 0;
+      topSlotBtns.forEach((btn, idx) => {
+        const visible = idx === 0;
+        btn.hidden = !visible;
+        btn.style.display = visible ? "" : "none";
+        btn.disabled = true;
+        btn.setAttribute("aria-disabled", "true");
+        btn.classList.toggle("active", visible);
+        btn.setAttribute("aria-selected", visible ? "true" : "false");
+        if (visible) btn.textContent = "当前配置";
+      });
+      return;
+    }
+
+    const maxCount = topSlotBtns.length;
+    const rawCount = Number(slotCount);
+    const nextCount = Number.isFinite(rawCount) ? clamp(Math.round(rawCount), 1, maxCount) : 1;
+    const rawActive = Number(activeIndex);
+    const nextActiveIdx = Number.isFinite(rawActive)
+      ? clamp(Math.round(rawActive), 0, Math.max(0, nextCount - 1))
+      : 0;
+
+    __uiTopConfigSlotCount = nextCount;
+    __uiTopActiveConfigSlotIndex = nextActiveIdx;
+
+    topSlotBtns.forEach((btn, idx) => {
+      const slotNo = idx + 1;
+      const visible = slotNo <= nextCount;
+      const isActive = visible && idx === nextActiveIdx;
+      btn.hidden = !visible;
+      btn.style.display = visible ? "" : "none";
+      btn.disabled = !visible;
+      btn.setAttribute("aria-disabled", visible ? "false" : "true");
+      btn.classList.toggle("active", isActive);
+      btn.setAttribute("aria-selected", isActive ? "true" : "false");
+      if (visible) {
+        const label = TOP_CONFIG_SLOT_LABELS[idx] || String(slotNo);
+        btn.textContent = `配置"${label}"`;
+      }
+    });
+  }
+
+  renderTopConfigSlots({ slotCount: 1, activeIndex: 0 });
+  topSlotBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!__hasConfigSlots) return;
+      if (btn.hidden || btn.disabled) return;
+
+      const slotNo = Number(btn.dataset.configSlot);
+      if (!Number.isInteger(slotNo)) return;
+      const targetIndex = slotNo - 1;
+      if (targetIndex < 0 || targetIndex >= __uiTopConfigSlotCount) return;
+      if (targetIndex === __uiTopActiveConfigSlotIndex) return;
+
+      if (!confirm("是否切换配置")) return;
+      renderTopConfigSlots({ slotCount: __uiTopConfigSlotCount, activeIndex: targetIndex });
+      enqueueDevicePatch({ activeConfigSlotIndex: targetIndex });
+    });
+  });
+
+
+  const sidebarItems = $$(".sidebar .nav-item");
+  const NAV_SWITCHING_CLASS = "nav-switching";
+  const NAV_SWITCHING_MS = 180;
+  let __navSwitchingTimer = null;
+
+  function markNavSwitching() {
+    document.body.classList.add(NAV_SWITCHING_CLASS);
+    if (__navSwitchingTimer) clearTimeout(__navSwitchingTimer);
+    __navSwitchingTimer = setTimeout(() => {
+      __navSwitchingTimer = null;
+      document.body.classList.remove(NAV_SWITCHING_CLASS);
+    }, NAV_SWITCHING_MS);
+  }
+
+
+  /**
+   * 设置active、by。
+   * 目的：提供统一读写入口，降低耦合。
+   * @returns {any} 返回结果。
+   */
+  function setActiveByHash(triggerNavSwitching = false) {
+    if (triggerNavSwitching) markNavSwitching();
     let key = (location.hash || "#keys").replace("#", "") || "keys";
     if (key === "tuning") key = "basic";
     if (!document.getElementById(key)) key = "keys";
 
-    // 更新侧边栏状态
+
     sidebarItems.forEach((item) => {
       const itemKey = item.getAttribute("data-key");
       const isActive = itemKey === key;
 
-      // 切换 active 类
+
       if (isActive) {
           item.classList.add("active");
-          // 设置主题色变量 (根据 data-color)
+
           const color = item.getAttribute("data-color") || "#000000";
           document.documentElement.style.setProperty('--theme-color', color);
       } else {
@@ -1416,17 +1887,17 @@ function lockEl(el) {
       }
     });
 
-    // 切换页面显示
+
     $$("#stageBody > section.page").forEach((p) => p.classList.toggle("active", p.id === key));
 
-    // 页面特定类名
+
     document.body.classList.toggle("page-keys", key === "keys");
     document.body.classList.toggle("page-dpi", key === "dpi");
     document.body.classList.toggle("page-basic", key === "basic");
     document.body.classList.toggle("page-advanced", key === "advanced");
     document.body.classList.toggle("page-testtools", key === "testtools");
 
-    // leaving test tools: make sure PointerLock is released
+
     if (key !== "testtools") {
       try {
         const pl = document.pointerLockElement;
@@ -1437,7 +1908,7 @@ function lockEl(el) {
       document.body.classList.remove("tt-pointerlock");
     }
 
-    // notify embedded tools (optional)
+
     try {
       window.dispatchEvent(new CustomEvent("testtools:active", { detail: { active: key === "testtools" } }));
     } catch (_) {}
@@ -1447,12 +1918,11 @@ function lockEl(el) {
     }
 
 
-    
     const sb = $("#stageBody");
     if (sb) sb.scrollTop = 0;
   }
 
-  // ====== 基础性能页：性能模式 & 回报率（MONOLITH 交互） ======
+
   let __basicMonolithInited = false;
   let __basicModeItems = [];
   let __basicHzItems = [];
@@ -1460,9 +1930,9 @@ function lockEl(el) {
   let __basicSvgPath = null;
   let __basicActiveModeEl = null;
   let __basicActiveHzEl = null;
-  let __startLineAnimation = null; // 用于外部调用的连线动画启动函数
+  let __startLineAnimation = null;
 
-  // 默认性能模式配置（作为兜底）
+
   const __defaultPerfConfig = {
     low:  { color: "#00A86B", text: "低功耗模式 传感器帧率 1000~5000 AutoFPS" },
     hp:   { color: "#000000", text: "标准模式 传感器帧率 1000~20000 AutoFPS" },
@@ -1470,51 +1940,136 @@ function lockEl(el) {
     oc:   { color: "#4F46E5", text: "超频模式 传感器帧率 25000 FPS " },
   };
 
-  // 优先读取 refactor.js 中的配置，否则使用默认值
-  const __basicModeConfig = adapter?.ui?.perfMode || __defaultPerfConfig;
 
+  const __basicModeConfig = adapter?.ui?.perfMode || __defaultPerfConfig;
+  const __isDualPollingRates = hasFeature("hasDualPollingRates");
+  const __hasPerformanceMode = hasFeature("hasPerformanceMode");
+  const __hideBasicSynapse = hasFeature("hideBasicSynapse");
+  const __hideBasicFooterSecondaryText = hasFeature("hideBasicFooterSecondaryText");
+  const __dualPollingThemeMap =
+    (adapter?.ui?.pollingThemeByWirelessHz && typeof adapter.ui.pollingThemeByWirelessHz === "object")
+      ? adapter.ui.pollingThemeByWirelessHz
+      : null;
+
+  function __resolveDualPollingThemeColor(hz) {
+    if (!__dualPollingThemeMap) return null;
+    const direct = __dualPollingThemeMap[String(hz)];
+    if (typeof direct === "string" && direct.trim()) return direct;
+
+    const target = Number(hz);
+    const entries = Object.entries(__dualPollingThemeMap)
+      .map(([k, v]) => [Number(k), v])
+      .filter(([rate, color]) => Number.isFinite(rate) && typeof color === "string" && color.trim());
+    if (!entries.length) return null;
+    if (!Number.isFinite(target)) return entries[0][1];
+
+    let best = entries[0];
+    for (const item of entries) {
+      if (Math.abs(item[0] - target) < Math.abs(best[0] - target)) best = item;
+    }
+    return best[1];
+  }
+
+  /**
+   * 刷新基础性能页项引用。
+   * 目的：在 DOM 重建后重新抓取节点，避免使用失效引用。
+   * @param {any} root - 参数 root。
+   * @returns {any} 返回结果。
+   */
+  function __refreshBasicItemRefs(root = document.getElementById("basicMonolith")) {
+    if (!root) {
+      __basicModeItems = [];
+      __basicHzItems = [];
+      return;
+    }
+    const leftSelector = __isDualPollingRates
+      ? "#basicModeColumn .basicItem[data-hz]"
+      : "#basicModeColumn .basicItem[data-perf]";
+    __basicModeItems = Array.from(root.querySelectorAll(leftSelector));
+    __basicHzItems = Array.from(root.querySelectorAll("#basicHzColumn .basicItem[data-hz]"));
+  }
+
+  /**
+   * 同步basic、monolith。
+   * 目的：保持状态一致性，避免局部更新遗漏。
+   * @returns {any} 返回结果。
+   */
   function syncBasicMonolithUI() {
     const root = document.getElementById("basicMonolith");
     if (!root) return;
+    __refreshBasicItemRefs(root);
 
     const perf = document.querySelector('input[name="perfMode"]:checked')?.value || "low";
-    const hz = document.getElementById("pollingSelect")?.value || "1000";
+    const wiredHz = document.getElementById("pollingSelect")?.value || "1000";
+    const wirelessHz = document.getElementById("pollingSelectWireless")?.value || wiredHz;
+    const hz = wiredHz;
 
-    // 左列：性能模式
+
     __basicActiveModeEl = null;
-    __basicModeItems.forEach((el) => {
-      const on = el.dataset.perf === perf;
-      el.classList.toggle("active", on);
-      if (on) __basicActiveModeEl = el;
-    });
+    if (__isDualPollingRates) {
+      __basicModeItems.forEach((el) => {
+        const on = String(el.dataset.hz) === String(wirelessHz);
+        el.classList.toggle("active", on);
+        if (on) __basicActiveModeEl = el;
+      });
+    } else {
+      __basicModeItems.forEach((el) => {
+        const on = el.dataset.perf === perf;
+        el.classList.toggle("active", on);
+        if (on) __basicActiveModeEl = el;
+      });
+    }
 
-    // 右列：回报率
+
     __basicActiveHzEl = null;
     __basicHzItems.forEach((el) => {
-      const on = String(el.dataset.hz) === String(hz);
+      const on = String(el.dataset.hz) === String(wiredHz);
       el.classList.toggle("active", on);
       if (on) __basicActiveHzEl = el;
     });
 
-    // 底部 ticker / status
+
     const ticker = document.getElementById("basicHzTicker");
-    if (ticker) ticker.innerHTML = '<span class="ticker-label">轮询率：</span>' + String(hz) + " HZ";
+    if (ticker) {
+      ticker.innerHTML = '<span class="ticker-label">轮询率：</span>' + String(hz) + " HZ";
+    }
 
     const st = document.getElementById("basicStatusText");
     const cfg = __basicModeConfig[perf] || __basicModeConfig.low;
-    if (st) st.textContent = cfg.text;
-
-    // 主题色：仅在基础性能页时改变（避免影响其它页面）
-    if (document.body.classList.contains("page-basic")) {
-      document.documentElement.style.setProperty("--theme-color", cfg.color);
+    if (st) {
+      st.textContent = __hideBasicFooterSecondaryText ? "" : cfg.text;
     }
 
-    // 触发连线动画更新（当用户点击切换模式时）
+    let themeColor = cfg.color;
+    if (__isDualPollingRates) {
+      const dualThemeColor = __resolveDualPollingThemeColor(wirelessHz);
+      if (dualThemeColor) themeColor = dualThemeColor;
+    }
+
+
+    if (document.body.classList.contains("page-basic")) {
+      document.documentElement.style.setProperty("--theme-color", themeColor);
+    }
+
+    if (__isDualPollingRates) {
+      if (ticker) ticker.innerHTML = '<span class="ticker-label">回报率:</span>' + `无线 ${wirelessHz} HZ | 有线 ${wiredHz} HZ`;
+      if (st && !__hideBasicFooterSecondaryText) {
+        st.textContent = `无线 ${wirelessHz}Hz | 有线 ${wiredHz}Hz`;
+      }
+    }
+
+
     if (typeof __startLineAnimation === 'function') {
       __startLineAnimation(600);
     }
   }
 
+  /**
+   * 内部处理性能模式逻辑。
+   * 目的：提供统一读写入口，降低耦合。
+   * @param {any} perf - 参数 perf。
+   * @returns {any} 返回结果。
+   */
   function __basicSetPerf(perf) {
     const r = document.querySelector(`input[name="perfMode"][value="${perf}"]`);
     if (!r) return;
@@ -1522,6 +2077,12 @@ function lockEl(el) {
     r.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  /**
+   * 内部处理basic、set逻辑。
+   * 目的：提供统一读写入口，降低耦合。
+   * @param {any} hz - 参数 hz。
+   * @returns {any} 返回结果。
+   */
   function __basicSetHz(hz) {
     const sel = document.getElementById("pollingSelect");
     if (!sel) return;
@@ -1529,11 +2090,34 @@ function lockEl(el) {
     sel.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  /**
+   * 鍐呴儴澶勭悊basic鏃犵嚎鍥炴姤鐜囪缃€?
+   * 鐩殑锛氬皢宸︿晶鍒楃偣鍑诲拰闅愯棌鎺т欢缁戝畾鍒版棤绾垮洖鎶ョ巼鍐欏叆娴佺▼銆?
+   * @param {any} hz - 鍙傛暟 hz銆?
+   * @returns {any} 杩斿洖缁撴灉銆?
+   */
+  function __basicSetWirelessHz(hz) {
+    const sel = document.getElementById("pollingSelectWireless");
+    if (!sel) return;
+    sel.value = String(hz);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  /**
+   * 内部处理basic、bind逻辑。
+   * 目的：统一处理basic、bind相关流程，保证行为一致。
+   * @param {any} el - 参数 el。
+   * @param {any} handler - 参数 handler。
+   * @returns {any} 返回结果。
+   */
   function __basicBindItem(el, handler) {
+    if (!el || typeof handler !== "function") return;
+    if (el.dataset.__basic_bound === "1") return;
+    el.dataset.__basic_bound = "1";
     el.addEventListener("click", (e) => {
       const t = e.target;
-      // 如果点击的是内部的原生控件，让它自己处理，不再重复调用 handler
-      if (t && (t.closest('input[name="perfMode"]') || t.closest('#pollingSelect'))) {
+
+      if (t && (t.closest('input[name="perfMode"]') || t.closest('#pollingSelect') || t.closest('#pollingSelectWireless'))) {
         return;
       }
       handler();
@@ -1546,6 +2130,11 @@ function lockEl(el) {
     });
   }
 
+  /**
+   * 初始化basic、monolith。
+   * 目的：集中初始化与事件绑定，避免重复绑定或顺序问题。
+   * @returns {any} 返回结果。
+   */
   function initBasicMonolithUI() {
     if (__basicMonolithInited) return;
     const root = document.getElementById("basicMonolith");
@@ -1553,26 +2142,30 @@ function lockEl(el) {
 
     __basicMonolithInited = true;
 
-    __basicModeItems = Array.from(root.querySelectorAll("#basicModeColumn .basicItem[data-perf]"));
-    __basicHzItems = Array.from(root.querySelectorAll("#basicHzColumn .basicItem[data-hz]"));
+    __refreshBasicItemRefs(root);
     __basicSvgLayer = root.querySelector("#basicSynapseLayer");
     __basicSvgPath = root.querySelector("#basicSynapseLayer .basicConnectionPath");
 
-    // Wrap the visible text content so we can align the curve to the actual glyph box.
-    // IMPORTANT: handle whitespace text nodes correctly (right column has anchor first).
+
+    /**
+     * 确保span。
+     * 目的：统一处理span相关流程，保证行为一致。
+     * @param {any} item - 参数 item。
+     * @param {any} side - 参数 side。
+     * @returns {any} 返回结果。
+     */
     const ensureLabelSpan = (item, side) => {
       if (!item || item.querySelector(":scope > .basicLabel")) return;
 
       const anchor = item.querySelector(":scope > .basicAnchor") || item.querySelector(".basicAnchor");
-      // Extract visible text (avoid being affected by whitespace / newlines in HTML).
+
       const text = (item.textContent || "").replace(/\s+/g, " ").trim();
 
       const label = document.createElement("span");
       label.className = "basicLabel";
       label.textContent = text;
 
-      // Clear all nodes (including stray whitespace), then rebuild in a deterministic order.
-      // Keep the existing anchor element so styles remain unchanged.
+
       while (item.firstChild) item.removeChild(item.firstChild);
       if (anchor) anchor.remove();
 
@@ -1588,11 +2181,16 @@ function lockEl(el) {
     __basicModeItems.forEach((it) => ensureLabelSpan(it, "left"));
     __basicHzItems.forEach((it) => ensureLabelSpan(it, "right"));
 
-    // Keep SVG user units mapped to pixels 1:1 for stable math.
+
+    /**
+     * 同步svg、box。
+     * 目的：保持状态一致性，避免局部更新遗漏。
+     * @returns {any} 返回结果。
+     */
     const syncSvgBox = () => {
       if (!__basicSvgLayer) return;
-      const w = Math.max(1, window.innerWidth || 1);
-      const h = Math.max(1, window.innerHeight || 1);
+      const w = Math.max(1, Number(__basicSvgLayer.clientWidth || __basicSvgLayer.getBoundingClientRect().width || 1));
+      const h = Math.max(1, Number(__basicSvgLayer.clientHeight || __basicSvgLayer.getBoundingClientRect().height || 1));
       __basicSvgLayer.setAttribute("viewBox", `0 0 ${w} ${h}`);
       __basicSvgLayer.setAttribute("preserveAspectRatio", "none");
     };
@@ -1600,40 +2198,67 @@ function lockEl(el) {
     window.addEventListener("resize", syncSvgBox);
 
     __basicModeItems.forEach((el) => {
-      __basicBindItem(el, () => __basicSetPerf(el.dataset.perf));
+      if (__isDualPollingRates) {
+        __basicBindItem(el, () => __basicSetWirelessHz(el.dataset.hz));
+      } else {
+        __basicBindItem(el, () => __basicSetPerf(el.dataset.perf));
+      }
     });
     __basicHzItems.forEach((el) => {
       __basicBindItem(el, () => __basicSetHz(el.dataset.hz));
     });
 
-    // 当隐藏表单控件被外部逻辑更新时（例如设备回包 applyConfigToUi），同步 UI
-    document.getElementById("pollingSelect")?.addEventListener("change", syncBasicMonolithUI);
-    document.querySelectorAll('input[name="perfMode"]').forEach((r) => {
-      r.addEventListener("change", syncBasicMonolithUI);
-    });
+    const __observerTargetA = root.querySelector("#basicModeColumn");
+    const __observerTargetB = root.querySelector("#basicHzColumn");
+    if (window.MutationObserver) {
+      const onMut = () => {
+        __refreshBasicItemRefs(root);
+        __basicModeItems.forEach((el) => {
+          if (__isDualPollingRates) __basicBindItem(el, () => __basicSetWirelessHz(el.dataset.hz));
+          else __basicBindItem(el, () => __basicSetPerf(el.dataset.perf));
+        });
+        __basicHzItems.forEach((el) => __basicBindItem(el, () => __basicSetHz(el.dataset.hz)));
+        syncBasicMonolithUI();
+      };
+      const mo = new MutationObserver(onMut);
+      if (__observerTargetA) mo.observe(__observerTargetA, { childList: true, subtree: true });
+      if (__observerTargetB) mo.observe(__observerTargetB, { childList: true, subtree: true });
+    }
 
-    // 连线动画实现：
-    // 1) 使用文字 glyph 的 bounding box，而不是 1px anchor 点
-    // 2) 使用 SVG 的屏幕坐标变换矩阵，把 client 坐标精确映射到 SVG 坐标，避免任何 transform/scale 造成的漂移
-    // 3) 端点始终落在文字外侧，绝不压在字下
+
+    document.getElementById("pollingSelect")?.addEventListener("change", syncBasicMonolithUI);
+    if (__isDualPollingRates) {
+      document.getElementById("pollingSelectWireless")?.addEventListener("change", syncBasicMonolithUI);
+    } else {
+      document.querySelectorAll('input[name="perfMode"]').forEach((r) => {
+        r.addEventListener("change", syncBasicMonolithUI);
+      });
+    }
+
+
+    /**
+     * 处理client、to逻辑。
+     * 目的：处理指针交互与坐标映射，保证拖拽/命中判断准确。
+     * @param {any} x - 参数 x。
+     * @param {any} y - 参数 y。
+     * @returns {any} 返回结果。
+     */
     const clientToSvg = (x, y) => {
-      if (!__basicSvgLayer || !__basicSvgLayer.getScreenCTM) return { x, y };
-      const ctm = __basicSvgLayer.getScreenCTM();
-      if (!ctm) return { x, y };
-      const inv = ctm.inverse();
-      // DOMPoint is widely supported; fall back to SVGPoint.
-      try {
-        const p = new DOMPoint(x, y).matrixTransform(inv);
-        return { x: p.x, y: p.y };
-      } catch (_) {
-        const pt = __basicSvgLayer.createSVGPoint();
-        pt.x = x;
-        pt.y = y;
-        const p = pt.matrixTransform(inv);
-        return { x: p.x, y: p.y };
-      }
+      const layerRect = __basicSvgLayer?.getBoundingClientRect();
+      if (!layerRect) return { x, y };
+      return {
+        x: x - layerRect.left,
+        y: y - layerRect.top,
+      };
     };
 
+    /**
+     * 获取attach、point。
+     * 目的：提供统一读写入口，降低耦合。
+     * @param {any} item - 参数 item。
+     * @param {any} side - 参数 side。
+     * @returns {any} 返回结果。
+     */
     const getAttachPoint = (item, side) => {
       const label = item?.querySelector(".basicLabel") || item;
       if (!label) return null;
@@ -1641,49 +2266,64 @@ function lockEl(el) {
       if (!r || !isFinite(r.left) || !isFinite(r.top)) return null;
 
       const isActive = item.classList.contains("active");
-      // pad scales with font size and adds extra room for text-shadow on active items
+
       const basePad = Math.max(16, Math.min(44, r.height * 0.24));
       const pad = basePad + (isActive ? 14 : 0);
 
-      // active glyphs feel vertically lower due to big text-shadow; bias slightly upward
+
       const yBias = isActive ? 0.50 : 0.54;
       const y = r.top + r.height * yBias;
       const x = side === "left" ? r.right + pad : r.left - pad;
-      return { x, y };
+      return clientToSvg(x, y);
     };
 
-    // --- 优化开始：移除无限循环，改为按需动画 ---
+
     let lineRafId = 0;
-    
-    // 执行一次连线更新
+
+
+    /**
+     * 更新line、once。
+     * 目的：在状态变化时同步 UI 或数据，避免不一致。
+     * @returns {any} 返回结果。
+     */
     const updateLineOnce = () => {
       if (!document.body.classList.contains("page-basic")) return;
       if (!__basicActiveModeEl || !__basicActiveHzEl || !__basicSvgPath) return;
+      syncSvgBox();
 
       const a = getAttachPoint(__basicActiveModeEl, "left");
       const b = getAttachPoint(__basicActiveHzEl, "right");
       if (a && b) {
-        const A = clientToSvg(a.x, a.y);
-        const B = clientToSvg(b.x, b.y);
+        const dx = Math.max(40, Math.abs(b.x - a.x) * 0.15);
+        const d = `M ${a.x.toFixed(2)} ${a.y.toFixed(2)} C ${(a.x + dx).toFixed(2)} ${a.y.toFixed(2)}, ${(b.x - dx).toFixed(2)} ${b.y.toFixed(2)}, ${b.x.toFixed(2)} ${b.y.toFixed(2)}`;
 
-        const dx = Math.max(40, Math.abs(B.x - A.x) * 0.15);
-        const d = `M ${A.x.toFixed(2)} ${A.y.toFixed(2)} C ${(A.x + dx).toFixed(2)} ${A.y.toFixed(2)}, ${(B.x - dx).toFixed(2)} ${B.y.toFixed(2)}, ${B.x.toFixed(2)} ${B.y.toFixed(2)}`;
-        
-        // 仅当路径实际变化时才写入 DOM
+
         if (__basicSvgPath.getAttribute("d") !== d) {
             __basicSvgPath.setAttribute("d", d);
         }
       }
     };
 
-    // 启动动画循环（持续 duration 毫秒后自动停止）
+
+    /**
+     * 启动line、animation。
+     * 目的：统一处理line、animation相关流程，保证行为一致。
+     * @param {any} duration - 参数 duration。
+     * @returns {any} 返回结果。
+     */
     const startLineAnimation = (duration = 800) => {
       if (lineRafId) cancelAnimationFrame(lineRafId);
       const start = performance.now();
-      
+
+      /**
+       * 处理loop逻辑。
+       * 目的：统一处理loop相关流程，保证行为一致。
+       * @param {any} now - 参数 now。
+       * @returns {any} 返回结果。
+       */
       const loop = (now) => {
         updateLineOnce();
-        // 如果时间未到，或者侧边栏/选中项仍在过渡动画中，继续下一帧
+
         if (now - start < duration) {
           lineRafId = requestAnimationFrame(loop);
         } else {
@@ -1693,37 +2333,43 @@ function lockEl(el) {
       lineRafId = requestAnimationFrame(loop);
     };
 
-    // 将函数暴露到全局，供 syncBasicMonolithUI 调用
-    __startLineAnimation = startLineAnimation;
 
-    // 事件监听：仅在必要时触发动画
-    // 1. 窗口大小改变时（快速更新）
-    window.addEventListener("resize", () => startLineAnimation(100));
-    
-    // 2. 侧边栏过渡结束时（布局稳定后校准一次）
-    const sidebar = document.querySelector('.sidebar');
-    if (sidebar) {
-        sidebar.addEventListener('transitionend', () => startLineAnimation(100));
+    if (__hideBasicSynapse) {
+      __startLineAnimation = null;
+    } else {
+      __startLineAnimation = startLineAnimation;
+
+
+      window.addEventListener("resize", () => startLineAnimation(100));
+
+
+      const sidebar = document.querySelector('.sidebar');
+      if (sidebar) {
+          sidebar.addEventListener('transitionend', (e) => {
+            if (!e || e.target !== sidebar) return;
+            if (e.propertyName !== "width" && e.propertyName !== "padding-left") return;
+            startLineAnimation(120);
+          });
+      }
+
+
+      startLineAnimation(100);
     }
 
-    // 初始运行一次
-    startLineAnimation(100);
-    
-    // --- 优化结束 ---
 
-    // 初始同步
     syncBasicMonolithUI();
   }
 
 
-  // =========================================
-  // Advanced Panel UI (匹配“高级参数UI样式.html”)
-  // - 休眠/防抖：滑块离散档位（同步到隐藏 select，保留原写入逻辑）
-  // - 数码读数：angle/feel
-  // =========================================
-
   let __advancedPanelInited = false;
+  let __logitechAdvancedUiInited = false;
 
+  /**
+   * 内部处理列表逻辑。
+   * 目的：统一处理列表相关流程，保证行为一致。
+   * @param {any} selectEl - 参数 selectEl。
+   * @returns {any} 返回结果。
+   */
   function __optList(selectEl) {
     if (!selectEl) return [];
     const opts = Array.from(selectEl.options || []);
@@ -1733,17 +2379,24 @@ function lockEl(el) {
     }));
   }
 
+  /**
+   * 内部格式化休眠。
+   * 目的：统一展示格式，减少格式分散。
+   * @param {any} valStr - 参数 valStr。
+   * @param {any} rawLabel - 参数 rawLabel。
+   * @returns {any} 返回结果。
+   */
   function __formatSleepLabel(valStr, rawLabel) {
     const raw = String(rawLabel || "");
 
-    // 若 label 已包含单位（如 2m/10m/120m），提取数值部分
+
     if (/[a-zA-Z]/.test(raw) && raw.trim().length <= 8) {
       const numMatch = raw.match(/^(\d+)/);
       if (numMatch) return numMatch[1];
       return raw.trim();
     }
 
-    // 形如：900(15m) -> 提取数值
+
     const m = raw.match(/\(([^)]+)\)/);
     if (m && m[1]) {
       const numMatch = m[1].match(/^(\d+)/);
@@ -1754,31 +2407,62 @@ function lockEl(el) {
     const v = Number(valStr);
     if (!Number.isFinite(v)) return raw || (valStr || "-");
 
-    // 返回纯数值（不包含单位）
+
     if (v >= 3600 && v % 3600 === 0) return String(v / 3600);
     if (v >= 60 && v % 60 === 0 && v < 3600) return String(v / 60);
     return String(v);
   }
 
+  /**
+   * 内部获取休眠。
+   * 目的：提供统一读写入口，降低耦合。
+   * @param {any} valStr - 参数 valStr。
+   * @returns {any} 返回结果。
+   */
   function __getSleepUnit(valStr) {
     const v = Number(valStr);
     if (!Number.isFinite(v)) return "";
-    
-    // 小于60秒显示"s"，大于等于60秒显示"min"
+
+
     if (v < 60) return "s";
     return "min";
   }
 
+  /**
+   * 内部格式化防抖。
+   * 目的：合并高频触发，降低写入抖动与性能开销。
+   * @param {any} valStr - 参数 valStr。
+   * @param {any} rawLabel - 参数 rawLabel。
+   * @returns {any} 返回结果。
+   */
   function __formatDebounceLabel(valStr, rawLabel) {
     const v = Number(valStr);
     if (Number.isFinite(v)) return String(v);
     return String(rawLabel || valStr || "-");
   }
 
+  /**
+   * 内部钳制逻辑。
+   * 目的：限制数值边界，防止越界。
+   * @param {any} n - 参数 n。
+   * @param {any} a - 参数 a。
+   * @param {any} b - 参数 b。
+   * @returns {any} 返回结果。
+   */
   function __clamp(n, a, b) {
     return Math.max(a, Math.min(b, n));
   }
 
+  /**
+   * 内部同步滑块。
+   * 目的：同步滑块与数值输入，避免 UI 与值不一致。
+   * @param {any} selectEl - 参数 selectEl。
+   * @param {any} rangeEl - 参数 rangeEl。
+   * @param {any} dispEl - 参数 dispEl。
+   * @param {any} formatLabel - 参数 formatLabel。
+   * @param {any} getUnit - 参数 getUnit。
+   * @returns {any} 返回结果。
+   */
   function __syncDiscreteSlider(selectEl, rangeEl, dispEl, formatLabel, getUnit) {
     const opts = __optList(selectEl);
     if (rangeEl) {
@@ -1796,7 +2480,7 @@ function lockEl(el) {
     const o = opts[idx] || { val: cur, rawLabel: cur };
     if (dispEl) {
       dispEl.textContent = formatLabel(String(o.val), String(o.rawLabel));
-      // 如果有单位函数，设置单位
+
       if (getUnit && typeof getUnit === 'function') {
         dispEl.setAttribute('data-unit', getUnit(String(o.val)));
       }
@@ -1804,45 +2488,47 @@ function lockEl(el) {
     return { opts, idx };
   }
 
-  // 仅更新休眠时间鳍片UI（不触发其他同步，避免在input事件中重置滑块值）
+
+  /**
+   * 更新休眠。
+   * 目的：在状态变化时同步 UI 或数据，避免不一致。
+   * @returns {any} 返回结果。
+   */
   function updateSleepFins() {
     const sleepInput = document.getElementById("sleepInput");
     const sleepFinDisplay = document.getElementById("sleepFinDisplay");
 
     if (sleepInput && sleepFinDisplay) {
-      // 获取实际的范围值
+
       const currentIdx = parseInt(sleepInput.value) || 0;
       const minIdx = parseInt(sleepInput.min) || 0;
       const maxIdx = parseInt(sleepInput.max) || 6;
-      
-      // 计算当前值在范围内的比例 (0.0 ~ 1.0)
+
+
       let progress = 0;
       if (maxIdx > minIdx) {
         progress = (currentIdx - minIdx) / (maxIdx - minIdx);
-        progress = Math.max(0, Math.min(1, progress)); // 确保在 0-1 范围内
+        progress = Math.max(0, Math.min(1, progress));
       } else if (currentIdx >= minIdx) {
-        progress = 1; // 如果最大值等于最小值，且当前值等于它们，则显示全部
+        progress = 1;
       }
-      
+
       const fins = sleepFinDisplay.querySelectorAll(".fin");
-      const totalFins = fins.length; // 总共7个鳍片
-      
-      // 根据比例计算应该激活的鳍片数量
-      // 使用 Math.ceil 确保至少显示1个（当值不为最小值时）
-      // 或者使用 Math.round 更精确，但最小值时可能不显示
-      // 这里使用 Math.ceil，但特殊处理最小值情况
+      const totalFins = fins.length;
+
+
       let activeCount = 0;
       if (progress > 0) {
-        // 非最小值时，向上取整，确保有视觉反馈
+
         activeCount = Math.ceil(progress * totalFins);
       }
-      // 如果 progress === 0，activeCount 保持为 0（最小值时不显示任何鳍片）
+
 
       fins.forEach((fin, index) => {
-        // 逻辑：根据 activeCount 来决定哪些鳍片应该激活
+
         if (index < activeCount) {
           fin.classList.add("active");
-          // 增加微小的延迟偏移，产生那种"咔咔咔"逐个翻转的机械感
+
           fin.style.transitionDelay = `${index * 0.03}s`;
         } else {
           fin.classList.remove("active");
@@ -1852,11 +2538,16 @@ function lockEl(el) {
     }
   }
 
+  /**
+   * 同步advanced、panel。
+   * 目的：保持状态一致性，避免局部更新遗漏。
+   * @returns {any} 返回结果。
+   */
   function syncAdvancedPanelUi() {
     const root = document.getElementById("advancedPanel");
     if (!root) return;
 
-    // 休眠 / 防抖：select <-> range(离散索引) 同步
+
     __syncDiscreteSlider(
       document.getElementById("sleepSelect"),
       document.getElementById("sleepInput"),
@@ -1872,84 +2563,274 @@ function lockEl(el) {
       __formatDebounceLabel
     );
 
-    // 防抖同步逻辑：宽幅稳定器
+
     const debounceInput = document.getElementById("debounceInput");
     const debounceBar = document.getElementById("debounceBar");
 
     if (debounceInput && debounceBar) {
       const val = parseFloat(debounceInput.value) || 0;
       const min = parseFloat(debounceInput.min) || 0;
-      const max = parseFloat(debounceInput.max) || 10; 
-      
-      // 归一化进度 (0.0 ~ 1.0)
+      const max = parseFloat(debounceInput.max) || 10;
+
+
       let pct = (val - min) / (max - min);
       if (isNaN(pct)) pct = 0;
       if (max === min) pct = 0;
-      
-      // 驱动宽条
-      // 最小宽度 4px (保留一根线，不消失)
-      // 最大宽度 100px (视窗总宽120px，左右留白10px)
+
+
       const minW = 4;
-      const maxW = 100; 
+      const maxW = 100;
       const widthPx = minW + (pct * (maxW - minW));
-      
+
       debounceBar.style.width = `${widthPx}px`;
     }
 
-    // 角度同步：水平仪逻辑
+
     const angleInput = document.getElementById("angleInput");
     const angleDisp = document.getElementById("angle_disp");
-    const horizonLine = document.getElementById("horizonLine"); // 获取水平线元素
+    const horizonLine = document.getElementById("horizonLine");
 
     if (angleInput) {
       const val = Number(angleInput.value ?? 0);
-      
-      // 更新文字读数
+
+
       if (angleDisp) angleDisp.textContent = String(val);
-      
-      // 更新水平线旋转
-      // 注意：正值通常代表顺时针旋转，负值逆时针，符合视觉直觉
+
+
       if (horizonLine) {
         horizonLine.style.transform = `translateY(-50%) rotate(${val}deg)`;
       }
     }
 
-    // 高度/手感同步逻辑
+
     const feelInput = document.getElementById("feelInput");
     const feelDisp = document.getElementById("feel_disp");
-    const heightBlock = document.getElementById("heightBlock"); // 获取悬浮块
+    const heightBlock = document.getElementById("heightBlock");
 
     if (feelInput) {
       const val = parseFloat(feelInput.value) || 0;
-      
-      // 动态获取当前 min/max (兼容 Rapoo 0.7-1.7 和 Chaos 0-60)
+
+
       const min = parseFloat(feelInput.min) || 0;
-      // 这是一个防呆保护，防止除以0
-      const max = parseFloat(feelInput.max) === min ? (min + 100) : parseFloat(feelInput.max); 
-      
-      // 更新文字
+
+      const max = parseFloat(feelInput.max) === min ? (min + 100) : parseFloat(feelInput.max);
+
+
       if (feelDisp) feelDisp.textContent = String(val);
 
-      // 更新悬浮块位置
+
       if (heightBlock) {
-        // 1. 计算当前进度的百分比 (0.0 ~ 1.0)
+
         let pct = (val - min) / (max - min);
         pct = Math.max(0, Math.min(1, pct));
-        
-        // 2. 映射到像素高度
-        // 最低点: bottom: 6px (贴在地面线上)
-        // 最高点: bottom: 30px (接近顶部，预留缓冲)
-        // 行程: 24px
+
+
         const bottomPx = 6 + (pct * 24);
-        
+
         heightBlock.style.bottom = `${bottomPx}px`;
       }
     }
 
-    // 移动到函数底部：确保 sleepInput.value 已经被 __syncDiscreteSlider 更新后，再渲染百叶窗鳍片
+
     updateSleepFins();
+    syncLogitechAdvancedUi();
   }
 
+  const LG_SURFACE_MODE_OPTS = [
+    { val: "auto", label: "自动", cls: "lg-surface-mode-auto" },
+    { val: "on", label: "打开", cls: "lg-surface-mode-on" },
+    { val: "off", label: "关闭", cls: "lg-surface-mode-off" },
+  ];
+
+  function __normalizeLgSurfaceMode(rawValue) {
+    const mode = String(rawValue || "").trim().toLowerCase();
+    if (mode === "on") return "on";
+    if (mode === "off") return "off";
+    return "auto";
+  }
+
+  function updateLgSurfaceModeCycleUI(mode, animate = true) {
+    const container = document.getElementById("lgSurfaceModeCycle");
+    if (!container) return;
+    const selectEl = document.getElementById("lgSurfaceModeSelect");
+    const normalized = __normalizeLgSurfaceMode(mode);
+    const opt = LG_SURFACE_MODE_OPTS.find((item) => item.val === normalized) || LG_SURFACE_MODE_OPTS[0];
+    const syncForm = (nextValue) => {
+      container.dataset.value = String(nextValue);
+      container.classList.toggle("is-selected", nextValue !== "auto");
+      if (selectEl) selectEl.value = nextValue;
+    };
+
+    if (!animate) {
+      commitCycleVisual(container, opt.val, opt.label, opt.cls, syncForm);
+      return;
+    }
+
+    rotateCycleCrosshair(container);
+    animateCycleVisual(container, opt.val, opt.label, opt.cls, syncForm);
+  }
+
+  function __clampLgBhop(rawValue) {
+    const n = Number(rawValue);
+    if (!Number.isFinite(n)) return 0;
+    const clamped = Math.max(0, Math.min(1000, Math.round(n)));
+    return Math.round(clamped / 100) * 100;
+  }
+
+  function __clampLgBhopEnabled(rawValue) {
+    const ms = __clampLgBhop(rawValue);
+    return ms <= 0 ? 100 : ms;
+  }
+
+  let __pendingOnboardMemoryAutoEnableCheck = false;
+
+  function __armOnboardMemoryAutoEnableCheck() {
+    __pendingOnboardMemoryAutoEnableCheck = !!hasFeature("autoEnableOnboardMemoryOnConnect");
+  }
+
+  function __clearOnboardMemoryAutoEnableCheck() {
+    __pendingOnboardMemoryAutoEnableCheck = false;
+  }
+
+  function __getOnboardMemoryDisableConfirmText() {
+    const text = String(adapter?.ui?.onboardMemoryDisableConfirmText || "").trim();
+    return text || "是否关闭板载内存模式，关闭后驱动设置不保证可用";
+  }
+
+  function __tryAutoEnableOnboardMemoryByConfig(cfg) {
+    if (!__pendingOnboardMemoryAutoEnableCheck) return;
+    __pendingOnboardMemoryAutoEnableCheck = false;
+    if (!hasFeature("autoEnableOnboardMemoryOnConnect")) return;
+    const onboardMemoryMode = readStandardValue(cfg, "onboardMemoryMode");
+    if (onboardMemoryMode == null || !!onboardMemoryMode) return;
+    enqueueDevicePatch({ onboardMemoryMode: true });
+    log("检测到板载内存模式未开启，已自动开启。");
+  }
+
+  function syncLogitechAdvancedUi() {
+    const surfaceModeSelect = document.getElementById("lgSurfaceModeSelect");
+    if (surfaceModeSelect) {
+      updateLgSurfaceModeCycleUI(surfaceModeSelect.value, false);
+    }
+
+    const bhopToggle = document.getElementById("lgBhopToggle");
+    const bhopInput = document.getElementById("lgBhopInput");
+    const bhopValue = document.getElementById("lgBhopValue");
+    const bhopCard = document.getElementById("lgBhopSliderCard");
+    const bhopBar = document.getElementById("lgBhopBar");
+    if (!bhopInput || !bhopValue) return;
+    const enabled = !!bhopToggle?.checked;
+    const sliderMs = __clampLgBhopEnabled(bhopInput.value);
+    if (String(sliderMs) !== String(bhopInput.value)) bhopInput.value = String(sliderMs);
+    bhopInput.disabled = !enabled;
+    if (bhopCard) bhopCard.classList.toggle("is-disabled", !enabled);
+    const shownMs = enabled ? sliderMs : 0;
+    bhopValue.textContent = String(shownMs);
+
+    if (bhopBar) {
+      const min = parseFloat(bhopInput.min) || 100;
+      const max = parseFloat(bhopInput.max) || 1000;
+      const pct = enabled && max > min
+        ? Math.max(0, Math.min(1, (sliderMs - min) / (max - min)))
+        : 0;
+      const minW = 4;
+      const maxW = 100;
+      const widthPx = minW + (pct * (maxW - minW));
+      bhopBar.style.width = `${widthPx}px`;
+    }
+  }
+
+  function initLogitechAdvancedUi() {
+    if (__logitechAdvancedUiInited) return;
+    const root = document.getElementById("advancedLogitechColumn");
+    if (!root) return;
+    __logitechAdvancedUiInited = true;
+
+    const onboardMemoryToggle = document.getElementById("lgOnboardMemoryToggle");
+    const lightforceToggle = document.getElementById("lgLightforceToggle");
+    const surfaceModeCycle = document.getElementById("lgSurfaceModeCycle");
+    const surfaceModeSelect = document.getElementById("lgSurfaceModeSelect");
+    const bhopToggle = document.getElementById("lgBhopToggle");
+    const bhopInput = document.getElementById("lgBhopInput");
+
+    if (surfaceModeSelect && !surfaceModeSelect.value) {
+      surfaceModeSelect.value = "auto";
+    }
+
+    if (onboardMemoryToggle) {
+      onboardMemoryToggle.addEventListener("change", () => {
+        if (!hasFeature("hasOnboardMemoryMode")) return;
+        const nextMode = !!onboardMemoryToggle.checked;
+        if (!nextMode && hasFeature("warnOnDisableOnboardMemoryMode")) {
+          const ok = confirm(__getOnboardMemoryDisableConfirmText());
+          if (!ok) {
+            onboardMemoryToggle.checked = true;
+            return;
+          }
+        }
+        enqueueDevicePatch({ onboardMemoryMode: nextMode });
+      });
+    }
+
+    if (lightforceToggle) {
+      lightforceToggle.addEventListener("change", () => {
+        if (!hasFeature("hasLightforceSwitch")) return;
+        enqueueDevicePatch({ lightforceSwitch: lightforceToggle.checked ? "optical" : "hybrid" });
+      });
+    }
+
+    if (surfaceModeCycle && surfaceModeSelect) {
+      const cycleSurfaceMode = () => {
+        const current = __normalizeLgSurfaceMode(surfaceModeSelect.value || surfaceModeCycle.dataset.value);
+        const curIdx = LG_SURFACE_MODE_OPTS.findIndex((item) => item.val === current);
+        const nextOpt = LG_SURFACE_MODE_OPTS[(curIdx + 1 + LG_SURFACE_MODE_OPTS.length) % LG_SURFACE_MODE_OPTS.length];
+        updateLgSurfaceModeCycleUI(nextOpt.val, true);
+        if (!hasFeature("hasSurfaceMode")) return;
+        enqueueDevicePatch({ surfaceMode: nextOpt.val });
+      };
+
+      surfaceModeCycle.addEventListener("click", cycleSurfaceMode);
+      surfaceModeCycle.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          cycleSurfaceMode();
+        }
+      });
+      surfaceModeSelect.addEventListener("change", () => {
+        updateLgSurfaceModeCycleUI(surfaceModeSelect.value, false);
+      });
+    }
+
+    if (bhopInput) {
+      const commitBhop = () => {
+        const enabled = !!bhopToggle?.checked;
+        const nextMs = enabled ? __clampLgBhopEnabled(bhopInput.value) : 0;
+        if (enabled) bhopInput.value = String(nextMs);
+        syncLogitechAdvancedUi();
+        if (!hasFeature("hasBhopDelay")) return;
+        enqueueDevicePatch({ bhopMs: nextMs });
+      };
+      bhopInput.addEventListener("input", () => {
+        if (!bhopToggle?.checked) return;
+        syncLogitechAdvancedUi();
+      });
+      bhopInput.addEventListener("change", commitBhop);
+      bhopInput.addEventListener("pointerup", commitBhop);
+      bhopInput.addEventListener("touchend", commitBhop);
+      bhopToggle?.addEventListener("change", () => {
+        if (bhopToggle.checked) bhopInput.value = String(__clampLgBhopEnabled(bhopInput.value));
+        commitBhop();
+      });
+    }
+
+    syncLogitechAdvancedUi();
+  }
+
+  /**
+   * 初始化advanced、panel。
+   * 目的：集中初始化与事件绑定，避免重复绑定或顺序问题。
+   * @returns {any} 返回结果。
+   */
   function initAdvancedPanelUI() {
     if (__advancedPanelInited) return;
     const root = document.getElementById("advancedPanel");
@@ -1964,7 +2845,7 @@ function lockEl(el) {
     const debounceInput = document.getElementById("debounceInput");
     const debounceDisp = document.getElementById("debounce_disp");
 
-    // range -> select（保留原写入逻辑：依然监听 select.change）
+
     if (sleepInput) {
       sleepInput.addEventListener("input", () => {
         const opts = __optList(sleepSel);
@@ -1974,7 +2855,7 @@ function lockEl(el) {
           sleepDisp.textContent = __formatSleepLabel(o.val, o.rawLabel);
           sleepDisp.setAttribute('data-unit', __getSleepUnit(o.val));
         }
-        // 实时更新鳍片UI（仅UI变化，不触发写入，不重置滑块值）
+
         updateSleepFins();
       });
       sleepInput.addEventListener("change", () => {
@@ -1995,24 +2876,24 @@ function lockEl(el) {
         const idx = __clamp(Number(debounceInput.value) || 0, 0, Math.max(0, opts.length - 1));
         const o = opts[idx] || { val: debounceSel?.value ?? "", rawLabel: "" };
         if (debounceDisp) debounceDisp.textContent = __formatDebounceLabel(o.val, o.rawLabel);
-        
-        // 实时更新防抖条宽度（仅UI变化）
+
+
         const debounceBar = document.getElementById("debounceBar");
         if (debounceBar) {
           const val = parseFloat(debounceInput.value) || 0;
           const min = parseFloat(debounceInput.min) || 0;
           const max = parseFloat(debounceInput.max) || 10;
-          
-          // 归一化进度 (0.0 ~ 1.0)
+
+
           let pct = (val - min) / (max - min);
           if (isNaN(pct)) pct = 0;
           if (max === min) pct = 0;
-          
-          // 驱动宽条
+
+
           const minW = 4;
           const maxW = 100;
           const widthPx = minW + (pct * (maxW - minW));
-          
+
           debounceBar.style.width = `${widthPx}px`;
         }
       });
@@ -2028,66 +2909,83 @@ function lockEl(el) {
       });
     }
 
-    // 当 select 被外部逻辑更新（例如 applyConfigToUi）时，同步到滑块/读数
+
     sleepSel?.addEventListener("change", syncAdvancedPanelUi);
     debounceSel?.addEventListener("change", syncAdvancedPanelUi);
 
-    // 滑条读数同步（写入逻辑在原有 angleInput/feelInput 监听中）
+
     const angleInput = document.getElementById("angleInput");
     const feelInput = document.getElementById("feelInput");
     angleInput?.addEventListener("input", syncAdvancedPanelUi);
     feelInput?.addEventListener("input", syncAdvancedPanelUi);
 
-    // 初始同步一次
+
     syncAdvancedPanelUi();
   }
 
 
-
-  // 为新的 nav-item 添加点击事件
   sidebarItems.forEach(item => {
       item.addEventListener('click', () => {
           const key = item.getAttribute("data-key");
-          if (key) location.hash = "#" + key;
+          if (!key) return;
+          markNavSwitching();
+          location.hash = "#" + key;
       });
   });
 
-  // 确保初始化时调用
-  window.removeEventListener("hashchange", setActiveByHash); // 移除旧监听(如果有)
-  window.addEventListener("hashchange", setActiveByHash);
+
+  function onHashChange() {
+    setActiveByHash(true);
+  }
+  window.removeEventListener("hashchange", onHashChange);
+  window.addEventListener("hashchange", onHashChange);
   setActiveByHash();
   initBasicMonolithUI();
   initAdvancedPanelUI();
+  initLogitechAdvancedUi();
 
-  // 兼容：旧 profileBtn 可能不存在
+
   $("#profileBtn")?.addEventListener("click", () => {
     location.hash = "#keys";
   });
 
-  // ====== Logger ======
+
   const logBox = $("#logBox");
+  /**
+   * 记录逻辑。
+   * 目的：统一日志输出，便于问题追踪。
+   * @param {any} args - 参数 args。
+   * @returns {any} 返回结果。
+   */
   function log(...args) {
     const line = args
       .map((x) => (typeof x === "string" ? x : JSON.stringify(x)))
       .join(" ");
     const ts = new Date().toLocaleTimeString();
-    
-    // 增加判空检查，防止页面元素不存在时报错
+
+
     if (logBox) {
       logBox.textContent += `[${ts}] ${line}\n`;
       logBox.scrollTop = logBox.scrollHeight;
     } else {
-      // 备用：如果界面上没有日志框，则输出到控制台方便调试
+
       console.log(`[${ts}] ${line}`);
     }
   }
+  /**
+   * 记录err。
+   * 目的：统一日志输出，便于问题追踪。
+   * @param {any} err - 参数 err。
+   * @param {any} prefix - 参数 prefix。
+   * @returns {any} 返回结果。
+   */
   function logErr(err, prefix = "错误") {
     const msg = err?.message || String(err);
     log(`${prefix}: ${msg}`);
     console.error(err);
   }
 
-  // 使用 ?. (可选链) 防止按钮不存在时报错
+
   $("#btnCopyLogs")?.addEventListener("click", async () => {
     try {
       if (logBox) {
@@ -2098,288 +2996,193 @@ function lockEl(el) {
       logErr(e, "复制失败");
     }
   });
-  
+
   $("#btnClearLogs")?.addEventListener("click", () => {
     if (logBox) logBox.textContent = "";
   });
 
 
-  // ====== ProtocolApi wiring ======
   try { await DeviceRuntime?.whenProtocolReady?.(); } catch (e) {}
   const ProtocolApi = window.ProtocolApi;
   if (!ProtocolApi) {
-    log("未找到 ProtocolApi：请确认 protocol_api_chaos.js / protocol_api_rapoo.js 已正确加载。");
+    log("未找到 ProtocolApi：请确认 protocol_api_chaos.js / protocol_api_rapoo.js / protocol_api_logitech.js 已正确加载。");
     return;
   }
 
 
-  // 替换原来的"先 close 再 new"逻辑
   let hidApi = window.__HID_API_INSTANCE__;
   if (!hidApi) {
     hidApi = new ProtocolApi.MouseMouseHidApi();
     window.__HID_API_INSTANCE__ = hidApi;
   }
 
-  // ====== 页面卸载时强制关闭连接（防止刷新后句柄仍被占用）======
-  // 注意：beforeunload/pagehide 回调里无法可靠 await，但依然是 best effort
+  let __cachedDeviceConfig = null;
+  async function requestDeviceConfig() {
+    try {
+      const reader = window.DeviceReader;
+      if (typeof reader?.requestConfig === "function") {
+        return !!(await reader.requestConfig({ hidApi, adapter }));
+      }
+      if (typeof hidApi?.requestConfig === "function") {
+        await hidApi.requestConfig();
+        return true;
+      }
+    } catch (_) {
+      return false;
+    }
+    return false;
+  }
+  function getCachedDeviceConfig() {
+    const reader = window.DeviceReader;
+    if (typeof reader?.getCachedConfig === "function") {
+      const cfg = reader.getCachedConfig({ hidApi, adapter });
+      if (cfg && typeof cfg === "object") return cfg;
+    }
+    return (__cachedDeviceConfig && typeof __cachedDeviceConfig === "object")
+      ? __cachedDeviceConfig
+      : null;
+  }
+
+
   if (!window.__HID_UNLOAD_HOOKED__) {
     window.__HID_UNLOAD_HOOKED__ = true;
 
+    /**
+     * 安全关闭逻辑。
+     * 目的：集中控制可见性或开关状态，避免多处直接修改。
+     * @returns {any} 返回结果。
+     */
     const safeClose = () => {
       try { void window.__HID_API_INSTANCE__?.close(); } catch (_) {}
     };
 
     window.addEventListener("beforeunload", safeClose);
-    // pagehide 对移动端/现代浏览器更友好
+
     window.addEventListener("pagehide", safeClose);
   }
 
 
-  // ====== 设备配置管理 ======
-  // 策略：单次读取 + 回包同步（不进行自动轮询，避免对鼠标造成性能卡顿）
   let __lastConfigRequestAt = 0;
 
-  // ====== 写入权限控制 ======
-  // 写入开关机制：
-  // - 刷新页面时，UI 初始化阶段可能会触发一些程序化的 change 事件（例如基础页的 dispatchEvent）
-  // - 在收到"第一包 config"之前，禁止任何 setFeature/setBatchFeatures 写入操作
-  //   避免将默认 UI 状态错误下发到设备，导致设备配置被覆盖
+
   let __writesEnabled = false;
 
-  // ====== 起始页进入主应用的门闩机制 ======
-  // 必须等到"首次配置已成功应用到 UI"后才允许揭幕进入主应用
-  // 确保用户看到的是从设备读取的真实配置，而非默认值
+
   let __firstConfigAppliedResolve = null;
   let __firstConfigAppliedPromise = Promise.resolve();
   let __firstConfigAppliedDone = false;
 
+/**
+ * 内部重置配置。
+ * 目的：统一处理配置相关流程，保证行为一致。
+ * @returns {any} 返回结果。
+ */
 function __resetFirstConfigAppliedGate() {
   __firstConfigAppliedDone = false;
   __firstConfigAppliedPromise = new Promise((resolve) => { __firstConfigAppliedResolve = resolve; });
 }
 
+/**
+ * 内部等待for、refresh。
+ * 目的：封装等待与超时处理，避免监听悬挂。
+ * @returns {Promise<any>} 异步结果。
+ */
 async function __waitForUiRefresh() {
-  // 等两帧，确保 DOM 已按配置刷新完成（避免进入主页后再“跳变”）
+
   await new Promise((r) => requestAnimationFrame(() => r()));
   await new Promise((r) => requestAnimationFrame(() => r()));
 }
 
-// Chaos：用于 modeByte 增量写入的 base（防止只改一个开关时把其他 bit 覆盖掉）
-let __lastChaosModeByte = null;
 
 /**
- * 请求设备配置（单次读取）
- * 采用轻量节流机制，避免用户频繁切页/重复点击导致连续请求
- * @param {string} reason - 请求原因（用于日志记录，可选）
+ * 请求配置。
+ * 目的：封装请求与异常处理，保证行为一致。
+ * @param {any} reason - 参数 reason。
+ * @returns {Promise<any>} 异步结果。
  */
 async function requestConfigOnce(reason = "") {
   if (!isHidOpened()) return;
   const now = Date.now();
-  // 节流：800ms 内不重复请求
+
   if (now - __lastConfigRequestAt < 800) return;
   __lastConfigRequestAt = now;
 
-  // 尝试多种可能的配置读取接口名称（兼容不同协议实现）
-  const fn =
-    hidApi.requestConfig ||
-    hidApi.requestConfiguration ||
-    hidApi.getConfig ||
-    hidApi.readConfig ||
-    hidApi.requestDeviceConfig;
 
-  if (typeof fn !== "function") {
-    // 不抛错，避免影响连接流程
+  if (!(await requestDeviceConfig())) {
+
     log("当前 ProtocolApi 未暴露配置读取接口，无法读取设备配置。");
     return;
   }
 
   try {
-    await fn.call(hidApi);
     if (reason) log(`已请求配置(${reason})`);
 
-    // Rapoo 设备：状态包为被动上报
-    // 读取配置后仅做一次"电量显示刷新"（同步最近一次状态包解析值）
-    if (IS_RAPOO) await requestBatterySafe("config");
+
+    await requestBatterySafe("config");
   } catch (e) {
     logErr(e, "请求配置失败");
   }
 }
 
-// 监听配置回包：用于刷新所有页面 UI（基础性能页也会跟随更新）
+
 hidApi.onConfig((cfg) => {
   try {
+    if (cfg && typeof cfg === "object") __cachedDeviceConfig = cfg;
+    const cfgDeviceName = String(cfg?.deviceName || "").trim();
+    if (cfgDeviceName) currentDeviceName = cfgDeviceName;
+    __applyDeviceVariantOnce({ deviceName: cfgDeviceName || currentDeviceName, cfg, keymapOnly: true });
     applyConfigToUi(cfg);
-    // 收到配置即代表链路可用（用于 isHidReady 的兜底）
+
     hidLinked = true;
 
-    // 只有拿到 config 并成功应用到 UI 后，才允许写入
-    __writesEnabled = true;
 
-    // 通知：已拿到并应用第一包配置（供起始页 SYSTEM READY 阶段等待）
+    __writesEnabled = true;
+    __tryAutoEnableOnboardMemoryByConfig(cfg);
+
+
     if (!__firstConfigAppliedDone && typeof __firstConfigAppliedResolve === "function") {
       __firstConfigAppliedDone = true;
       try { __firstConfigAppliedResolve(cfg); } catch (_) {}
     }
 
-    // 记录 Chaos 的 base modeByte（用于后续增量写）
-    if (!IS_RAPOO) {
-      const mb = cfg?.modeByte ?? cfg?.mode_byte ?? cfg?.deviceState?.modeByte ?? cfg?.deviceState?.mode_byte;
-      const n = Number(mb);
-      if (Number.isFinite(n)) __lastChaosModeByte = n & 0xff;
-    }
   } catch (e) {
     logErr(e, "应用配置失败");
   }
 });
 
-  // ---- Auto reconnect (WebHID) ----
-  const LAST_HID_KEY = "mouse.lastHid";
 
-  function saveLastHidDevice(dev) {
-    try {
-      localStorage.setItem(LAST_HID_KEY, JSON.stringify({
-        vendorId: dev.vendorId,
-        productId: dev.productId,
-        productName: dev.productName || "",
-        ts: Date.now()
-      }));
-    } catch (_) {}
-  }
-
-  function loadLastHidDevice() {
-    try {
-      return JSON.parse(localStorage.getItem(LAST_HID_KEY) || "null");
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function isMouseHidDevice(dev) {
-    try {
-      const pairs = ProtocolApi?.MOUSE_HID?.vendorProductIds || [];
-      return pairs.some(([vid, pid]) => dev.vendorId === vid && dev.productId === pid);
-    } catch (_) {
-      return false;
-    }
-  }
-
-  // ====== 自动检测逻辑 ======
   /**
-   * 自动检测已授权且在线的设备对象
-   * 返回最合适的设备用于自动连接
-   * @returns {Promise<HIDDevice|null>} 检测到的设备对象，未找到则返回 null
+   * 处理HID、设备逻辑。
+   * 目的：统一处理HID、设备相关流程，保证行为一致。
+   * @param {any} dev - 参数 dev。
+   * @returns {any} 返回结果。
+   */
+  const saveLastHidDevice = (dev) => {
+    try { DeviceRuntime?.saveLastHidDevice?.(dev); } catch (_) {}
+  };
+
+
+  /**
+   * 执行一次自动连接探测。
+   * 目的：复用已授权设备句柄，提高自动连接成功率。
+   * @returns {Promise<any>} 异步结果。
    */
   async function autoConnectHidOnce() {
     if (!navigator.hid) return null;
     if (hidConnecting || __connectInFlight) return null;
     if (isHidOpened()) return null;
 
-    let devs = [];
-    try {
-      // getDevices 只会返回满足以下条件的设备：
-      // 1. 用户曾经授权过
-      // 2. 当前正插在电脑上
-      devs = await navigator.hid.getDevices();
-    } catch (e) {
-      return null;
-    }
-
-    // 过滤设备：确保是我们要的设备接口
-      // 在过滤条件中包含 c.usagePage === 65290，确保 Chaos 设备的 Vendor Collection 被视为有效设备
-    const validDevs = devs.filter(d => {
-      const isRapoo = d.vendorId === 0x24ae;
-      if (isRapoo) {
-        // 硬编码规则：雷柏只接受 0xFF00 且 Usage 为 14 或 15 的接口
-        return d.collections.some(c => c.usagePage === 0xff00 && (c.usage === 14 || c.usage === 15));
-      }
-      // 其他品牌设备：支持多种 usagePage（标准鼠标、Vendor Collection、Chaos Vendor 等）
-      return d.collections && d.collections.some(c => 
-        c.usagePage === 0x0001 || c.usagePage === 0xff00 || c.usagePage === 0x000c || c.usagePage === 65290
-      );
-    });
-
-    if (validDevs.length === 0) {
-        __autoDetectedDevice = null;
-        return null;
-    }
-
-    // 预选设备策略：优先 Vendor Collection（更可能支持写入 report / 解锁指令），再考虑上次连接记录
-    const saved = loadLastHidDevice();
-
-    /**
-     * 检查设备是否包含任意 Vendor Page（0xFF00-0xFFFF）
-     * @param {HIDDevice} d - 设备对象
-     * @returns {boolean} 是否包含 Vendor Page
-     */
-    const hasAnyVendorPage = (d) => {
-      const cols = d?.collections || [];
-      return Array.isArray(cols) && cols.some((c) => {
-        const p = Number(c?.usagePage);
-        return Number.isFinite(p) && p >= 0xFF00 && p <= 0xFFFF;
-      });
-    };
-    /**
-     * 检查设备是否包含指定的 usagePage
-     * @param {HIDDevice} d - 设备对象
-     * @param {number} page - 目标 usagePage
-     * @returns {boolean} 是否包含指定 usagePage
-     */
-    const hasUsagePage = (d, page) => {
-      const cols = d?.collections || [];
-      return Array.isArray(cols) && cols.some((c) => Number(c?.usagePage) === Number(page));
-    };
-    /**
-     * 检查设备是否包含指定的 output report ID
-     * @param {HIDDevice} d - 设备对象
-     * @param {number} rid - 目标 report ID
-     * @returns {boolean} 是否包含指定 report ID
-     */
-    const hasOutRid = (d, rid) => {
-      const cols = d?.collections || [];
-      return Array.isArray(cols) && cols.some((c) => Array.isArray(c?.outputReports) && c.outputReports.some((r) => Number(r?.reportId) === Number(rid)));
-    };
-
-    /**
-     * 为设备打分，用于选择最合适的设备
-     * 评分规则：Vendor Collection > 上次连接记录 > 设备类型匹配 > 非标准接口
-     * @param {HIDDevice} d - 设备对象
-     * @returns {number} 设备评分（分数越高优先级越高）
-     */
-    const scoreDev = (d) => {
-      let s = 0;
-      if (!d) return s;
-      const t = (() => { try { return DeviceRuntime.identifyDeviceType(d); } catch (_) { return null; } })();
-      const cur = (() => { try { return DeviceRuntime.getSelectedDevice(); } catch (_) { return null; } })();
-
-      // Vendor Collection 权重最高（支持写入和协议解锁）
-      if (hasUsagePage(d, 65290)) s += 900;      // 0xFF0A（Chaos 设备常见）
-      if (hasUsagePage(d, 0xFF00)) s += 600;     // 0xFF00（通用 Vendor）
-      if (hasAnyVendorPage(d)) s += 300;         // 其它 Vendor Page
-
-      // Rapoo 设备：协议解锁需要用到 rid=6 的 output report
-      if (hasOutRid(d, 6)) s += 1200;
-
-      // 设备类型轻微加权：优先当前驱动类型（避免频繁 autoSwitch/reload）
-      if (t && cur && t === cur) s += 50;
-
-      // 上次连接记录（加权小于 Vendor Collection）
-      if (saved && d.vendorId === saved.vendorId && d.productId === saved.productId) s += 200;
-
-      // 保底分数：非标准鼠标接口（usagePage != 0x0001）
-      if (Array.isArray(d?.collections) && d.collections.some((c) => Number(c?.usagePage) !== 0x0001)) s += 30;
-      return s;
-    };
-
     let picked = null;
     try {
-      picked = [...validDevs].sort((a, b) => scoreDev(b) - scoreDev(a))[0] || null;
-    } catch (_) {
-      picked = validDevs[0] || null;
-    }
+      const res = await DeviceRuntime?.autoConnect?.({
+        preferredType: DeviceRuntime?.getSelectedDevice?.(),
+      });
+      picked = res?.device || null;
+    } catch (_) {}
 
     __autoDetectedDevice = picked;
 
-    // UI 提示更新
+
     if (picked) {
       document.body.classList.add("landing-has-device");
       const name = ProtocolApi.resolveMouseDisplayName(
@@ -2387,8 +3190,7 @@ hidApi.onConfig((cfg) => {
         picked.productId,
         picked.productName || "HID Device"
       );
-      // 如果正在自动连接，文案会稍后由 connectHid 更新，这里仅作兜底
-      __setLandingCaption(`检测到设备：${name}`);
+      __setLandingCaption(`Detected: ${name}`);
     } else {
       document.body.classList.remove("landing-has-device");
       __setLandingCaption("stare into the void to connect");
@@ -2398,7 +3200,6 @@ hidApi.onConfig((cfg) => {
   }
 
 
-
   const hdrHid = $("#hdrHid");
   const hdrHidVal = $("#hdrHidVal");
   const hdrBattery = $("#hdrBattery");
@@ -2406,8 +3207,13 @@ hidApi.onConfig((cfg) => {
   const hdrFw = $("#hdrFw");
   const hdrFwVal = $("#hdrFwVal");
 
-  // 顶部状态胶囊：仅在“鼠标真正连上(握手成功)”后显示。
-  // 仅插接收器 / 鼠标未开机 / 未配对时：顶部什么都不显示。
+
+  /**
+   * 设置header、chips。
+   * 目的：提供统一读写入口，降低耦合。
+   * @param {any} visible - 参数 visible。
+   * @returns {any} 返回结果。
+   */
   function setHeaderChipsVisible(visible) {
     [hdrBattery, hdrHid, hdrFw].forEach((el) => {
       if (!el) return;
@@ -2415,6 +3221,11 @@ hidApi.onConfig((cfg) => {
     });
   }
 
+  /**
+   * 重置header、chip。
+   * 目的：统一处理header、chip相关流程，保证行为一致。
+   * @returns {any} 返回结果。
+   */
   function resetHeaderChipValues() {
     if (hdrHidVal) {
       hdrHidVal.textContent = "";
@@ -2430,9 +3241,15 @@ hidApi.onConfig((cfg) => {
     }
   }
 
+  /**
+   * 格式化固件。
+   * 目的：统一展示格式，减少格式分散。
+   * @param {any} fwText - 参数 fwText。
+   * @returns {any} 返回结果。
+   */
   function formatFwForChip(fwText) {
     if (!fwText) return "-";
-    // 兼容两种格式：Mouse:1.0.0 · RX:1.0.0 / Mouse 1.0.0 · RX 1.0.0
+
     return fwText
       .replace("Mouse:", "Mouse ")
       .replace("RX:", "RX ")
@@ -2440,37 +3257,69 @@ hidApi.onConfig((cfg) => {
       .trim();
   }
 
-  // 默认隐藏顶部胶囊（只有握手成功才显示）
+
   resetHeaderChipValues();
   setHeaderChipsVisible(false);
 
   const dpiList = $("#dpiList");
   const dpiMinSelect = $("#dpiMinSelect");
   const dpiMaxSelect = $("#dpiMaxSelect");
+  const dpiAdvancedToggle = $("#dpiAdvancedToggle");
+  const dpiAdvancedTitleHint = $("#dpiAdvancedTitleHint");
 
   const DPI_ABS_MIN = 100;
-  const DPI_ABS_MAX = 44000; // 固件绝对上限（保留）
-  let DPI_UI_MAX = 26000;  // UI 允许的最大可选值（由 capabilities 注入）
-  const DPI_STEP = 50;
+  const DPI_ABS_MAX = 44000;
+  const DPI_MIN_DEFAULT = 100;
+  const DPI_MAX_DEFAULT = 8000;
+  let DPI_UI_MAX = 26000;
+  let DPI_STEP = Math.max(1, Number(adapter?.ranges?.dpi?.step) || 50);
 
 
-// ====== Capabilities 注入：所有硬件限制/枚举由后端回包决定 ======
-// 仅作为 UI 渲染依据，不做任何协议/寄存器/位运算。
 let __capabilities = {
   dpiSlotCount: 6,
   maxDpi: DPI_UI_MAX,
-  pollingRates: null, // e.g. [125, 500, 1000]
+  dpiStep: DPI_STEP,
+  pollingRates: null,
 };
 
+/**
+ * 获取能力。
+ * 目的：提供统一读写入口，降低耦合。
+ * @returns {any} 返回结果。
+ */
 function getCapabilities() {
   return __capabilities || {};
 }
 
+function resolveRuntimeDpiAdapter() {
+  const runtimeDeviceId = window.DeviceRuntime?.getSelectedDevice?.() || DEVICE_ID;
+  return window.DeviceAdapters?.getAdapter?.(runtimeDeviceId) || adapter;
+}
+
+function resolveRuntimeDpiStep(fallbackStep = 50) {
+  const runtimeAdapter = resolveRuntimeDpiAdapter();
+  const raw = Number(runtimeAdapter?.ranges?.dpi?.step ?? fallbackStep);
+  if (!Number.isFinite(raw) || raw <= 0) return 50;
+  return Math.max(1, Math.trunc(raw));
+}
+
+/**
+ * 获取DPI、槽位。
+ * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+ * @returns {any} 返回结果。
+ */
 function getDpiSlotCap() {
   const n = Number(getCapabilities().dpiSlotCount);
   return Math.max(1, Number.isFinite(n) ? Math.trunc(n) : 6);
 }
 
+/**
+ * 钳制槽位、能力。
+ * 目的：限制数值边界，防止越界。
+ * @param {any} n - 参数 n。
+ * @param {any} fallback - 参数 fallback。
+ * @returns {any} 返回结果。
+ */
 function clampSlotCountToCap(n, fallback = 6) {
   const cap = getDpiSlotCap();
   const v = Number(n);
@@ -2478,40 +3327,62 @@ function clampSlotCountToCap(n, fallback = 6) {
   return Math.max(1, Math.min(cap, vv));
 }
 
+
+/**
+ * 应用能力开关到 UI。
+ * 目的：按设备能力控制 UI 可用性，避免无效操作。
+ * @param {any} cap - 参数 cap。
+ * @returns {any} 返回结果。
+ */
 function applyCapabilitiesToUi(cap) {
   const incoming = (cap && typeof cap === "object") ? cap : {};
   const prevCap = getCapabilities();
+  const runtimeStep = Number(resolveRuntimeDpiStep(DPI_STEP));
+  const fallbackStep = Number(
+    Number.isFinite(runtimeStep) && runtimeStep > 0
+      ? runtimeStep
+      : (prevCap?.dpiStep ?? DPI_STEP)
+  );
+  const incomingStep = Number(incoming.dpiStep);
+  const dpiStep = Number.isFinite(incomingStep) && incomingStep > 0
+    ? Math.max(1, Math.trunc(incomingStep))
+    : (Number.isFinite(fallbackStep) && fallbackStep > 0 ? Math.max(1, Math.trunc(fallbackStep)) : 50);
 
-  // 合并能力配置
+
   const next = {
     dpiSlotCount: Number.isFinite(Number(incoming.dpiSlotCount)) ? Math.trunc(Number(incoming.dpiSlotCount)) : (prevCap.dpiSlotCount ?? 6),
     maxDpi: Number.isFinite(Number(incoming.maxDpi)) ? Math.trunc(Number(incoming.maxDpi)) : (prevCap.maxDpi ?? DPI_UI_MAX),
+    dpiStep,
     pollingRates: Array.isArray(incoming.pollingRates)
       ? incoming.pollingRates.map(Number).filter(Number.isFinite)
       : (prevCap.pollingRates ?? null),
   };
 
   __capabilities = next;
+  DPI_STEP = dpiStep;
 
-  // ---- 1. 更新 DPI Max ----
+
   if (Number.isFinite(next.maxDpi) && next.maxDpi > 0) {
     DPI_UI_MAX = next.maxDpi;
-    
-    // 重新生成列表并补齐最大值
-    DPI_MAX_OPTIONS = makeSeq(4000, DPI_UI_MAX, 4000);
-    if (DPI_MAX_OPTIONS[DPI_MAX_OPTIONS.length - 1] !== DPI_UI_MAX) {
-      DPI_MAX_OPTIONS.push(DPI_UI_MAX);
-    }
+
+
+    DPI_MAX_OPTIONS = buildDpiMaxOptions(DPI_UI_MAX);
 
     if (dpiMaxSelect) {
-      const current = Number(dpiMaxSelect.value || 16000);
-      fillSelect(dpiMaxSelect, DPI_MAX_OPTIONS, Math.min(current || 16000, DPI_UI_MAX));
+      const current = Number(dpiMaxSelect.value || DPI_MAX_DEFAULT);
+      const wanted = Math.min(current || DPI_MAX_DEFAULT, DPI_UI_MAX);
+      const defVal = DPI_MAX_OPTIONS.includes(wanted)
+        ? wanted
+        : (DPI_MAX_OPTIONS.includes(DPI_MAX_DEFAULT)
+          ? DPI_MAX_DEFAULT
+          : DPI_MAX_OPTIONS[DPI_MAX_OPTIONS.length - 1]);
+      fillSelect(dpiMaxSelect, DPI_MAX_OPTIONS, defVal);
     }
     normalizeDpiMinMax();
     applyDpiRangeToRows();
   }
 
-  // ---- 2. 更新 DPI 档位数 ----
+
   const capSlots = getDpiSlotCap();
   const slotSel = $("#slotCountSelect");
   if (slotSel) {
@@ -2523,66 +3394,94 @@ function applyCapabilitiesToUi(cap) {
     safeSetValue(slotSel, clampSlotCountToCap(cur, capSlots));
   }
 
-  // ---- 3. 更新回报率选项 & 显隐基础性能页按钮 ----
-  const pollingSel = $("#pollingSelect");
-  if (pollingSel && Array.isArray(next.pollingRates) && next.pollingRates.length) {
-    const cur = Number(pollingSel.value || next.pollingRates[0]);
-    
-    // A. 更新下拉框 (虽然界面上被 Monolith UI 遮盖，但作为数据源很重要)
-    pollingSel.innerHTML = next.pollingRates
+
+  const applyPollingRatesToSelect = (selectEl) => {
+    if (!selectEl) return null;
+    const cur = Number(selectEl.value || next.pollingRates[0]);
+    selectEl.innerHTML = next.pollingRates
       .map((hz) => `<option value="${hz}">${hz}Hz</option>`)
       .join("");
-
-    // B. 值校验：如果当前值(如4000)不在新列表中(切回有线)，自动降级到 1000 或列表首项
     let validVal = cur;
     if (!next.pollingRates.includes(cur)) {
-        validVal = next.pollingRates.includes(1000) ? 1000 : next.pollingRates[0];
+      validVal = next.pollingRates.includes(1000) ? 1000 : next.pollingRates[0];
     }
-    safeSetValue(pollingSel, validVal);
+    safeSetValue(selectEl, validVal);
+    return validVal;
+  };
 
-    // C. 控制基础性能页 2K/4K/8K 按钮的显示/隐藏
-    if (__basicHzItems && __basicHzItems.length) {
-      // 将允许的 Hz 转为字符串 Set，方便查找
+  const pollingSel = $("#pollingSelect");
+  const pollingWirelessSel = $("#pollingSelectWireless");
+  if (Array.isArray(next.pollingRates) && next.pollingRates.length && !__isDualPollingRates) {
+    applyPollingRatesToSelect(pollingSel);
+    applyPollingRatesToSelect(pollingWirelessSel);
+    __refreshBasicItemRefs();
+
+    const hasRightCol = !!(__basicHzItems && __basicHzItems.length);
+    const hasLeftDualCol = __isDualPollingRates && !!(__basicModeItems && __basicModeItems.length);
+    if (hasRightCol || hasLeftDualCol) {
       const allowed = new Set(next.pollingRates.map(String));
-      
-      __basicHzItems.forEach((el) => {
-        const h = el.dataset.hz; // 按钮上的 data-hz="4000"
-        if (allowed.has(String(h))) {
-          el.style.display = ""; // 显示
-        } else {
-          el.style.display = "none"; // 隐藏
-        }
-      });
-      
-      // 立即刷新选中状态连线
+
+      if (hasRightCol) {
+        __basicHzItems.forEach((el) => {
+          const h = el.dataset.hz;
+          el.style.display = allowed.has(String(h)) ? "" : "none";
+        });
+      }
+
+      if (hasLeftDualCol) {
+        __basicModeItems.forEach((el) => {
+          const h = el.dataset.hz;
+          el.style.display = allowed.has(String(h)) ? "" : "none";
+        });
+      }
+
       syncBasicMonolithUI();
     }
   }
 
-  // ---- 4. 重建 DPI 编辑器 (如果行数变了) ----
+
   if (typeof buildDpiEditor === "function") {
     const needRebuild = (Number(prevCap?.dpiSlotCount) || 6) !== capSlots;
     if (needRebuild) buildDpiEditor();
   }
+  if (!hasDpiAdvancedAxis()) dpiAdvancedEnabled = false;
+  applyDpiAdvancedUiState();
 }
 
 
-  // DPI范围最小值：保留   用档位（不超过 UI_MAX）
-  const DPI_MIN_OPTIONS = [
-    100, 200, 400, 800, 1200, 1600,
-  ];
+  const DPI_MIN_OPTIONS = [100, 400, 800, 1200, 1600, 1800];
+  const DPI_MAX_PRESET_OPTIONS = [2000, 4000, 8000, 12000, 18000, 26000];
 
-  // DPI范围最大值：4000 ~ 26000（步进 50）
-  function makeSeq(start, end, step) {
-    const out = [];
-    for (let v = start; v <= end; v += step) out.push(v);
-    return out;
-  }
-  let DPI_MAX_OPTIONS = makeSeq(4000, DPI_UI_MAX, 4000);
-  if (DPI_MAX_OPTIONS[DPI_MAX_OPTIONS.length - 1] !== DPI_UI_MAX) {
-    DPI_MAX_OPTIONS.push(DPI_UI_MAX);
+
+  /**
+   * 生成seq。
+   * 目的：统一处理seq相关流程，保证行为一致。
+   * @param {any} start - 参数 start。
+   * @param {any} end - 参数 end。
+   * @param {any} step - 参数 step。
+   * @returns {any} 返回结果。
+   */
+  function buildDpiMaxOptions(maxDpi) {
+    const upper = Math.max(2000, Math.trunc(Number(maxDpi) || 26000));
+    const capUpper = Math.min(26000, upper);
+    const out = Array.from(new Set(
+      DPI_MAX_PRESET_OPTIONS
+        .map((v) => Math.trunc(Number(v)))
+        .filter((v) => Number.isFinite(v) && v >= 2000 && v <= capUpper)
+    )).sort((a, b) => a - b);
+    return out.length ? out : [2000];
   }
 
+  let DPI_MAX_OPTIONS = buildDpiMaxOptions(DPI_UI_MAX);
+
+  /**
+   * 填充逻辑。
+   * 目的：统一选项构建与应用，避免选项与值不匹配。
+   * @param {any} el - 参数 el。
+   * @param {any} values - 参数 values。
+   * @param {any} defVal - 参数 defVal。
+   * @returns {any} 返回结果。
+   */
   function fillSelect(el, values, defVal) {
     if (!el) return;
     el.innerHTML = values
@@ -2591,92 +3490,401 @@ function applyCapabilitiesToUi(cap) {
     safeSetValue(el, defVal);
   }
 
+  /**
+   * 获取DPI。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @returns {any} 返回结果。
+   */
   function getDpiMinMax() {
     const min = Number(dpiMinSelect?.value ?? 100);
-    // 读取下拉框当前选中的值，而不是强制返回硬件最大值 DPI_UI_MAX
+
     const max = Number(dpiMaxSelect?.value ?? DPI_UI_MAX);
     return { min, max };
   }
 
+  function getDpiStep() {
+    const capStep = Number(getCapabilities().dpiStep);
+    if (Number.isFinite(capStep) && capStep > 0) return Math.max(1, Math.trunc(capStep));
+    if (Number.isFinite(DPI_STEP) && DPI_STEP > 0) return Math.max(1, Math.trunc(DPI_STEP));
+    return 50;
+  }
+
+  function snapDpiValueToStep(rawValue, min, max, stepOverride) {
+    const stepRaw = Number(stepOverride);
+    const step = Number.isFinite(stepRaw) && stepRaw > 0 ? stepRaw : getDpiStep();
+    const clampedVal = clamp(rawValue, min, max);
+    const snapped = min + Math.round((clampedVal - min) / step) * step;
+    return clamp(snapped, min, max);
+  }
+
+  function snapDpiPairByAdapter({ slot, axis, x, y, min, max }) {
+    const runtimeAdapter = resolveRuntimeDpiAdapter();
+    const step = getDpiStep();
+    const fallbackX = snapDpiValueToStep(x, min, max, step);
+    const fallbackY = snapDpiValueToStep(y, min, max, step);
+    const snapper = runtimeAdapter?.dpiSnapper;
+    if (typeof snapper !== "function") {
+      return { x: fallbackX, y: fallbackY };
+    }
+    try {
+      const snapped = snapper({
+        slot,
+        axis,
+        x,
+        y,
+        min,
+        max,
+        step,
+        state: {
+          slotCount: getSlotCountUi(),
+          activeSlot: uiCurrentDpiSlot,
+        },
+      }) || {};
+      const sx = Number(snapped.x);
+      const sy = Number(snapped.y);
+      return {
+        x: Number.isFinite(sx) ? clamp(sx, min, max) : fallbackX,
+        y: Number.isFinite(sy) ? clamp(sy, min, max) : fallbackY,
+      };
+    } catch (_) {
+      return { x: fallbackX, y: fallbackY };
+    }
+  }
+
+  /**
+   * 处理DPI逻辑。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @returns {any} 返回结果。
+   */
   function normalizeDpiMinMax() {
     if (!dpiMinSelect || !dpiMaxSelect) return;
     let { min, max } = getDpiMinMax();
+    const dpiStep = getDpiStep();
 
-    // 1. 校验并限制 Max (UI层面限制)
-    // 确保 Max 有效，且在 [4000, 硬件上限] 之间
+
     if (!Number.isFinite(max) || max <= 0) max = DPI_UI_MAX;
-    max = Math.max(4000, Math.min(DPI_UI_MAX, max));
+    max = Math.max(2000, Math.min(DPI_UI_MAX, max));
 
-    // 2. 校验并限制 Min
+
     if (!Number.isFinite(min) || min <= 0) min = 100;
-    
-    // Min 必须小于 Max (至少留出 DPI_STEP 的空间)
-    const minCap = max - DPI_STEP; 
-    
-    // 确保 Min 不低于绝对最小值，且不超过 (Max - Step)
+
+
+    const minCap = max - dpiStep;
+
+
     min = Math.max(DPI_ABS_MIN, Math.min(min, minCap));
 
-    // 3. 极端情况兜底：如果计算后 min >= max，则强制推高 max
+
     if (min >= max) {
-       max = min + DPI_STEP;
-       // 如果推高后超过硬件上限，则反向压低 min
+       max = min + dpiStep;
+
        if (max > DPI_UI_MAX) {
           max = DPI_UI_MAX;
-          min = max - DPI_STEP;
+          min = max - dpiStep;
        }
     }
 
-    // 4. 将校验后的值写回 UI
+
     safeSetValue(dpiMinSelect, min);
-    // 写回用户选择的 max，而不是 DPI_UI_MAX
+
     safeSetValue(dpiMaxSelect, max);
   }
 
+  /**
+   * 应用DPI、范围。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @returns {any} 返回结果。
+   */
   function applyDpiRangeToRows() {
     const { min, max } = getDpiMinMax();
+    const dpiStep = getDpiStep();
     for (let i = 1; i <= getDpiSlotCap(); i++) {
-      const range = $("#dpiRange" + i);
-      const num = $("#dpiInput" + i);
-      if (range) {
-        range.min = String(min);
-        range.max = String(max);
-        range.step = String(DPI_STEP);
+      const controls = [
+        $("#dpiRange" + i),
+        $("#dpiInput" + i),
+        $("#dpiRangeX" + i),
+        $("#dpiInputX" + i),
+        $("#dpiRangeY" + i),
+        $("#dpiInputY" + i),
+      ];
+      for (const ctrl of controls) {
+        if (!ctrl) continue;
+        ctrl.min = String(min);
+        ctrl.max = String(max);
+        ctrl.step = String(dpiStep);
       }
-      if (num) {
-        num.min = String(min);
-        num.max = String(max);
-        num.step = String(DPI_STEP);
-      }
+      const xVal = setUiDpiAxisValue(i, "x", getUiDpiAxisValue(i, "x", min));
+      const yVal = setUiDpiAxisValue(i, "y", getUiDpiAxisValue(i, "y", xVal));
+      syncDpiRowInputs(i);
     }
   }
 
+  /**
+   * 钳制逻辑。
+   * 目的：限制数值边界，防止越界。
+   * @param {any} v - 参数 v。
+   * @param {any} min - 参数 min。
+   * @param {any} max - 参数 max。
+   * @returns {any} 返回结果。
+   */
   function clamp(v, min, max) {
     const n = Number(v);
     if (!Number.isFinite(n)) return min;
     return Math.max(min, Math.min(max, n));
   }
 
-  // DPI 选中档位（UI 状态）：用于本地即时高亮 + 与按键映射一致的选中效果
-  let uiCurrentDpiSlot = 1; // 1..6
-  let dpiAnimReady = false; // 避免首次渲染就触发选中动效
+  function hasDpiAdvancedAxis() {
+    return hasFeature("hasDpiAdvancedAxis");
+  }
 
-  // ====== Patch v4: DPI 滑条数值气泡（跟随 thumb） ======
+  function isDpiAdvancedUiEnabled() {
+    return hasDpiAdvancedAxis() && !!dpiAdvancedEnabled;
+  }
+
+  function getUiDpiAxisValue(slot, axis, fallback = 800) {
+    const idx = Math.max(0, Number(slot) - 1);
+    const source = axis === "y" ? uiDpiSlotsY : uiDpiSlotsX;
+    const val = Number(source?.[idx]);
+    if (Number.isFinite(val)) return val;
+    return fallback;
+  }
+
+  function setUiDpiAxisValue(slot, axis, rawValue) {
+    const idx = Math.max(0, Number(slot) - 1);
+    const { min, max } = getDpiMinMax();
+    const safe = clamp(rawValue, min, max);
+    if (axis === "y") uiDpiSlotsY[idx] = safe;
+    else uiDpiSlotsX[idx] = safe;
+    return safe;
+  }
+
+  function setUiDpiSingleValue(slot, rawValue) {
+    const safeX = setUiDpiAxisValue(slot, "x", rawValue);
+    const safeY = setUiDpiAxisValue(slot, "y", rawValue);
+    return { x: safeX, y: safeY };
+  }
+
+  function normalizeUiDpiLod(value, fallback = "mid") {
+    const lod = String(value || "").trim().toLowerCase();
+    if (lod === "low") return "low";
+    if (lod === "mid" || lod === "middle" || lod === "medium") return "mid";
+    if (lod === "high") return "high";
+    return fallback;
+  }
+
+  function getUiDpiLod(slot, fallback = "mid") {
+    const idx = Math.max(0, Number(slot) - 1);
+    return normalizeUiDpiLod(uiDpiLods?.[idx], fallback);
+  }
+
+  function setUiDpiLod(slot, value) {
+    const idx = Math.max(0, Number(slot) - 1);
+    const safe = normalizeUiDpiLod(value, "mid");
+    uiDpiLods[idx] = safe;
+    return safe;
+  }
+
+  function buildUiDpiLodsPayload() {
+    const out = [];
+    const dpiSlotCap = getDpiSlotCap();
+    for (let i = 1; i <= dpiSlotCap; i++) {
+      out.push(getUiDpiLod(i, "mid"));
+    }
+    return out;
+  }
+
+  function syncDpiLodRow(slot) {
+    const row = dpiList?.querySelector?.(`.dpiSlotRow[data-slot="${slot}"]`);
+    if (!row) return;
+    const wrap = row.querySelector(".dpiLodSwitch");
+    if (!wrap) return;
+    const current = getUiDpiLod(slot, "mid");
+    const buttons = wrap.querySelectorAll("button.dpiLodBtn");
+    buttons.forEach((btn) => {
+      const lod = normalizeUiDpiLod(btn.dataset.lod, "");
+      const active = lod === current;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
+  function syncDpiRowInputs(slot) {
+    const xVal = getUiDpiAxisValue(slot, "x", 100);
+    const yVal = getUiDpiAxisValue(slot, "y", xVal);
+    const singleVal = xVal;
+
+    const singleInput = $("#dpiInput" + slot);
+    const singleRange = $("#dpiRange" + slot);
+    const xInput = $("#dpiInputX" + slot);
+    const xRange = $("#dpiRangeX" + slot);
+    const yInput = $("#dpiInputY" + slot);
+    const yRange = $("#dpiRangeY" + slot);
+
+    if (singleInput) safeSetValue(singleInput, singleVal);
+    if (singleRange) safeSetValue(singleRange, singleVal);
+    if (xInput) safeSetValue(xInput, xVal);
+    if (xRange) safeSetValue(xRange, xVal);
+    if (yInput) safeSetValue(yInput, yVal);
+    if (yRange) safeSetValue(yRange, yVal);
+    syncDpiLodRow(slot);
+  }
+
+  function collectDpiAxisMismatchSlots(slotCountOverride) {
+    const slotCount = clampSlotCountToCap(
+      Number(slotCountOverride ?? getDpiSlotCap()),
+      getDpiSlotCap()
+    );
+    const out = [];
+    for (let i = 1; i <= slotCount; i++) {
+      const xVal = Number(getUiDpiAxisValue(i, "x", NaN));
+      const yVal = Number(getUiDpiAxisValue(i, "y", xVal));
+      if (!Number.isFinite(xVal) || !Number.isFinite(yVal)) continue;
+      if (xVal !== yVal) out.push(i);
+    }
+    return out;
+  }
+
+  async function syncDpiSlotsToSingleAxisIfNeeded(slotCountOverride) {
+    if (!hasDpiAdvancedAxis()) return;
+    const mismatchSlots = collectDpiAxisMismatchSlots(slotCountOverride);
+    if (!mismatchSlots.length) return;
+
+    for (const slot of mismatchSlots) {
+      const xVal = getUiDpiAxisValue(slot, "x", 800);
+      setUiDpiAxisValue(slot, "y", xVal);
+      syncDpiRowInputs(slot);
+      updateDpiBubble(slot);
+    }
+
+    if (!isHidReady()) return;
+    dpiSyncingToSingleMode = true;
+    try {
+      await withMutex(async () => {
+        for (const slot of mismatchSlots) {
+          const xVal = getUiDpiAxisValue(slot, "x", 800);
+          await hidApi.setDpi(slot, { x: xVal, y: xVal }, {
+            select: slot === uiCurrentDpiSlot,
+          });
+        }
+      });
+    } catch (err) {
+      logErr(err, "DPI 高级模式关闭同步失败");
+    } finally {
+      dpiSyncingToSingleMode = false;
+    }
+  }
+
+  function applyDpiAdvancedUiState() {
+    const canAdvanced = hasDpiAdvancedAxis();
+    if (!canAdvanced) dpiAdvancedEnabled = false;
+    const on = canAdvanced && dpiAdvancedEnabled;
+
+    if (dpiList) {
+      dpiList.classList.toggle("dpiAdvancedMode", on);
+    }
+
+    if (dpiAdvancedTitleHint) {
+      dpiAdvancedTitleHint.classList.toggle("is-visible", on);
+    }
+
+    if (dpiAdvancedToggle) {
+      dpiAdvancedToggle.disabled = !canAdvanced;
+      dpiAdvancedToggle.setAttribute("aria-pressed", on ? "true" : "false");
+      const stateEl = dpiAdvancedToggle.querySelector(".dpiAdvancedToggleState");
+      if (stateEl) stateEl.textContent = on ? "开启" : "关闭";
+    }
+  }
+
+
+  let uiCurrentDpiSlot = 1;
+  let dpiAdvancedEnabled = false;
+  let dpiAdvancedToggleBusy = false;
+  let dpiSyncingToSingleMode = false;
+  let uiDpiSlotsX = [];
+  let uiDpiSlotsY = [];
+  let uiDpiLods = [];
+  let dpiAnimReady = false;
+
+
   let dpiBubbleListenersReady = false;
+  let __dpiEditorDelegatesReady = false;
   let dpiDraggingSlot = null;
   let dpiDraggingEl = null;
+  let dpiHoverRafId = 0;
+  let dpiHoverPending = null;
+  let dpiRangeSlotCache = new WeakMap();
+  let dpiThumbSizeCache = new WeakMap();
 
-  // Patch v6.1: 仅在滑轨“上下区域”支持拖动，左右空白仍保持点击切换档位
-  let dpiRowDragState = null; // { slot, range, pointerId, moved, lastX, lastY }
+
+  let dpiRowDragState = null;
+  let dpiRowDragDirty = false;
   let dpiRowDragBlockClickUntil = 0;
 
+  /**
+   * 获取DPI、气泡提示。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @param {any} slot - 参数 slot。
+   * @returns {any} 返回结果。
+   */
   function getDpiBubble(slot) {
     return $("#dpiBubble" + slot);
   }
 
-  function updateDpiBubble(slot) {
-    const range = $("#dpiRange" + slot);
+  /**
+   * 获取DPI、槽位编号。
+   * 目的：减少重复字符串解析，避免高频路径额外开销。
+   * @param {any} range - 参数 range。
+   * @returns {any} 返回结果。
+   */
+  function getDpiRangeSlot(range) {
+    if (!range) return NaN;
+    const cached = dpiRangeSlotCache.get(range);
+    if (Number.isFinite(cached)) return cached;
+    const slot = Number((range.id || "").replace(/\D+/g, ""));
+    dpiRangeSlotCache.set(range, slot);
+    return slot;
+  }
+
+  /**
+   * 获取DPI、拇指尺寸。
+   * 目的：缓存静态样式读取，降低 pointermove 期间布局与样式计算压力。
+   * @param {any} range - 参数 range。
+   * @returns {any} 返回结果。
+   */
+  function getDpiThumbSize(range) {
+    if (!range) return 22;
+    const cached = dpiThumbSizeCache.get(range);
+    if (Number.isFinite(cached) && cached > 0) return cached;
+    const cssThumb = parseFloat(getComputedStyle(range).getPropertyValue("--dpiThumb"));
+    const thumb = Number.isFinite(cssThumb) && cssThumb > 0 ? cssThumb : 22;
+    dpiThumbSizeCache.set(range, thumb);
+    return thumb;
+  }
+
+  /**
+   * 更新DPI、气泡提示。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @param {any} slot - 参数 slot。
+   * @returns {any} 返回结果。
+   */
+  function getDpiBubbleRange(slot, preferredRange) {
+    if (preferredRange?.isConnected) return preferredRange;
+    const bubble = getDpiBubble(slot);
+    const anchoredRange = bubble?._rangeEl;
+    if (anchoredRange?.isConnected) return anchoredRange;
+
+    const singleRange = $("#dpiRange" + slot);
+    const xRange = $("#dpiRangeX" + slot);
+    const yRange = $("#dpiRangeY" + slot);
+    if (isDpiAdvancedUiEnabled()) return xRange || yRange || singleRange;
+    return singleRange || xRange || yRange;
+  }
+
+  function updateDpiBubble(slot, preferredRange) {
+    const range = getDpiBubbleRange(slot, preferredRange);
     const bubble = getDpiBubble(slot);
     if (!range || !bubble) return;
+    bubble._rangeEl = range;
 
     const val = Number(range.value);
     const valEl = bubble.querySelector(".dpiBubbleVal");
@@ -2689,43 +3897,61 @@ function applyCapabilitiesToUi(cap) {
 
     const rangeRect = range.getBoundingClientRect();
 
-    // thumb 尺寸：尽量从 CSS 变量解析，失败则回退
-    const cssThumb = parseFloat(getComputedStyle(range).getPropertyValue("--dpiThumb"));
-    const thumb = Number.isFinite(cssThumb) && cssThumb > 0 ? cssThumb : 22;
+
+    const thumb = getDpiThumbSize(range);
 
     const trackW = rangeRect.width;
     const x = pct * Math.max(0, (trackW - thumb)) + thumb / 2;
 
-    // 使用 portal（body）+ fixed 定位，避免被面板 overflow 裁剪
     const pageX = rangeRect.left + x;
     const pageY = rangeRect.top + rangeRect.height / 2;
 
-    // 轻微边缘约束，避免贴边看不清
+
     const margin = 10;
     const clampedX = Math.max(margin, Math.min(window.innerWidth - margin, pageX));
 
     bubble.style.left = clampedX + "px";
     bubble.style.top = pageY + "px";
 
-    // 如果在视口顶部空间不足，则翻转到下方显示
+
     bubble.classList.remove("flip");
     const bRect = bubble.getBoundingClientRect();
     if (bRect.top < 6) bubble.classList.add("flip");
   }
 
-  function showDpiBubble(slot) {
+  /**
+   * 显示DPI、气泡提示。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @param {any} slot - 参数 slot。
+   * @returns {any} 返回结果。
+   */
+  function showDpiBubble(slot, preferredRange) {
     const bubble = getDpiBubble(slot);
     if (!bubble) return;
-    bubble.classList.add("show");
-    requestAnimationFrame(() => updateDpiBubble(slot));
+    if (preferredRange?.isConnected) bubble._rangeEl = preferredRange;
+    if (!bubble.classList.contains("show")) bubble.classList.add("show");
+    requestAnimationFrame(() => updateDpiBubble(slot, preferredRange));
   }
 
+  /**
+   * 隐藏DPI、气泡提示。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @param {any} slot - 参数 slot。
+   * @returns {any} 返回结果。
+   */
   function hideDpiBubble(slot) {
     const bubble = getDpiBubble(slot);
     if (!bubble) return;
+    if (!bubble.classList.contains("show")) return;
+    bubble._rangeEl = null;
     bubble.classList.remove("show");
   }
 
+  /**
+   * 更新DPI。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @returns {any} 返回结果。
+   */
   function updateVisibleDpiBubbles() {
     for (let i = 1; i <= getDpiSlotCap(); i++) {
       const b = getDpiBubble(i);
@@ -2734,26 +3960,34 @@ function applyCapabilitiesToUi(cap) {
   }
 
 
-
+  /**
+   * 获取槽位。
+   * 目的：提供统一读写入口，降低耦合。
+   * @returns {any} 返回结果。
+   */
   function getSlotCountUi() {
     const el = $("#slotCountSelect");
     const n = Number(el?.value ?? getDpiSlotCap());
     return clampSlotCountToCap(n, getDpiSlotCap());
   }
 
+  /**
+   * 设置DPI、槽位。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @param {any} slot - 参数 slot。
+   * @param {any} slotCountOverride - 参数 slotCountOverride。
+   * @returns {any} 返回结果。
+   */
   function setActiveDpiSlot(slot, slotCountOverride) {
     const prev = uiCurrentDpiSlot;
     const slotCount = clampSlotCountToCap(Number(slotCountOverride ?? getSlotCountUi()), getDpiSlotCap());
     const s = Math.max(1, Math.min(slotCount, Number(slot) || 1));
     uiCurrentDpiSlot = s;
 
-    // summary
-    const sum = $("#dpiSummary");
-    if (sum) sum.textContent = `当前:${s} 档 · 共 ${slotCount} 档`;
 
     const changed = s !== prev;
 
-    // highlight + selected animation
+
     for (let i = 1; i <= getDpiSlotCap(); i++) {
       const row = dpiList?.querySelector?.(`.dpiSlotRow[data-slot="${i}"]`);
       if (!row) continue;
@@ -2763,10 +3997,10 @@ function applyCapabilitiesToUi(cap) {
       row.classList.toggle("active", isActive);
       if (!isActive) row.classList.remove("active-anim");
 
-      // 仅当档位真正发生变化时播放一次动效
+
       if (isActive && dpiAnimReady && changed) {
         row.classList.remove("active-anim");
-        void row.offsetWidth; // 强制重排，保证可重复播放
+        void row.offsetWidth;
         row.classList.add("active-anim");
         row.addEventListener(
           "animationend",
@@ -2778,46 +4012,77 @@ function applyCapabilitiesToUi(cap) {
 
     dpiAnimReady = true;
   }
+  /**
+   * 设置DPI。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @param {any} count - 参数 count。
+   * @returns {any} 返回结果。
+   */
   function setDpiRowsEnabledCount(count) {
     const n = clampSlotCountToCap(Number(count), getDpiSlotCap());
     for (let i = 1; i <= getDpiSlotCap(); i++) {
       const row = dpiList?.querySelector(`.dpiSlotRow[data-slot="${i}"]`);
       const hidden = i > n;
 
-      // 不需要的档位直接隐藏（而不是变灰）
+
       if (row) {
         row.classList.toggle("hidden", hidden);
         row.classList.toggle("disabled", false);
       }
 
-      const range = $("#dpiRange" + i);
-      const num = $("#dpiInput" + i);
-      if (range) range.disabled = hidden;
-      if (num) num.disabled = hidden;
+      const controls = [
+        $("#dpiRange" + i),
+        $("#dpiInput" + i),
+        $("#dpiRangeX" + i),
+        $("#dpiInputX" + i),
+        $("#dpiRangeY" + i),
+        $("#dpiInputY" + i),
+      ];
+      for (const ctrl of controls) {
+        if (ctrl) ctrl.disabled = hidden;
+      }
+      const lodBtns = row?.querySelectorAll?.("button.dpiLodBtn") || [];
+      lodBtns.forEach((btn) => {
+        btn.disabled = hidden;
+      });
     }
   }
 
+  /**
+   * 初始化DPI、范围。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @returns {any} 返回结果。
+   */
   function initDpiRangeControls() {
     if (!dpiMinSelect || !dpiMaxSelect) return;
     if (dpiMinSelect.options.length) return;
-    fillSelect(dpiMinSelect, DPI_MIN_OPTIONS, 100);
-    fillSelect(dpiMaxSelect, DPI_MAX_OPTIONS, 16000);
+    fillSelect(dpiMinSelect, DPI_MIN_OPTIONS, DPI_MIN_DEFAULT);
+    fillSelect(dpiMaxSelect, DPI_MAX_OPTIONS, DPI_MAX_DEFAULT);
     normalizeDpiMinMax();
     applyDpiRangeToRows();
 
+    /**
+     * 处理on、change逻辑。
+     * 目的：统一处理on、change相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const onChange = () => {
       normalizeDpiMinMax();
       applyDpiRangeToRows();
 
-      // 若当前值超出范围，则夹紧到范围内（只更新 UI，不强制写入设备）
+
       const { min, max } = getDpiMinMax();
-      for (let i = 1; i <= 6; i++) {
-        const num = $("#dpiInput" + i);
-        const range = $("#dpiRange" + i);
-        if (!num || !range) continue;
-        const v = clamp(num.value, min, max);
-        safeSetValue(num, v);
-        safeSetValue(range, v);
+      for (let i = 1; i <= getDpiSlotCap(); i++) {
+        const singleNum = $("#dpiInput" + i);
+        const xNum = $("#dpiInputX" + i);
+        const yNum = $("#dpiInputY" + i);
+
+        const xRaw = Number(xNum?.value ?? singleNum?.value ?? getUiDpiAxisValue(i, "x", min));
+        const yRaw = Number(yNum?.value ?? singleNum?.value ?? getUiDpiAxisValue(i, "y", xRaw));
+
+        setUiDpiAxisValue(i, "x", Number.isFinite(xRaw) ? xRaw : min);
+        setUiDpiAxisValue(i, "y", Number.isFinite(yRaw) ? yRaw : min);
+        syncDpiRowInputs(i);
         updateDpiBubble(i);
       }
     };
@@ -2825,13 +4090,18 @@ function applyCapabilitiesToUi(cap) {
     dpiMaxSelect.addEventListener("change", onChange);
   }
 
-  // ====== Color Picker Engine (ATK DPI Color) ======
+
   let __colorPicker = null;
 
+  /**
+   * 初始化颜色。
+   * 目的：集中初始化与事件绑定，避免重复绑定或顺序问题。
+   * @returns {any} 返回结果。
+   */
   function initColorPicker() {
     if (__colorPicker) return __colorPicker;
 
-    // 1. 创建 DOM
+
     const wrap = document.createElement("div");
     wrap.className = "color-picker-popover";
     wrap.innerHTML = `
@@ -2850,7 +4120,12 @@ function applyCapabilitiesToUi(cap) {
     const hexInput = wrap.querySelector(".cp-hex");
     const btnClose = wrap.querySelector(".cp-btn-close");
 
-    // 2. 绘制色轮
+
+    /**
+     * 处理draw、wheel逻辑。
+     * 目的：统一处理draw、wheel相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const drawWheel = () => {
       const w = canvas.width, h = canvas.height;
       const cx = w / 2, cy = h / 2, r = w / 2;
@@ -2866,8 +4141,8 @@ function applyCapabilitiesToUi(cap) {
         ctx.fillStyle = `hsl(${i}, 100%, 50%)`;
         ctx.fill();
       }
-      
-      // 中心白色渐变（饱和度）
+
+
       const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
       grd.addColorStop(0, 'white');
       grd.addColorStop(1, 'transparent');
@@ -2878,33 +4153,45 @@ function applyCapabilitiesToUi(cap) {
     };
     drawWheel();
 
-    // 3. 状态管理
+
     let currentCallback = null;
     let isDragging = false;
 
+    /**
+     * 设置颜色。
+     * 目的：提供统一读写入口，降低耦合。
+     * @param {any} hex - 参数 hex。
+     * @returns {any} 返回结果。
+     */
     const setColor = (hex) => {
       preview.style.background = hex;
       hexInput.value = hex;
       if (currentCallback) currentCallback(hex);
     };
 
+    /**
+     * 处理颜色逻辑。
+     * 目的：统一处理颜色相关流程，保证行为一致。
+     * @param {any} e - 参数 e。
+     * @returns {any} 返回结果。
+     */
     const pickColor = (e) => {
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      // 映射到 canvas 尺寸
+
       const scaleX = canvas.width / rect.width;
       const scaleY = canvas.height / rect.height;
-      
+
       const p = ctx.getImageData(x * scaleX, y * scaleY, 1, 1).data;
-      // 简单防空：如果是全透明（圆外），忽略
+
       if (p[3] === 0) return;
-      
+
       const hex = "#" + [p[0], p[1], p[2]].map(x => x.toString(16).padStart(2, "0")).join("").toUpperCase();
       setColor(hex);
     };
 
-    // 交互事件
+
     canvas.addEventListener("pointerdown", (e) => {
       isDragging = true;
       canvas.setPointerCapture(e.pointerId);
@@ -2915,14 +4202,19 @@ function applyCapabilitiesToUi(cap) {
     });
     canvas.addEventListener("pointerup", () => isDragging = false);
 
+    /**
+     * 关闭逻辑。
+     * 目的：集中控制可见性或开关状态，避免多处直接修改。
+     * @returns {any} 返回结果。
+     */
     const close = () => {
       wrap.classList.remove("open");
-      currentCallback = null; // 解绑
+      currentCallback = null;
     };
 
     btnClose.addEventListener("click", close);
 
-    // 点击外部关闭
+
     document.addEventListener("pointerdown", (e) => {
       if (wrap.classList.contains("open") && !wrap.contains(e.target) && !e.target.closest(".dpiSelectBtn")) {
         close();
@@ -2937,23 +4229,23 @@ function applyCapabilitiesToUi(cap) {
 
     __colorPicker = {
       open: (anchorEl, initialColor, onColorChange) => {
-        // 定位
+
         const r = anchorEl.getBoundingClientRect();
-        // 尝试放在按钮左侧，如果不够则放右侧
+
         let left = r.left - 280;
         if (left < 10) left = r.right + 20;
-        
+
         let top = r.top - 100;
-        // 边界检查
+
         if (top + 280 > window.innerHeight) top = window.innerHeight - 290;
         if (top < 10) top = 10;
 
         wrap.style.left = `${left}px`;
         wrap.style.top = `${top}px`;
-        
+
         setColor(initialColor || "#FF0000");
         currentCallback = onColorChange;
-        
+
         wrap.classList.add("open");
       },
       close
@@ -2961,12 +4253,17 @@ function applyCapabilitiesToUi(cap) {
     return __colorPicker;
   }
 
+  /**
+   * 构建DPI。
+   * 目的：保持 DPI 数值与槽位状态一致，避免错位或跳变。
+   * @returns {any} 返回结果。
+   */
   function buildDpiEditor() {
     if (!dpiList) return;
     const dpiSlotCap = getDpiSlotCap();
     initDpiRangeControls();
 
-    // Patch v5.1: DPI 气泡使用 portal（挂到 body），先清理旧节点避免重复
+
     for (let i = 1; i <= dpiSlotCap; i++) {
       const old = document.body.querySelector(`#dpiBubble${i}.dpiBubblePortal`);
       if (old) old.remove();
@@ -2976,20 +4273,33 @@ function applyCapabilitiesToUi(cap) {
 
     const barColors = [
       "rgba(156,163,175,.55)",
-      "#f97316", // orange
-      "#22c55e", // green
-      "#facc15", // yellow
-      "#ec4899", // pink
-      "#a855f7", // purple
+      "#f97316",
+      "#22c55e",
+      "#facc15",
+      "#ec4899",
+      "#a855f7",
     ];
 
     const { min, max } = getDpiMinMax();
+    const dpiStep = getDpiStep();
 
     for (let i = 1; i <= dpiSlotCap; i++) {
       const row = document.createElement("div");
       row.className = "dpiSlotRow";
       row.dataset.slot = String(i);
       row.style.setProperty("--bar", barColors[i - 1] || barColors[0]);
+      const xInit = getUiDpiAxisValue(i, "x", 100);
+      const yInit = getUiDpiAxisValue(i, "y", xInit);
+      const lodInit = getUiDpiLod(i, "mid");
+      const lodSwitchHtml = hasFeature("hasDpiLods")
+        ? `
+          <div class="dpiLodSwitch" role="group" aria-label="DPI档位${i} LOD">
+            <button class="dpiLodBtn${lodInit === "low" ? " is-active" : ""}" type="button" data-lod="low" aria-pressed="${lodInit === "low" ? "true" : "false"}">低</button>
+            <button class="dpiLodBtn${lodInit === "mid" ? " is-active" : ""}" type="button" data-lod="mid" aria-pressed="${lodInit === "mid" ? "true" : "false"}">中</button>
+            <button class="dpiLodBtn${lodInit === "high" ? " is-active" : ""}" type="button" data-lod="high" aria-pressed="${lodInit === "high" ? "true" : "false"}">高</button>
+          </div>
+        `
+        : "";
       row.innerHTML = `
         <div class="dpiSlotBar" aria-hidden="true"></div>
         <div class="dpiSlotHead">
@@ -2997,14 +4307,14 @@ function applyCapabilitiesToUi(cap) {
         </div>
 
         <div class="dpiRangeWrap">
-          <input class="dpiRange" id="dpiRange${i}" type="range" min="${min}" max="${max}" step="${DPI_STEP}" value="100" />
+          <input class="dpiRange" id="dpiRange${i}" type="range" min="${min}" max="${max}" step="${dpiStep}" value="100" />
           <div class="dpiBubble" id="dpiBubble${i}" aria-hidden="true">
             <div class="dpiBubbleInner"><span class="dpiBubbleVal">100</span></div>
           </div>
         </div>
 
         <div class="dpiNumWrap">
-          <input class="dpiNum" id="dpiInput${i}" type="number" min="${min}" max="${max}" step="${DPI_STEP}" value="100" />
+          <input class="dpiNum" id="dpiInput${i}" type="number" min="${min}" max="${max}" step="${dpiStep}" value="100" />
           <div class="dpiSpin" aria-hidden="true">
             <button class="dpiSpinBtn up" type="button" tabindex="-1" aria-label="增加"></button>
             <button class="dpiSpinBtn down" type="button" tabindex="-1" aria-label="减少"></button>
@@ -3014,9 +4324,64 @@ function applyCapabilitiesToUi(cap) {
         <button class="dpiSelectBtn" type="button" aria-label="切换到档位 ${i}" title="切换到该档"></button>
       `;
       dpiList.appendChild(row);
+      if (lodSwitchHtml) {
+        row.insertAdjacentHTML("beforeend", lodSwitchHtml);
+      }
+
+      const singleRange = row.querySelector(`#dpiRange${i}`);
+      const singleInput = row.querySelector(`#dpiInput${i}`);
+      if (singleRange) {
+        singleRange.dataset.slot = String(i);
+        safeSetValue(singleRange, xInit);
+      }
+      if (singleInput) {
+        singleInput.dataset.slot = String(i);
+        safeSetValue(singleInput, xInit);
+      }
+
+      const rangeWrap = singleRange?.closest?.(".dpiRangeWrap");
+      const numWrap = singleInput?.closest?.(".dpiNumWrap");
+      const selectBtn = row.querySelector(".dpiSelectBtn");
+      if (rangeWrap && numWrap && selectBtn) {
+        const slotMain = document.createElement("div");
+        slotMain.className = "dpiSlotMain";
+
+        const axisSingle = document.createElement("div");
+        axisSingle.className = "dpiAxisSingle";
+        axisSingle.appendChild(rangeWrap);
+        axisSingle.appendChild(numWrap);
+
+        const axisDual = document.createElement("div");
+        axisDual.className = "dpiAxisDual";
+        axisDual.innerHTML = `
+          <div class="dpiAxisPair dpiAxisPairX">
+            <div class="dpiAxisTag">X</div>
+            <div class="dpiRangeWrap">
+              <input class="dpiRange" id="dpiRangeX${i}" data-slot="${i}" data-axis="x" type="range" min="${min}" max="${max}" step="${dpiStep}" value="${xInit}" />
+            </div>
+            <div class="dpiNumWrap">
+              <input class="dpiNum" id="dpiInputX${i}" data-slot="${i}" data-axis="x" type="number" min="${min}" max="${max}" step="${dpiStep}" value="${xInit}" />
+            </div>
+          </div>
+          <div class="dpiAxisPair dpiAxisPairY">
+            <div class="dpiAxisTag">Y</div>
+            <div class="dpiRangeWrap">
+              <input class="dpiRange" id="dpiRangeY${i}" data-slot="${i}" data-axis="y" type="range" min="${min}" max="${max}" step="${dpiStep}" value="${yInit}" />
+            </div>
+            <div class="dpiNumWrap">
+              <input class="dpiNum" id="dpiInputY${i}" data-slot="${i}" data-axis="y" type="number" min="${min}" max="${max}" step="${dpiStep}" value="${yInit}" />
+            </div>
+          </div>
+        `;
+
+        slotMain.appendChild(axisSingle);
+        slotMain.appendChild(axisDual);
+        row.insertBefore(slotMain, selectBtn);
+      }
+      syncDpiLodRow(i);
     }
 
-    // Patch v5.1: 将气泡节点移动到 body（避免 overflow 裁剪）
+
     for (let i = 1; i <= dpiSlotCap; i++) {
       const b = $("#dpiBubble" + i);
       if (!b) continue;
@@ -3024,108 +4389,128 @@ function applyCapabilitiesToUi(cap) {
       document.body.appendChild(b);
     }
 
-    // 事件代理：滑条/数值同步（拖动时只更新 UI，不立即写入；松手后再写入）
-    dpiList.addEventListener("input", (e) => {
-      const t = e.target;
-      const range = t.closest?.("input.dpiRange");
-      const num = t.closest?.("input[id^='dpiInput']");
-      if (!range && !num) return;
 
-      const id = (range?.id || num?.id || "");
-      const slot = Number(id.replace(/\D+/g, ""));
-      if (!(slot >= 1 && slot <= dpiSlotCap)) return;
+    const __isDpiSlotInCap = (slot) => {
+      const n = Number(slot);
+      return Number.isFinite(n) && n >= 1 && n <= getDpiSlotCap();
+    };
+
+    if (!__dpiEditorDelegatesReady) {
+      __dpiEditorDelegatesReady = true;
+
+      dpiList.addEventListener("input", (e) => {
+      const t = e.target;
+      const ctrl = t.closest?.("input.dpiRange, input.dpiNum");
+      if (!ctrl) return;
+      const isNumInput = ctrl.matches("input.dpiNum");
+      if (isNumInput) return;
+
+      const slot = Number(ctrl.dataset.slot || (ctrl.id || "").replace(/\D+/g, ""));
+      if (!__isDpiSlotInCap(slot)) return;
+      const axis = ctrl.dataset.axis === "y" ? "y" : (ctrl.dataset.axis === "x" ? "x" : "single");
 
       const { min: mn, max: mx } = getDpiMinMax();
-      const val = clamp(range ? range.value : num.value, mn, mx);
+      const val = clamp(ctrl.value, mn, mx);
 
-      const inp = $("#dpiInput" + slot);
-      const rng = $("#dpiRange" + slot);
-      if (inp) safeSetValue(inp, val);
-      if (rng) safeSetValue(rng, val);
-      updateDpiBubble(slot);
+      if (axis === "single") {
+        setUiDpiSingleValue(slot, val);
+      } else {
+        setUiDpiAxisValue(slot, axis, val);
+      }
+      syncDpiRowInputs(slot);
+      const rangeForBubble = ctrl.matches("input.dpiRange") ? ctrl : null;
+      updateDpiBubble(slot, rangeForBubble);
 
-      // 这里不写入设备。写入逻辑放到 change(松手/完成编辑) 事件里。
-    });
+      });
+
+      dpiList.addEventListener("keydown", (e) => {
+      const t = e.target;
+      const input = t.closest?.("input.dpiNum");
+      if (!input) return;
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      input.blur();
+      });
 
 
-    // DPI 数值/滑块：松手( change )后才真正写入设备，拖动过程中仅更新 UI。
-    dpiList.addEventListener("change", (e) => {
+      dpiList.addEventListener("change", (e) => {
       const t = e.target;
 
       const isRange = t.matches("input.dpiRange");
       const isNum = t.matches("input.dpiNum");
       if (!isRange && !isNum) return;
 
-      const id = t.id || "";
-      const slot = Number(id.replace(/\D+/g, ""));
-      if (!(slot >= 1 && slot <= dpiSlotCap)) return;
+      const slot = Number(t.dataset.slot || (t.id || "").replace(/\D+/g, ""));
+      if (!__isDpiSlotInCap(slot)) return;
+      const axis = t.dataset.axis === "y" ? "y" : (t.dataset.axis === "x" ? "x" : "single");
 
       const { min, max } = getDpiMinMax();
 
-      // 解析输入值
-      let val = Number(t.value);
-      if (!Number.isFinite(val)) val = min;
 
-      // 自动吸附到 DPI_STEP（默认 50）
-      const step = (typeof DPI_STEP !== "undefined") ? DPI_STEP : 50;
-      val = Math.round(val / step) * step;
+      let rawVal = Number(t.value);
+      if (!Number.isFinite(rawVal)) rawVal = min;
 
-      // 限制范围
-      val = Math.max(min, Math.min(max, val));
+      const prevX = getUiDpiAxisValue(slot, "x", rawVal);
+      const prevY = getUiDpiAxisValue(slot, "y", prevX);
+      const nextRawX = axis === "single" ? rawVal : (axis === "x" ? rawVal : prevX);
+      const nextRawY = axis === "single" ? rawVal : (axis === "y" ? rawVal : prevY);
+      const snappedPair = snapDpiPairByAdapter({
+        slot,
+        axis,
+        x: nextRawX,
+        y: nextRawY,
+        min,
+        max,
+      });
+      const committedVal = axis === "y" ? snappedPair.y : snappedPair.x;
+      if (isNum && t.value !== String(committedVal)) {
+        t.value = String(committedVal);
+      }
 
-      // 同步 UI
-      const inp = $("#dpiInput" + slot);
-      const rng = $("#dpiRange" + slot);
-      if (inp) safeSetValue(inp, val);
-      if (rng) safeSetValue(rng, val);
-      updateDpiBubble(slot);
+      setUiDpiAxisValue(slot, "x", snappedPair.x);
+      setUiDpiAxisValue(slot, "y", snappedPair.y);
+      syncDpiRowInputs(slot);
+      const rangeForBubble = t.matches("input.dpiRange") ? t : null;
+      updateDpiBubble(slot, rangeForBubble);
 
-      // 松手后防抖写入（避免短时间内多次 change）
+
       debounceKey(`dpi:${slot}`, 80, async () => {
         if (!isHidReady()) return;
         try {
           await withMutex(async () => {
-            // 只有当修改的 slot 等于当前 UI 记录的激活档位 uiCurrentDpiSlot 时，
-            // 才传递 select: true。否则传递 false。
+
+
             const isCurrentActive = (slot === uiCurrentDpiSlot);
-            
-            await hidApi.setDpi(slot, val, { 
-              select: isCurrentActive 
+            const xVal = getUiDpiAxisValue(slot, "x", committedVal);
+            const yVal = getUiDpiAxisValue(slot, "y", xVal);
+            const payload = hasDpiAdvancedAxis()
+              ? { x: xVal, y: (isDpiAdvancedUiEnabled() ? yVal : xVal) }
+              : xVal;
+
+            await hidApi.setDpi(slot, payload, {
+              select: isCurrentActive
             });
           });
         } catch (err) {
           logErr(err, "DPI 写入失败");
         }
       });
-    });
+      });
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-    // 点击整个档位行：写入并切换到该档
-    dpiList.addEventListener("click", (e) => {
+      dpiList.addEventListener("click", (e) => {
       const t = e.target;
 
       if (Date.now() < dpiRowDragBlockClickUntil) return;
 
-      // DPI 数字输入：自绘步进按钮（替代原生上下小三角）
+
       const spinBtn = t.closest?.("button.dpiSpinBtn");
       if (spinBtn) {
         const wrap = spinBtn.closest?.(".dpiNumWrap");
         const inp = wrap?.querySelector?.("input.dpiNum");
         if (!inp) return;
 
-        const step = Number(inp.step) || DPI_STEP;
+        const step = Number(inp.step) || getDpiStep();
         const dir = spinBtn.classList.contains("up") ? 1 : -1;
         const mn = Number(inp.min) || 0;
         const mx = Number(inp.max) || 999999;
@@ -3138,37 +4523,54 @@ function applyCapabilitiesToUi(cap) {
         return;
       }
 
-      // 右侧菱形按钮：同样执行"写入并切换到该档"
+      const lodBtn = t.closest?.("button.dpiLodBtn");
+      if (lodBtn) {
+        const row = lodBtn.closest?.(".dpiSlotRow");
+        if (!row || row.classList.contains("hidden")) return;
+        const slot = Number(row.dataset.slot);
+        if (!__isDpiSlotInCap(slot)) return;
+        const nextLod = normalizeUiDpiLod(lodBtn.dataset.lod, "");
+        if (!nextLod) return;
+        setUiDpiLod(slot, nextLod);
+        syncDpiLodRow(slot);
+        if (!isHidReady()) return;
+        enqueueDevicePatch({ dpiLods: buildUiDpiLodsPayload() });
+        return;
+      }
+
+
       const selectBtn = t.closest?.("button.dpiSelectBtn");
       if (selectBtn) {
         const row = selectBtn.closest?.(".dpiSlotRow");
         if (!row || row.classList.contains("hidden")) return;
 
         const slot = Number(row.dataset.slot);
-        if (!(slot >= 1 && slot <= dpiSlotCap)) return;
+        if (!__isDpiSlotInCap(slot)) return;
+        const xVal = getUiDpiAxisValue(slot, "x", Number($("#dpiInput" + slot)?.value));
+        const yVal = getUiDpiAxisValue(slot, "y", xVal);
+        if (!Number.isFinite(xVal) || xVal <= 0) return;
 
-        const inp = $("#dpiInput" + slot);
-        const v = Number(inp?.value);
-        if (!Number.isFinite(v) || v <= 0) return;
 
-        // ATK 设备逻辑：点击菱形打开调色盘，不切换档位
-        if (DEVICE_ID === 'atk' && isHidReady()) {
+        if (hasFeature("hasDpiColors") && isHidReady()) {
+            if (!Number.isFinite(xVal) || xVal <= 0) return;
             const picker = initColorPicker();
-            // 获取当前颜色（从按钮背景样式读取，或从缓存读取）
+
             const currentColor = selectBtn.style.getPropertyValue("--btn-bg") || "#FF0000";
-            
+
             picker.open(selectBtn, currentColor, (newHex) => {
-                // 1. 实时更新 UI 预览
+
                 selectBtn.style.setProperty("--btn-bg", newHex);
-                
-                // 2. 防抖写入设备
+
+
                 debounceKey(`dpiColor:${slot}`, 150, async () => {
                     try {
                         await withMutex(async () => {
-                            // 调用 setDpi，传入 color 参数，select: false (不切换档位)
-                            await hidApi.setDpi(slot, v, { 
+                            const payload = hasDpiAdvancedAxis()
+                              ? { x: xVal, y: (isDpiAdvancedUiEnabled() ? yVal : xVal) }
+                              : xVal;
+                            await hidApi.setDpi(slot, payload, {
                                 color: newHex,
-                                select: false 
+                                select: false
                             });
                         });
                     } catch (e) {
@@ -3176,56 +4578,53 @@ function applyCapabilitiesToUi(cap) {
                     }
                 });
             });
-            return; // 拦截结束，不再执行下面的切换逻辑
+            return;
         }
 
-        // [原有逻辑] 切换 DPI
+
         setActiveDpiSlot(slot);
         if (!isHidReady()) return;
-
-        withMutex(async () => {
-          await hidApi.setDpi(slot, v, { select: true });
-        }).catch((err) => logErr(err, "切换 DPI 档失败"));
+        enqueueDevicePatch({ activeDpiSlotIndex: slot - 1 });
         return;
       }
 
-      // 如果点击的是 input 或其它按钮，不处理行点击
+
       if (t.closest("input") || t.closest("button")) return;
-      
+
       const row = e.target.closest?.(".dpiSlotRow");
       if (!row || row.classList.contains("hidden")) return;
-      
+
       const slot = Number(row.dataset.slot);
-      if (!(slot >= 1 && slot <= dpiSlotCap)) return;
-      
-      const inp = $("#dpiInput" + slot);
-      const v = Number(inp?.value);
-      if (!Number.isFinite(v) || v <= 0) return;
+      if (!__isDpiSlotInCap(slot)) return;
 
-      // 立即给出“已选中”视觉反馈（设备回包后会再次同步校准）
       setActiveDpiSlot(slot);
-
-      // 未连接时，只做本地高亮即可
       if (!isHidReady()) return;
-      
-      withMutex(async () => {
-        await hidApi.setDpi(slot, v, { select: true });
-      }).catch((err) => logErr(err, "切换 DPI 档失败"));
-    });
+      enqueueDevicePatch({ activeDpiSlotIndex: slot - 1 });
+      });
+    }
 
-    // 初始化：按下拉框档位数量隐藏多余行，并同步当前选中高亮
+
     const sc = getSlotCountUi();
     setDpiRowsEnabledCount(sc);
     setActiveDpiSlot(uiCurrentDpiSlot, sc);
+    applyDpiAdvancedUiState();
 
-    // Patch v4: DPI 滑条数值气泡交互（hover / drag 跟随）
+
     for (let i = 1; i <= dpiSlotCap; i++) updateDpiBubble(i);
 
     if (!dpiBubbleListenersReady) {
       dpiBubbleListenersReady = true;
 
-      // hover 显示（仅在 thumb 圆圈上悬停时显示）
-      const THUMB_HIT_PAD = 6; // 命中区域额外扩展（px）
+
+      const THUMB_HIT_PAD = 6;
+      const TRACK_HIT_HALF_Y = 8;
+      /**
+       * 检查DPI、拖拽点。
+       * 目的：用于判断DPI、拖拽点状态，避免分散判断。
+       * @param {any} range - 参数 range。
+       * @param {any} clientX - 参数 clientX。
+       * @returns {any} 返回结果。
+       */
       function isPointerOnDpiThumb(range, clientX) {
         try {
           const val = Number(range.value);
@@ -3248,36 +4647,53 @@ function applyCapabilitiesToUi(cap) {
         }
       }
 
+      /**
+       * 设置 DPI 滑块拖动态视觉。
+       * 目的：行级模拟拖动时与原生 :active 视觉保持一致。
+       * @param {HTMLInputElement|null} range
+       * @param {boolean} dragging
+       */
+      function setDpiRangeDragVisual(range, dragging) {
+        if (!range) return;
+        range.classList.toggle("dpiRangeDragging", !!dragging);
+      }
+
+      /**
+       * 处理DPI、拖拽点逻辑。
+       * 目的：处理指针交互与坐标映射，保证拖拽/命中判断准确。
+       * @param {any} e - 参数 e。
+       * @returns {any} 返回结果。
+       */
       function handleDpiThumbHover(e) {
         const t = e.target;
         const range = t.closest?.("input.dpiRange");
         if (!range) return;
 
-        const slot = Number((range.id || "").replace(/\D+/g, ""));
-        if (!(slot >= 1 && slot <= dpiSlotCap)) return;
+        const slot = Number(range.dataset.slot || (range.id || "").replace(/\D+/g, ""));
+        if (!__isDpiSlotInCap(slot)) return;
 
-        // 正在拖动其它档位时不打扰
+
         if (dpiDraggingSlot && dpiDraggingSlot !== slot) return;
 
         if (dpiDraggingSlot === slot) {
-          showDpiBubble(slot);
+          showDpiBubble(slot, dpiDraggingEl || range);
           return;
         }
 
         if (isPointerOnDpiThumb(range, e.clientX)) {
-          showDpiBubble(slot);
+          showDpiBubble(slot, range);
         } else {
           hideDpiBubble(slot);
         }
       }
 
-      // 使用 pointermove 做“命中检测”，避免在滑轨任意位置 hover 都显示
+
       dpiList.addEventListener("pointermove", handleDpiThumbHover);
 
-      // 进入时也检测一次（不需要用户先移动鼠标）
+
       dpiList.addEventListener("pointerover", handleDpiThumbHover);
 
-      // 离开该 range 或离开 dpiList 时隐藏（非拖动中）
+
       dpiList.addEventListener("pointerout", (e) => {
         const t = e.target;
         const range = t.closest?.("input.dpiRange");
@@ -3286,48 +4702,63 @@ function applyCapabilitiesToUi(cap) {
         const related = e.relatedTarget;
         if (related && (related === range || related.closest?.("input.dpiRange") === range)) return;
 
-        const slot = Number((range.id || "").replace(/\D+/g, ""));
-        if (!(slot >= 1 && slot <= dpiSlotCap)) return;
+        const slot = Number(range.dataset.slot || (range.id || "").replace(/\D+/g, ""));
+        if (!__isDpiSlotInCap(slot)) return;
         if (dpiDraggingSlot === slot) return;
         hideDpiBubble(slot);
       });
 
       dpiList.addEventListener("pointerleave", () => {
         if (dpiDraggingSlot) return;
-        // 隐藏所有可见气泡（保险）
-        for (let i = 1; i <= dpiSlotCap; i++) hideDpiBubble(i);
+
+        for (let i = 1; i <= getDpiSlotCap(); i++) hideDpiBubble(i);
       });
 
-      // drag 显示（pointer）
 
-      // drag：开始拖动时锁定该 range，防止自动轮询/回包 UI 覆盖导致“偶发拖不动/禁用光标”
+      /**
+       * 处理DPI逻辑。
+       * 目的：处理指针交互与坐标映射，保证拖拽/命中判断准确。
+       * @returns {any} 返回结果。
+       */
       function endDpiDrag() {
         if (!dpiDraggingSlot) return;
         const slot = dpiDraggingSlot;
+        const dragEl = dpiDraggingEl;
         dpiDraggingSlot = null;
 
-        // 若是“滑轨上下空白拖动”，拖动结束后短时间内屏蔽 click（避免误触发切换档位）
+
         if (dpiRowDragState) {
           if (dpiRowDragState.moved) dpiRowDragBlockClickUntil = Date.now() + 350;
           dpiRowDragState = null;
         }
 
-        if (dpiDraggingEl) {
-          unlockEl(dpiDraggingEl);
+        if (dragEl) {
+          setDpiRangeDragVisual(dragEl, false);
+          if (dpiRowDragDirty) {
+            dragEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          unlockEl(dragEl);
           dpiDraggingEl = null;
         }
+        dpiRowDragDirty = false;
 
-        // 稍微延迟，避免松手瞬间抖动
+
         setTimeout(() => hideDpiBubble(slot), 150);
       }
 
-      // 禁止 DPI 面板内触发浏览器原生 drag&drop（会出现 🚫）
+
       dpiList.addEventListener("dragstart", (e) => {
         if (e.target && e.target.closest?.(".dpiSlotRow")) e.preventDefault();
       });
 
-      // 自定义拖动：只在“滑轨的 X 范围内”（滑轨上下空白）启用拖动；
-      // 滑轨左右空白保持点击切换档位（不影响点击切换档位）
+
+      /**
+       * 内部处理DPI、值逻辑。
+       * 目的：处理指针交互与坐标映射，保证拖拽/命中判断准确。
+       * @param {any} rangeEl - 参数 rangeEl。
+       * @param {any} clientX - 参数 clientX。
+       * @returns {any} 返回结果。
+       */
       function __dpiValueFromClientX(rangeEl, clientX) {
         const rect = rangeEl.getBoundingClientRect();
         const min = Number(rangeEl.min);
@@ -3343,26 +4774,27 @@ function applyCapabilitiesToUi(cap) {
       dpiList.addEventListener("pointerdown", (e) => {
         const t = e.target;
 
-        // 1) 直接在 range 上拖动：走原逻辑
         const directRange = t.closest?.("input.dpiRange");
         if (directRange) {
-          const slot = Number((directRange.id || "").replace(/\D+/g, ""));
-          if (!(slot >= 1 && slot <= dpiSlotCap)) return;
+          const slot = Number(directRange.dataset.slot || (directRange.id || "").replace(/\D+/g, ""));
+          if (!__isDpiSlotInCap(slot)) return;
 
+          setDpiRangeDragVisual(directRange, true);
+          dpiRowDragDirty = false;
           dpiDraggingSlot = slot;
           dpiDraggingEl = directRange;
 
-          // 拖动期间：暂停轮询 & 锁 UI，避免回包把 range 置灰/重建导致拖动中断
+
           lockEl(directRange);
-          showDpiBubble(slot);
+          showDpiBubble(slot, directRange);
           return;
         }
 
-        // 2) 在档位行空白处：仅当位于滑轨 X 范围内（滑轨上下区域）才启用拖动
+
         const row = t.closest?.(".dpiSlotRow");
         if (!row || row.classList.contains("hidden") || row.classList.contains("disabled")) return;
 
-        // 输入/按钮/选择控件依旧保持原交互
+
         if (
           t.closest("input") ||
           t.closest("button") ||
@@ -3373,14 +4805,25 @@ function applyCapabilitiesToUi(cap) {
           return;
 
         const slot = Number(row.dataset.slot);
-        if (!(slot >= 1 && slot <= dpiSlotCap)) return;
+        if (!__isDpiSlotInCap(slot)) return;
 
         const range = $("#dpiRange" + slot);
         if (!range) return;
 
         const rect = range.getBoundingClientRect();
-        // 仅当按下点的 X 落在滑轨左右边界内时，才认为是"滑轨上下空白拖动"
-        if (!(e.clientX >= rect.left && e.clientX <= rect.right)) return; // 左右空白：仍然靠 click 切换档位
+
+        if (!(e.clientX >= rect.left && e.clientX <= rect.right)) return;
+        const centerY = rect.top + rect.height / 2;
+        if (Math.abs(e.clientY - centerY) > TRACK_HIT_HALF_Y) return;
+
+        const nextVal = __dpiValueFromClientX(range, e.clientX);
+        if (Number(range.value) !== nextVal) {
+          range.value = String(nextVal);
+          range.dispatchEvent(new Event("input", { bubbles: true }));
+          dpiRowDragDirty = true;
+        } else {
+          dpiRowDragDirty = false;
+        }
 
         dpiRowDragState = {
           slot,
@@ -3394,10 +4837,11 @@ function applyCapabilitiesToUi(cap) {
         dpiDraggingSlot = slot;
         dpiDraggingEl = range;
 
+        setDpiRangeDragVisual(range, true);
         lockEl(range);
-        showDpiBubble(slot);
+        showDpiBubble(slot, range);
 
-        // 避免选中文本/触发原生拖拽状态（🚫）
+
         e.preventDefault();
       });
 
@@ -3421,9 +4865,12 @@ function applyCapabilitiesToUi(cap) {
           dpiRowDragState.lastY = e.clientY;
 
           const v = __dpiValueFromClientX(range, e.clientX);
-          range.value = String(v);
-          range.dispatchEvent(new Event("input", { bubbles: true }));
-          showDpiBubble(slot);
+          if (Number(range.value) !== v) {
+            range.value = String(v);
+            range.dispatchEvent(new Event("input", { bubbles: true }));
+            dpiRowDragDirty = true;
+          }
+          showDpiBubble(slot, range);
 
           e.preventDefault();
         },
@@ -3434,7 +4881,7 @@ function applyCapabilitiesToUi(cap) {
       document.addEventListener("pointercancel", endDpiDrag, { passive: true });
       window.addEventListener("blur", endDpiDrag);
 
-      // 视口变化时重定位（只更新正在显示的气泡）
+
       window.addEventListener(
         "resize",
         () => requestAnimationFrame(updateVisibleDpiBubbles),
@@ -3449,10 +4896,15 @@ function applyCapabilitiesToUi(cap) {
 
   }
 
-  // ---- Keys: 从设备配置同步按键映射（若固件回包包含映射信息） ----
+
   let applyKeymapFromCfg = null;
+  /**
+   * 构建按键映射。
+   * 目的：集中按键映射的渲染与编辑，避免多处修改导致冲突。
+   * @returns {any} 返回结果。
+   */
   function buildKeymapEditor() {
-    // 视觉化按键映射：点击热点 → 右侧抽屉选择动作
+
     const points = $$("#keys .kmPoint");
     const drawer = $("#kmDrawer");
     const drawerTitle = $("#kmDrawerTitle");
@@ -3466,45 +4918,62 @@ function applyCapabilitiesToUi(cap) {
 
     if (!points.length || !drawer || !tabs || !list || !search) return;
 
-    // ====== 窗口尺寸变化时热点与图片对齐处理 ======
-    // 现状：kmPoint 使用百分比相对 kmCanvas 定位；当图片 object-fit:contain 产生留白时，
-    //       百分比基准会偏离实际图片区域，导致缩放/改变窗口大小后热点漂移。
-    // 方案：按“图片在 canvas 内的真实显示区域”计算每个热点的像素坐标，并在 resize/布局变动时重算。
+
+    /**
+     * 内部钳制01。
+     * 目的：限制数值边界，防止越界。
+     * @param {any} v - 参数 v。
+     * @returns {any} 返回结果。
+     */
     function __clamp01(v){ return v < 0 ? 0 : (v > 1 ? 1 : v); }
 
-    // 计算 object-fit 后“真实图片内容”在 img 元素内的显示矩形（支持 contain/cover/fill/none/scale-down）
+
+    /**
+     * 获取img、content。
+     * 目的：提供统一读写入口，降低耦合。
+     * @param {any} imgEl - 参数 imgEl。
+     * @returns {any} 返回结果。
+     */
     function getImgContentRect(imgEl){
-      const r = imgEl.getBoundingClientRect();
       const nw = imgEl.naturalWidth || 0;
       const nh = imgEl.naturalHeight || 0;
-      if (!r.width || !r.height || !nw || !nh) return null;
+      const boxW = imgEl.clientWidth || imgEl.offsetWidth || 0;
+      const boxH = imgEl.clientHeight || imgEl.offsetHeight || 0;
+      if (!boxW || !boxH || !nw || !nh) return null;
 
       const cs = getComputedStyle(imgEl);
       const fit = (cs.objectFit || "fill").trim();
       const pos = (cs.objectPosition || "50% 50%").trim();
 
-      let dispW = r.width, dispH = r.height;
+      let dispW = boxW, dispH = boxH;
 
       if (fit === "contain" || fit === "scale-down") {
-        const scale = Math.min(r.width / nw, r.height / nh);
+        const scale = Math.min(boxW / nw, boxH / nh);
         dispW = nw * scale;
         dispH = nh * scale;
       } else if (fit === "cover") {
-        const scale = Math.max(r.width / nw, r.height / nh);
+        const scale = Math.max(boxW / nw, boxH / nh);
         dispW = nw * scale;
         dispH = nh * scale;
       } else if (fit === "none") {
         dispW = nw;
         dispH = nh;
-      } // fill/其它：保持 r.width/r.height
+      }
 
-      const leftoverX = r.width - dispW;
-      const leftoverY = r.height - dispH;
+      const leftoverX = boxW - dispW;
+      const leftoverY = boxH - dispH;
 
       const parts = pos.split(/\s+/).filter(Boolean);
       const xTok = parts[0] || "50%";
       const yTok = parts[1] || "50%";
 
+      /**
+       * 处理parse、pos逻辑。
+       * 目的：统一处理parse、pos相关流程，保证行为一致。
+       * @param {any} tok - 参数 tok。
+       * @param {any} axis - 参数 axis。
+       * @returns {any} 返回结果。
+       */
       const parsePos = (tok, axis) => {
         const t = String(tok).toLowerCase();
         if (t === "center") return 0.5;
@@ -3529,51 +4998,63 @@ function applyCapabilitiesToUi(cap) {
       const fy = parsePos(yTok, "y");
 
       return {
-        left: r.left + leftoverX * fx,
-        top: r.top + leftoverY * fy,
+        left: (imgEl.offsetLeft || 0) + leftoverX * fx,
+        top: (imgEl.offsetTop || 0) + leftoverY * fy,
         width: dispW,
         height: dispH,
       };
     }
 
+    /**
+     * 处理layout、km逻辑。
+     * 目的：在尺寸或状态变化时重新计算布局，避免错位。
+     * @returns {any} 返回结果。
+     */
     function layoutKmPoints() {
       if (!canvas || !img) return;
-      const canvasRect = canvas.getBoundingClientRect();
       const content = getImgContentRect(img);
       if (!content || !content.width || !content.height) return;
-
-      const offX = content.left - canvasRect.left;
-      const offY = content.top - canvasRect.top;
 
       for (const p of points) {
         const cs = getComputedStyle(p);
         const x = parseFloat(cs.getPropertyValue("--x")) || 0;
         const y = parseFloat(cs.getPropertyValue("--y")) || 0;
-        const left = offX + (x / 100) * content.width;
-        const top = offY + (y / 100) * content.height;
+        const left = content.left + (x / 100) * content.width;
+        const top = content.top + (y / 100) * content.height;
         p.style.left = `${left}px`;
         p.style.top = `${top}px`;
       }
     }
 
+    /**
+     * 处理schedule、layout逻辑。
+     * 目的：在尺寸或状态变化时重新计算布局，避免错位。
+     * @returns {any} 返回结果。
+     */
     const scheduleLayoutKmPoints = () => {
-      // 连续几帧重算，直到布局稳定（解决窄屏/断点切换时 img 尺寸仍在变化导致的漂移）
+
       let tries = 0;
       let lastSig = "";
       layoutKmPoints.__token = (layoutKmPoints.__token || 0) + 1;
       const token = layoutKmPoints.__token;
 
+      /**
+       * 处理逻辑。
+       * 目的：统一处理逻辑相关流程，保证行为一致。
+       * @returns {any} 返回结果。
+       */
       const step = () => {
-        if (token !== layoutKmPoints.__token) return; // 被更新的调度打断
+        if (token !== layoutKmPoints.__token) return;
         tries++;
 
-        // 计算当前“布局签名”：只要 canvas 或图片内容区还在变，就继续下一帧
-        const cr = canvas?.getBoundingClientRect();
-        const content = img ? getImgContentRect(img) : null;
 
-        const sig = cr && content
+        const content = img ? getImgContentRect(img) : null;
+        const canvasW = Number(canvas?.clientWidth || canvas?.offsetWidth || 0);
+        const canvasH = Number(canvas?.clientHeight || canvas?.offsetHeight || 0);
+
+        const sig = content
           ? [
-              cr.left, cr.top, cr.width, cr.height,
+              canvasW, canvasH,
               content.left, content.top, content.width, content.height
             ].map(v => Math.round(v * 10) / 10).join(",")
           : "";
@@ -3585,37 +5066,35 @@ function applyCapabilitiesToUi(cap) {
         requestAnimationFrame(step);
       };
 
-      // 起步至少等一帧，让本次 resize / media query / font reflow 落地
+
       requestAnimationFrame(step);
     };
 
 
-    // 图片加载完成后再计算（首次进入页面/刷新）
     if (img && !img.complete) {
       img.addEventListener("load", scheduleLayoutKmPoints, { passive: true });
     }
 
-    // 监听窗口尺寸变化
+
     window.addEventListener("resize", scheduleLayoutKmPoints, { passive: true });
 
-    // 监听页面切换（hash 变化时 keys 可能从 display:none 变为 block）
+
     window.addEventListener("hashchange", scheduleLayoutKmPoints, { passive: true });
 
-    // 监听 canvas/img 自身尺寸变化（包含抽屉打开/关闭导致的布局变化）
+
     if (window.ResizeObserver) {
       const ro = new ResizeObserver(() => scheduleLayoutKmPoints());
       if (canvas) ro.observe(canvas);
       if (img) ro.observe(img);
     }
 
-    // 首次布局
+
     scheduleLayoutKmPoints();
 
     const ACTIONS = ProtocolApi.KEYMAP_ACTIONS || {};
     const allLabels = Object.keys(ACTIONS).filter((l) => l && l !== "MODIFIER_ONLY");
 
-    // 分组逻辑：协议层的 type 已经与 UI 对齐（mouse / keyboard / system）
-    // 优先使用协议层提供的 listKeyActionsByType()，避免 UI 端再做“硬切”。
+
     let groups = { mouse: [], keyboard: [], system: [] };
     try {
       const fn = ProtocolApi.listKeyActionsByType;
@@ -3642,7 +5121,14 @@ function applyCapabilitiesToUi(cap) {
       };
     }
 
-// 将 (funckey,keycode) 反查为 UI 的 Select 文本：交给协议层（前端不做位运算）
+
+/**
+ * 生成标签from、funckey。
+ * 目的：统一处理from、funckey相关流程，保证行为一致。
+ * @param {any} funckey - 参数 funckey。
+ * @param {any} keycode - 参数 keycode。
+ * @returns {any} 返回结果。
+ */
 function labelFromFunckeyKeycode(funckey, keycode) {
   try {
     const fn = ProtocolApi.labelFromFunckeyKeycode;
@@ -3653,13 +5139,18 @@ function labelFromFunckeyKeycode(funckey, keycode) {
 }
 
 
-    // 仅保留三个分类：鼠标按键 / 键盘按键 / 系统
     const tabDefs = [
       { cat: "mouse", label: "鼠标按键" },
       { cat: "keyboard", label: "键盘按键" },
       { cat: "system", label: "系统" },
     ];
 
+    /**
+     * 处理group、of逻辑。
+     * 目的：统一处理group、of相关流程，保证行为一致。
+     * @param {any} label - 参数 label。
+     * @returns {any} 返回结果。
+     */
     function groupOfLabel(label) {
       const t = ACTIONS[label]?.type;
       return (t === "mouse" || t === "keyboard" || t === "system") ? t : "system";
@@ -3673,33 +5164,46 @@ const defaultMap = {
       5: "后退",
       6: "DPI循环",
     };
-
-    /** @type {Record<number,string>} */
     const mapping = { ...defaultMap };
 
-    let activeBtn = 1;
-    let activeCat = tabDefs[0]?.cat || "mouse";
-
+    /**
+     * 设置active、point。
+     * 目的：提供统一读写入口，降低耦合。
+     * @param {any} btn - 参数 btn。
+     * @returns {any} 返回结果。
+     */
     function setActivePoint(btn) {
       points.forEach((p) => p.classList.toggle("active", Number(p.getAttribute("data-btn")) === btn));
     }
 
-    // 检查按键是否被修改
+
+    /**
+     * 检查按钮。
+     * 目的：用于判断按钮状态，避免分散判断。
+     * @param {any} btn - 参数 btn。
+     * @returns {any} 返回结果。
+     */
     function isButtonModified(btn) {
       return mapping[btn] !== defaultMap[btn];
     }
 
-    // 为单个按键恢复默认值
+
+    /**
+     * 重置按钮。
+     * 目的：统一处理按钮相关流程，保证行为一致。
+     * @param {any} btn - 参数 btn。
+     * @returns {Promise<any>} 异步结果。
+     */
     async function resetSingleButton(btn) {
       if (btn === 1) {
         alert("为防止误操作，主按键（左键）已被锁定，不可修改。");
         return;
       }
-      
+
       mapping[btn] = defaultMap[btn];
       updateBubble(btn);
 
-      // 若连接中，顺便写入设备
+
       if (!isHidReady()) return;
       try {
         await withMutex(async () => {
@@ -3711,28 +5215,33 @@ const defaultMap = {
       }
     }
 
+    /**
+     * 更新气泡提示。
+     * 目的：在状态变化时同步 UI 或数据，避免不一致。
+     * @param {any} btn - 参数 btn。
+     * @returns {any} 返回结果。
+     */
     function updateBubble(btn) {
       const el = $(`#kmLabel${btn}`);
       if (!el) return;
       el.textContent = mapping[btn] || "-";
-      
-      // 更新恢复默认按钮的显示状态
+
+
       const point = $(`.kmPoint[data-btn="${btn}"]`);
       if (!point) return;
-      
+
       const bubble = point.querySelector(".kmBubble");
       if (!bubble) return;
-      
-      // 查找或创建恢复默认按钮
+
+
       let resetBtn = bubble.querySelector(".kmResetBtn");
       const isModified = isButtonModified(btn);
-      
-      // 根据是否修改，同步切换 kmModified 类名
-      // 这将触发 CSS 中的 opacity: 0.9 让按钮显示，并加深气泡边框
+
+
       point.classList.toggle("kmModified", isModified);
-      
+
       if (isModified && !resetBtn) {
-        // 创建恢复默认按钮
+
         resetBtn = document.createElement("button");
         resetBtn.className = "kmResetBtn";
         resetBtn.type = "button";
@@ -3745,60 +5254,79 @@ const defaultMap = {
         });
         bubble.appendChild(resetBtn);
       } else if (!isModified && resetBtn) {
-        // 移除恢复默认按钮
+
         resetBtn.remove();
       }
     }
 
+    /**
+     * 更新all、bubbles。
+     * 目的：在状态变化时同步 UI 或数据，避免不一致。
+     * @returns {any} 返回结果。
+     */
     function updateAllBubbles() {
       for (let i = 1; i <= 6; i++) updateBubble(i);
     }
 
-     // 从设备回包同步按键映射（如果 cfg.buttonMappings 存在）
+
+     /**
+      * 应用按键映射、设备。
+      * 目的：集中按键映射的渲染与编辑，避免多处修改导致冲突。
+      * @param {any} cfg - 参数 cfg。
+      * @returns {any} 返回结果。
+      */
      function applyKeymapFromDeviceCfg(cfg) {
        const arr = cfg?.buttonMappings;
-       // 只有确保有 6 个按键的数据才进行同步
+
        if (!arr || !Array.isArray(arr) || arr.length < 6) return;
 
        for (let i = 1; i <= 6; i++) {
          const it = arr[i - 1];
          if (!it) continue;
          const label = labelFromFunckeyKeycode(it.funckey, it.keycode);
-         // 即使 label 相同，我们也更新 mapping 对象以确保数据一致性
+
          if (label) {
            mapping[i] = label;
          }
        }
-       // 强制刷新所有 UI 气泡，不依赖 changed 变量
+
        updateAllBubbles();
      }
 
-     // 暴露给 applyConfigToUi 使用（保持与其他页面一致：连上设备后自动读取配置）
+
      applyKeymapFromCfg = applyKeymapFromDeviceCfg;
 
-    
+
     let __focusTimer = null;
+    /**
+     * 延迟focus、search。
+     * 目的：统一处理focus、search相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     function deferFocusSearch() {
       if (!search) return;
 
-      // 避免在抽屉过渡开始时立刻 focus 导致某些环境触发 viewport/布局二次计算，
-      // 进而在动画过程中重算 transform 目标值（出现“过冲→回弹”错位）。
-      // 策略：等待抽屉过渡结束(transitionend)，再 focus；并提供超时兜底。
+
       if (__focusTimer) {
         clearTimeout(__focusTimer);
         __focusTimer = null;
       }
 
+      /**
+       * 处理do、focus逻辑。
+       * 目的：统一处理do、focus相关流程，保证行为一致。
+       * @returns {any} 返回结果。
+       */
       const doFocus = () => {
-        // 如果抽屉已关闭就不再 focus
+
         if (!drawer.classList.contains("open")) return;
         try {
-          // preventScroll 在部分浏览器可用，可降低额外滚动/重排风险
+
           search.focus({ preventScroll: true });
         } catch (e) {
           search.focus?.();
         }
-        // 只在真正 focus 之后再 select，避免触发布局波动
+
         try { search.select?.(); } catch (e) {}
       };
 
@@ -3807,38 +5335,50 @@ const defaultMap = {
         window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
       if (prefersReduced) {
-        // 无动画环境：延后一帧即可
+
         requestAnimationFrame(doFocus);
         return;
       }
 
       let fired = false;
+      /**
+       * 处理on、end逻辑。
+       * 目的：统一处理on、end相关流程，保证行为一致。
+       * @param {any} e - 参数 e。
+       * @returns {any} 返回结果。
+       */
       const onEnd = (e) => {
         if (e.target !== drawer) return;
-        // 只关心 transform/opacity 的结束
+
         if (e.propertyName && e.propertyName !== "transform" && e.propertyName !== "opacity") return;
         if (fired) return;
         fired = true;
         drawer.removeEventListener("transitionend", onEnd);
-        // 再延后一帧，让浏览器完成最后一次合成
+
         requestAnimationFrame(() => requestAnimationFrame(doFocus));
       };
 
       drawer.addEventListener("transitionend", onEnd, { passive: true });
 
-      // 兜底：如果没有触发 transitionend（例如被中断/不同浏览器实现），按动画时长稍后 focus
+
       __focusTimer = setTimeout(() => {
         if (fired) return;
         fired = true;
         drawer.removeEventListener("transitionend", onEnd);
         requestAnimationFrame(() => requestAnimationFrame(doFocus));
-      }, 260); // 与 CSS 过渡时长(0.22s)对齐并略加缓冲
+      }, 260);
     }
+/**
+ * 打开抽屉。
+ * 目的：集中控制可见性或开关状态，避免多处直接修改。
+ * @param {any} btn - 参数 btn。
+ * @returns {any} 返回结果。
+ */
 function openDrawer(btn) {
       activeBtn = btn;
       setActivePoint(btn);
 
-      // 自动切换到当前映射所属分类（鼠标/键盘/系统）
+
       const cur = mapping[btn];
       activeCat = groupOfLabel(cur) || activeCat;
 
@@ -3855,6 +5395,11 @@ function openDrawer(btn) {
       deferFocusSearch();
     }
 
+    /**
+     * 关闭抽屉。
+     * 目的：集中控制可见性或开关状态，避免多处直接修改。
+     * @returns {any} 返回结果。
+     */
     function closeDrawer() {
       if (__focusTimer) { clearTimeout(__focusTimer); __focusTimer = null; }
       drawer.classList.remove("open");
@@ -3865,6 +5410,11 @@ function openDrawer(btn) {
       document.body.classList.remove("km-drawer-open");
     }
 
+    /**
+     * 渲染tabs。
+     * 目的：集中渲染入口，减少分散更新。
+     * @returns {any} 返回结果。
+     */
     function renderTabs() {
       tabs.innerHTML = "";
       for (const t of tabDefs) {
@@ -3882,6 +5432,11 @@ function openDrawer(btn) {
       }
     }
 
+    /**
+     * 渲染列表。
+     * 目的：集中渲染入口，减少分散更新。
+     * @returns {any} 返回结果。
+     */
     function renderList() {
       const q = (search.value || "").trim().toLowerCase();
       const items0 = groups[activeCat] || [];
@@ -3908,6 +5463,12 @@ function openDrawer(btn) {
       }
     }
 
+    /**
+     * 选择逻辑。
+     * 目的：统一处理逻辑相关流程，保证行为一致。
+     * @param {any} label - 参数 label。
+     * @returns {Promise<any>} 异步结果。
+     */
     async function choose(label) {
       if (activeBtn === 1) {
          alert("为防止误操作，主按键（左键）已被锁定，不可修改。");
@@ -3917,7 +5478,7 @@ function openDrawer(btn) {
       mapping[activeBtn] = label;
       updateBubble(activeBtn);
 
-      // 写入设备（若已连接）
+
       debounceKey(`km:${activeBtn}`, 120, async () => {
         if (!isHidReady()) return;
         try {
@@ -3933,9 +5494,15 @@ function openDrawer(btn) {
       closeDrawer();
     }
 
-    // 事件：点击热点 / 气泡都打开抽屉
+
     points.forEach((p) => {
       const btn = Number(p.getAttribute("data-btn"));
+      /**
+       * 处理handler逻辑。
+       * 目的：统一处理handler相关流程，保证行为一致。
+       * @param {any} e - 参数 e。
+       * @returns {any} 返回结果。
+       */
       const handler = (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -3953,21 +5520,27 @@ function openDrawer(btn) {
 
     search.addEventListener("input", () => renderList());
 
-    // 初始化显示
+
     updateAllBubbles();
 
-    // 暴露给 applyConfigToUi 使用
+
     applyKeymapFromCfg = applyKeymapFromDeviceCfg;
 
-    if (hidApi && hidApi._cfg) {
+    const cachedCfg = getCachedDeviceConfig();
+    if (cachedCfg) {
         setTimeout(() => {
-            applyKeymapFromDeviceCfg(hidApi._cfg);
+            applyKeymapFromDeviceCfg(cachedCfg);
         }, 100);
     }
   }
 
 
-
+    /**
+     * 转义逻辑。
+     * 目的：统一处理逻辑相关流程，保证行为一致。
+     * @param {any} s - 参数 s。
+     * @returns {any} 返回结果。
+     */
     function escapeHtml(s) {
     return String(s)
       .replaceAll("&", "&amp;")
@@ -3979,86 +5552,167 @@ function openDrawer(btn) {
 
   buildDpiEditor();
   buildKeymapEditor();
+  applyDpiAdvancedUiState();
 
-  // ---- 实时写入:无需"应用"按钮 ----
+  if (dpiAdvancedToggle) {
+    dpiAdvancedToggle.addEventListener("click", async () => {
+      if (!hasDpiAdvancedAxis()) return;
+      if (dpiAdvancedToggleBusy) return;
+      const nextEnabled = !dpiAdvancedEnabled;
+      dpiAdvancedEnabled = nextEnabled;
+      applyDpiAdvancedUiState();
+
+      if (nextEnabled) return;
+      dpiAdvancedToggleBusy = true;
+      try {
+        await syncDpiSlotsToSingleAxisIfNeeded();
+      } finally {
+        dpiAdvancedToggleBusy = false;
+      }
+    });
+  }
+
+
   const slotSel = $("#slotCountSelect");
   if (slotSel) {
     slotSel.addEventListener("change", () => {
       const nextCount = Number(slotSel.value);
-      
-      // 无需判断增减，UI 立即响应显示/隐藏行
+
+
       setDpiRowsEnabledCount(nextCount);
       setActiveDpiSlot(uiCurrentDpiSlot, nextCount);
 
-      debounceKey("slotCount", 120, async () => {
-        if (!isHidReady()) return;
-        try {
-          await withMutex(async () => {
-            await hidApi.setSlotCount(nextCount);
-          });
-          // 写入成功后，协议层内部会处理 DPI 专用回读并触发第二次 emitConfig 校验
-        } catch (e) {
-          logErr(e, "档位数量写入失败");
-          // 仅在彻底失败时回滚 UI
-        }
-      });
+      enqueueDevicePatch({ dpiSlotCount: nextCount });
     });
   }
 
-  // ====== 设备状态写入队列 ======
-  // 策略：回报率/性能模式/开关等共享同一个防抖队列，避免频繁写入
+
+  // ============================================================
+  // 6) 设备写入队列（防抖 + 适配器驱动）
+  // ============================================================
   let __pendingDevicePatch = null;
 
+  function __nextWriteSeq() {
+    __writeSeqCounter += 1;
+    return __writeSeqCounter;
+  }
+
+  function __cleanupExpiredIntents(now = Date.now()) {
+    for (const [key, intent] of __intentByKey.entries()) {
+      if (!intent || (now - Number(intent.ts || 0)) > __INTENT_TTL_MS) {
+        __intentByKey.delete(key);
+      }
+    }
+  }
+
+  function __setWriteIntent(key, value) {
+    const intent = {
+      seq: __nextWriteSeq(),
+      value,
+      ts: Date.now(),
+    };
+    __intentByKey.set(key, intent);
+    return intent;
+  }
+
+  function __getWriteIntent(key) {
+    __cleanupExpiredIntents();
+    return __intentByKey.get(key) || null;
+  }
+
+  function __clearWriteIntent(key, seq) {
+    const cur = __intentByKey.get(key);
+    if (!cur) return;
+    if (seq == null || cur.seq === seq) {
+      __intentByKey.delete(key);
+    }
+  }
+
+  function __isSameStandardValue(a, b) {
+    if (Object.is(a, b)) return true;
+    if (a == null || b == null) return false;
+    const na = Number(a);
+    const nb = Number(b);
+    if (Number.isFinite(na) && Number.isFinite(nb)) return na === nb;
+    return String(a) === String(b);
+  }
+
+  function readStandardValueWithIntent(cfg, key) {
+    const deviceValue = readStandardValue(cfg, key);
+    const intent = __getWriteIntent(key);
+    if (!intent) return deviceValue;
+    if (__isSameStandardValue(deviceValue, intent.value)) {
+      __clearWriteIntent(key, intent.seq);
+      return deviceValue;
+    }
+    return intent.value;
+  }
+
+
   /**
-   * 将设备配置变更加入写入队列
-   * 采用防抖机制，将多个配置变更合并为一次写入操作
-   * @param {Object} patch - 要写入的配置补丁对象
+   * 加入设备写入队列。
+   * 目的：合并高频写入并通过适配器统一转换路径，降低竞态风险。
+   * @param {any} patch - 参数 patch。
+   * @returns {any} 返回结果。
    */
   function enqueueDevicePatch(patch) {
     if (!patch || typeof patch !== "object") return;
 
-    // 防止"刷新/初始化阶段"把默认 UI 状态写回设备
-    // 必须先收到一包 config（applyConfigToUi 成功）后才允许写入
+
     if (!__writesEnabled) return;
     if (!__pendingDevicePatch) __pendingDevicePatch = {};
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
       __pendingDevicePatch[k] = v;
+      __setWriteIntent(k, v);
     }
 
-    // 使用防抖机制，延迟执行写入操作
+
     debounceKey("deviceState", (window.AppConfig?.timings?.debounceMs?.deviceState ?? 200), async () => {
       if (!isHidReady()) return;
       const payload = __pendingDevicePatch;
       __pendingDevicePatch = null;
       if (!payload || !Object.keys(payload).length) return;
 
+      const attemptSeqByKey = {};
+      for (const k of Object.keys(payload)) {
+        const intent = __getWriteIntent(k);
+        if (!intent) continue;
+        attemptSeqByKey[k] = intent.seq;
+      }
+
       try {
         await withMutex(async () => {
-          // 设备写入策略：抽离为可扩展的 Writer（采用策略/适配器模式）
           const writer = window.DeviceWriter;
           if (writer?.writePatch) {
-            await writer.writePatch({
+            const result = await writer.writePatch({
               hidApi,
-              ProtocolApi,
+              adapter,
               payload,
-              deviceId: DEVICE_ID,
-              deviceFamily: DEVICE_FAMILY,
-              getLastChaosModeByte: () => __lastChaosModeByte,
-              setLastChaosModeByte: (v) => { __lastChaosModeByte = v; },
             });
+            const writtenStdPatch = result?.writtenStdPatch || {};
+            for (const key of Object.keys(payload)) {
+              if (Object.prototype.hasOwnProperty.call(writtenStdPatch, key)) continue;
+              __clearWriteIntent(key, attemptSeqByKey[key]);
+            }
           } else {
-            // 降级处理：如果外部未加载 writer，跳过写入以免破坏设备状态
             console.warn("[writer] missing, skip writePatch");
+            for (const key of Object.keys(payload)) {
+              __clearWriteIntent(key, attemptSeqByKey[key]);
+            }
           }
-});
+        });
 
-        if (payload.polling_rate != null) log(`回报率已写入:${payload.polling_rate}Hz`);
+        if (payload.pollingHz != null) log(`回报率已写入:${payload.pollingHz}Hz`);
         if (payload.performanceMode != null) log(`性能模式已写入:${payload.performanceMode}`);
         if (payload.linearCorrection != null) log(`直线修正已写入:${payload.linearCorrection ? "开" : "关"}`);
         if (payload.rippleControl != null) log(`纹波修正已写入:${payload.rippleControl ? "开" : "关"}`);
       } catch (e) {
+        for (const key of Object.keys(payload)) {
+          __clearWriteIntent(key, attemptSeqByKey[key]);
+        }
         logErr(e, "设备状态写入失败");
+        requestConfigOnce("write-failure-reconcile").catch(() => {});
       }
     });
   }
@@ -4068,82 +5722,56 @@ function openDrawer(btn) {
     pollingSel.addEventListener("change", () => {
       const hz = Number(pollingSel.value);
       if (!Number.isFinite(hz)) return;
-      // 只发 polling_rate；协议层会归一到 pollingHz（含别名映射）
-      enqueueDevicePatch({ polling_rate: hz });
+      enqueueDevicePatch({ pollingHz: hz });
+    });
+  }
+
+  const pollingWirelessSel = $("#pollingSelectWireless");
+  if (pollingWirelessSel) {
+    pollingWirelessSel.addEventListener("change", () => {
+      if (!__isDualPollingRates) return;
+      const hz = Number(pollingWirelessSel.value);
+      if (!Number.isFinite(hz)) return;
+      enqueueDevicePatch({ pollingWirelessHz: hz });
     });
   }
 
   const sleepSel = $("#sleepSelect");
   if (sleepSel) {
     sleepSel.addEventListener("change", () => {
-      debounceKey("sleep", (window.AppConfig?.timings?.debounceMs?.sleep ?? 120), async () => {
-        if (!isHidReady()) return;
-        const sec = Number(sleepSel.value);
-        try {
-          await withMutex(async () => {
-            await hidApi.setFeature("sleep_timeout", sec);
-          });
-          log(`休眠已写入:${sec}s`);
-        } catch (e) {
-          logErr(e, "休眠写入失败");
-        }
-      });
+      const sec = Number(sleepSel.value);
+      if (!Number.isFinite(sec)) return;
+      enqueueDevicePatch({ sleepSeconds: sec });
     });
   }
 
   const debounceSel = $("#debounceSelect");
   if (debounceSel) {
     debounceSel.addEventListener("change", () => {
-      debounceKey("debounce", (window.AppConfig?.timings?.debounceMs?.debounce ?? 120), async () => {
-        if (!isHidReady()) return;
-        const ms = Number(debounceSel.value);
-        try {
-          await withMutex(async () => {
-            await hidApi.setFeature("debounce_ms", ms);
-          });
-          log(`防抖已写入:${ms}ms`);
-        } catch (e) {
-          logErr(e, "防抖写入失败");
-        }
-      });
+      const ms = Number(debounceSel.value);
+      if (!Number.isFinite(ms)) return;
+      enqueueDevicePatch({ debounceMs: ms });
     });
   }
 
-  // ====== 修正 LED 开关监听 ======
+
   const ledToggle = $("#ledToggle");
   if (ledToggle) {
     ledToggle.addEventListener("change", () => {
-      debounceKey("led", (window.AppConfig?.timings?.debounceMs?.led ?? 80), async () => {
-        if (!isHidReady()) return;
-        const on = !!ledToggle.checked;
-        try {
-          await withMutex(async () => {
-            if (IS_RAPOO) {
-              // Rapoo 下发 ledLowBattery
-              // 这里使用 setFeature 单发，或者由 setBatchFeatures 自动路由
-              // 由于 protocol_api_rapoo.js 中 setFeature 会调用 setBatchFeatures -> planner -> spec
-              // 所以这里只要 key 对即可
-              await hidApi.setFeature("ledLowBattery", on);
-            } else {
-              // Chaos 原有逻辑
-              await hidApi.setFeature("rgb_switch", on);
-            }
-          });
-          log(`LED 设置已写入:${on ? "开" : "关"}`);
-        } catch (e) {
-          logErr(e, "LED 写入失败");
-        }
-      });
+      if (!hasFeature("hasPrimaryLedFeature")) return;
+      const on = !!ledToggle.checked;
+      enqueueDevicePatch({ primaryLedFeature: on });
     });
   }
 
-  // ---- perfMode/toggles: minimal patch; all go through enqueueDevicePatch ----
+
   const perfRadios = $$('input[name="perfMode"]');
   perfRadios.forEach((r) => {
     r.addEventListener("change", () => {
+      if (!__hasPerformanceMode) return;
       const v = document.querySelector('input[name="perfMode"]:checked')?.value;
       if (!v) return;
-      // perf mode 仅在用户切换 perfMode 时才写入 performanceMode
+
       enqueueDevicePatch({ performanceMode: v });
     });
   });
@@ -4151,89 +5779,94 @@ function openDrawer(btn) {
   const lodEl = $("#bitLOD");
   if (lodEl) {
     lodEl.addEventListener("change", () => {
-      if (IS_RAPOO) {
-        // Rapoo: bitLOD 重映射为“玻璃模式”
-        enqueueDevicePatch({ glassMode: !!lodEl.checked });
-      } else {
-        // Chaos: 保持原逻辑（LOD 静默高度）
-        enqueueDevicePatch({ lodHeight: lodEl.checked ? "low" : "high" });
-      }
+      if (!hasFeature("hasPrimarySurfaceToggle")) return;
+      enqueueDevicePatch({ surfaceModePrimary: !!lodEl.checked });
     });
   }
 
 
   const bit1 = $("#bit1");
-  if (bit1) bit1.addEventListener("change", () => enqueueDevicePatch({ motionSync: !!bit1.checked }));
+  if (bit1) bit1.addEventListener("change", () => {
+    if (!hasFeature("hasMotionSync")) return;
+    enqueueDevicePatch({ motionSync: !!bit1.checked });
+  });
 
   const bit2 = $("#bit2");
-  if (bit2) bit2.addEventListener("change", () => enqueueDevicePatch({ linearCorrection: !!bit2.checked }));
+  if (bit2) bit2.addEventListener("change", () => {
+    if (!hasFeature("hasLinearCorrection")) return;
+    enqueueDevicePatch({ linearCorrection: !!bit2.checked });
+  });
 
   const bit3 = $("#bit3");
-  if (bit3) bit3.addEventListener("change", () => enqueueDevicePatch({ rippleControl: !!bit3.checked }));
+  if (bit3) bit3.addEventListener("change", () => {
+    if (!hasFeature("hasRippleControl")) return;
+    enqueueDevicePatch({ rippleControl: !!bit3.checked });
+  });
 
   const bit6 = $("#bit6");
   if (bit6) {
     bit6.addEventListener("change", () => {
-      if (IS_RAPOO) return;
-      // Chaos: 保持原逻辑（此开关在旧协议中对应 glassMode/辅助功能）
-      enqueueDevicePatch({ glassMode: !!bit6.checked });
+      if (!hasFeature("hasSecondarySurfaceToggle")) return;
+      enqueueDevicePatch({ surfaceModeSecondary: !!bit6.checked });
     });
   }
 
   const rapooPollingSelectAdv = $("#rapooPollingSelectAdv");
   if (rapooPollingSelectAdv) {
     rapooPollingSelectAdv.addEventListener("change", () => {
-      if (!IS_RAPOO) return;
+      if (!hasFeature("hasKeyScanRate")) return;
       const hz = Number(rapooPollingSelectAdv.value);
       if (!Number.isFinite(hz)) return;
-      // 发送 keyScanningRate 而不是 polling_rate
+
       enqueueDevicePatch({ keyScanningRate: hz });
     });
   }
 
-  // ====== Rapoo: 基础性能页底部开关 ======
-  // 无线策略 wirelessStrategy: smart <-> full
+
   const wirelessStrategyToggle = $("#wirelessStrategyToggle");
   if (wirelessStrategyToggle) {
     wirelessStrategyToggle.addEventListener("change", () => {
-      if (!IS_RAPOO) return;
-      const v = wirelessStrategyToggle.checked ? "full" : "smart";
-      enqueueDevicePatch({ wirelessStrategy: v });
-      try { syncRapooBasicExtraSwitchState(); } catch (_) {}
+      if (!hasFeature("hasWirelessStrategy")) return;
+      enqueueDevicePatch({ wirelessStrategyMode: !!wirelessStrategyToggle.checked });
+      try { syncBasicExtraSwitchState(); } catch (_) {}
     });
   }
 
-  // 通信协议 commProtocol: efficient <-> initial
+
   const commProtocolToggle = $("#commProtocolToggle");
   if (commProtocolToggle) {
     commProtocolToggle.addEventListener("change", () => {
-      if (!IS_RAPOO) return;
-      const v = commProtocolToggle.checked ? "initial" : "efficient";
-      enqueueDevicePatch({ commProtocol: v });
-      try { syncRapooBasicExtraSwitchState(); } catch (_) {}
+      if (!hasFeature("hasCommProtocol")) return;
+      enqueueDevicePatch({ commProtocolMode: !!commProtocolToggle.checked });
+      try { syncBasicExtraSwitchState(); } catch (_) {}
     });
   }
 
-  // ====== ATK Long Range Mode Logic ======
+
   const longRangeToggle = $("#longRangeModeToggle");
   if (longRangeToggle) {
     longRangeToggle.addEventListener("change", () => {
-      // 调用原有写入队列，key 必须与 protocol_api_atk.js 中的 SPEC 一致
+      if (!hasFeature("hasLongRange")) return;
       enqueueDevicePatch({ longRangeMode: !!longRangeToggle.checked });
     });
   }
 
   const angleInput = $("#angleInput");
   if (angleInput) {
-    // 拖动时只更新读数（syncAdvancedPanelUi 已在别处监听 input）
-    // 松手后才真正下发设置，避免拖动过程中频繁写入。
+
+
+    /**
+     * 处理角度逻辑。
+     * 目的：统一处理角度相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const commitAngle = () => {
       const v = Number(angleInput.value);
       if (!Number.isFinite(v)) return;
       enqueueDevicePatch({ sensorAngle: v });
     };
     angleInput.addEventListener("change", commitAngle);
-    // 兼容部分设备：pointerup/touchend 也触发一次提交（不会影响 change 正常触发）
+
     angleInput.addEventListener("pointerup", commitAngle);
     angleInput.addEventListener("touchend", commitAngle);
   }
@@ -4241,18 +5874,17 @@ function openDrawer(btn) {
 
   const feelInput = $("#feelInput");
   if (feelInput) {
-    // 拖动时只更新读数（syncAdvancedPanelUi 已在别处监听 input）
-    // 松手后才真正下发设置，避免拖动过程中频繁写入。
+
+
+    /**
+     * 处理手感逻辑。
+     * 目的：统一处理手感相关流程，保证行为一致。
+     * @returns {any} 返回结果。
+     */
     const commitFeel = () => {
       const v = Number(feelInput.value);
       if (!Number.isFinite(v)) return;
-      if (IS_RAPOO) {
-        // 统一发送挡位字段
-        enqueueDevicePatch({ opticalEngineLevel: v });
-      } else {
-        // Chaos: 保持原逻辑（传感器手感）
-        enqueueDevicePatch({ sensorFeel: v });
-      }
+      enqueueDevicePatch({ surfaceFeel: v });
     };
     feelInput.addEventListener("change", commitFeel);
     feelInput.addEventListener("pointerup", commitFeel);
@@ -4260,10 +5892,12 @@ function openDrawer(btn) {
   }
 
 
-  // ---- Config -> UI ----
-
-  // Rapoo: 基础性能页底部开关状态文案同步（仅展示，不影响写入）
-  function syncRapooBasicExtraSwitchState() {
+  /**
+   * 同步basic、extra。
+   * 目的：保持状态一致性，避免局部更新遗漏。
+   * @returns {any} 返回结果。
+   */
+  function syncBasicExtraSwitchState() {
     const wsToggle = $("#wirelessStrategyToggle");
     const wsState = $("#wirelessStrategyState");
     if (wsToggle && wsState) wsState.textContent = wsToggle.checked ? "满格射频" : "智能调节";
@@ -4273,6 +5907,13 @@ function openDrawer(btn) {
     if (cpToggle && cpState) cpState.textContent = cpToggle.checked ? "初始" : "高效";
   }
 
+  /**
+   * 设置radio。
+   * 目的：提供统一读写入口，降低耦合。
+   * @param {any} name - 参数 name。
+   * @param {any} value - 参数 value。
+   * @returns {any} 返回结果。
+   */
   function setRadio(name, value) {
     const ae = document.activeElement;
     if (ae && ae.name === name) return;
@@ -4280,211 +5921,244 @@ function openDrawer(btn) {
     if (el && !(el.id && uiLocks.has(el.id))) el.checked = true;
   }
 
+
+  // ============================================================
+  // 7) 配置 -> UI 同步（单向数据流）
+  // ============================================================
   /**
-   * 将设备配置应用到 UI
-   * 这是配置同步的核心函数，负责将所有设备配置值反映到界面元素上
-   * @param {Object} cfg - 设备配置对象
+   * 将设备配置映射到 UI。
+   * 目的：保持设备回包到 UI 的单向数据流，避免回写回路。
+   * @param {any} cfg - 参数 cfg。
+   * @returns {any} 返回结果。
    */
   function applyConfigToUi(cfg) {
-    // capabilities 优先来自后端回包，用于动态渲染 UI（如 DPI 上限、回报率选项等）
+
     try { applyCapabilitiesToUi(cfg?.capabilities); } catch (_) {}
+    __cleanupExpiredIntents();
+    const readMerged = (key) => readStandardValueWithIntent(cfg, key);
+    const topConfigSlotCount = readMerged("configSlotCount");
+    const topActiveConfigSlotIndex = readMerged("activeConfigSlotIndex");
+    renderTopConfigSlots({
+      slotCount: topConfigSlotCount,
+      activeIndex: topActiveConfigSlotIndex,
+    });
     const dpiSlotCap = getDpiSlotCap();
-    const slots = cfg.dpiSlots || [];
-    
-    // 同步 DPI 档位颜色（ATK 设备支持）
-    const colors = cfg.dpiColors || []; // 示例：["#FF0000", "#00FF00", ...]
+    const slotsXRaw = readMerged("dpiSlotsX");
+    const slotsCompat = readMerged("dpiSlots");
+    const slotsYRaw = readMerged("dpiSlotsY");
+    const slotsX = Array.isArray(slotsXRaw)
+      ? slotsXRaw
+      : (Array.isArray(slotsCompat) ? slotsCompat : (Array.isArray(cfg.dpiSlots) ? cfg.dpiSlots : []));
+    const slotsY = Array.isArray(slotsYRaw)
+      ? slotsYRaw
+      : slotsX;
+    const lodsRaw = hasFeature("hasDpiLods") ? readMerged("dpiLods") : [];
+    const lods = Array.isArray(lodsRaw) ? lodsRaw : [];
+
+    const slotCount = clampSlotCountToCap(
+      Number(readMerged("dpiSlotCount") ?? dpiSlotCap),
+      dpiSlotCap
+    );
+    let hasAxisDiff = false;
+
+
+    const supportsDpiColors = hasFeature("hasDpiColors");
+    const colors = supportsDpiColors ? (cfg.dpiColors || []) : [];
 
     for (let i = 1; i <= dpiSlotCap; i++) {
-      const v = slots[i - 1];
-      const input = $(`#dpiInput${i}`);
-      const range = $(`#dpiRange${i}`);
-      if (input && typeof v === "number") safeSetValue(input, v);
-      if (range && typeof v === "number") safeSetValue(range, v);
+      const xVal = Number(slotsX[i - 1]);
+      const yValRaw = Number(slotsY[i - 1]);
+      const xSafe = Number.isFinite(xVal) ? xVal : getUiDpiAxisValue(i, "x", 800);
+      const ySafe = Number.isFinite(yValRaw) ? yValRaw : xSafe;
+      setUiDpiAxisValue(i, "x", xSafe);
+      setUiDpiAxisValue(i, "y", ySafe);
+      setUiDpiLod(i, lods[i - 1]);
+      if (xSafe !== ySafe) hasAxisDiff = true;
+      syncDpiRowInputs(i);
+      updateDpiBubble(i);
 
-      // 渲染按钮颜色
+
       const btn = dpiList?.querySelector(`.dpiSlotRow[data-slot="${i}"] .dpiSelectBtn`);
-      if (btn && colors[i-1]) {
-          // 使用 CSS 变量传递颜色，配合 style.css 中的 background: var(--btn-bg)
-          btn.style.setProperty("--btn-bg", colors[i-1]);
+      if (btn) {
+        if (supportsDpiColors) {
+          if (colors[i - 1]) btn.style.setProperty("--btn-bg", colors[i - 1]);
+        } else {
+          btn.style.removeProperty("--btn-bg");
+        }
       }
     }
 
-    const slotCount = clampSlotCountToCap(cfg.currentSlotCount ?? dpiSlotCap, dpiSlotCap);
     safeSetValue($("#slotCountSelect"), slotCount);
     setDpiRowsEnabledCount(slotCount);
 
-    const curIdx1 = (Number(cfg.currentDpiIndex ?? 0) || 0) + 1;
+    const activeDpiIndex = Number(readMerged("activeDpiSlotIndex") ?? 0);
+    const curIdx1 = (Number.isFinite(activeDpiIndex) ? activeDpiIndex : 0) + 1;
     setActiveDpiSlot(curIdx1, slotCount);
-
-    // 同步按键扫描率到高级面板下拉框
-    if (IS_RAPOO && cfg.keyScanningRate) {
-       // 假设 UI 中 rapooPollingSelectAdv 的 value 就是 1000/2000/4000/8000
-       safeSetValue($("#rapooPollingSelectAdv"), cfg.keyScanningRate);
-       // 同步到循环按钮 UI（静默更新，不触发动画）
-       if (typeof updatePollingCycleUI === 'function') {
-         updatePollingCycleUI(cfg.keyScanningRate, false);
-       }
+    if (hasDpiAdvancedAxis() && hasAxisDiff && !dpiSyncingToSingleMode) {
+      dpiAdvancedEnabled = true;
     }
+    applyDpiAdvancedUiState();
 
-    const pollingHz = cfg.pollingHz ?? cfg.pollingRateHz ?? cfg.reportRateHz ?? cfg.reportHz ?? cfg.polling;
-    if (pollingHz) {
-      // Rapoo 设备支持完整的回报率选项：125, 250, 500, 1000, 2000, 4000, 8000
-      const rapooRates = [125, 250, 500, 1000, 2000, 4000, 8000];
-      const picked = IS_RAPOO ? rapooRates.reduce((best, x) => (Math.abs(x - pollingHz) < Math.abs(best - pollingHz) ? x : best), rapooRates[0]) : pollingHz;
-      safeSetValue($("#pollingSelect"), picked);
-    }
-
-
-    // 优先使用 cfg.sleepSeconds (ATK/Rapoo 标准)，若无则回退到旧版 sleep16 (Chaos)
-    if (cfg.sleepSeconds != null) {
-      safeSetValue($("#sleepSelect"), cfg.sleepSeconds);
-    } else {
-      const sleep16 = Number(cfg.sleep16 ?? 0);
-      const map = ProtocolApi.MOUSE_HID.sleepCodeToSeconds || {};
-      const secondsList = Object.values(map);
-      if (secondsList.includes(sleep16)) {
-        safeSetValue($("#sleepSelect"), sleep16);
-      } else if (map[String(sleep16)]) {
-        $("#sleepSelect").value = String(map[String(sleep16)]);
+    const keyScanRate = readMerged("keyScanningRate");
+    if (hasFeature("hasKeyScanRate") && keyScanRate != null) {
+      safeSetValue($("#rapooPollingSelectAdv"), keyScanRate);
+      if (typeof updatePollingCycleUI === "function") {
+        updatePollingCycleUI(keyScanRate, false);
       }
     }
 
-    if (cfg.debounceMs != null) safeSetValue($("#debounceSelect"), cfg.debounceMs);
+    const pickNearestPollingValue = (selectEl, value) => {
+      if (!selectEl || value == null) return;
+      const opts = Array.from(selectEl.options)
+        .map((o) => Number(o.value))
+        .filter(Number.isFinite);
+      const picked = opts.length
+        ? opts.reduce((best, x) => (Math.abs(x - value) < Math.abs(best - value) ? x : best), opts[0])
+        : value;
+      safeSetValue(selectEl, picked);
+    };
 
-
-// 设备状态：使用语义化字段（由协议层解析），前端不做任何位运算
-const st = cfg?.deviceState || cfg?.state || cfg || {};
-const pm = st.performanceMode || cfg.performanceMode || "low";
-setRadio("perfMode", pm);
-
-	const lod = st.lodHeight || st.lod || cfg.lodHeight || "high";
-	const lodLow = String(lod).toLowerCase() === "low";
-	const elLod = $("#bitLOD");
-	if (elLod && !(elLod.id && uiLocks.has(elLod.id))) {
-	  if (IS_RAPOO) {
-	    // 玻璃模式同步
-	    const gm = cfg.glassMode; // 协议层已读取 0xC5
-	    elLod.checked = !!gm;
-	  } else {
-	    elLod.checked = lodLow;
-	  }
-	}
-
-
-const setCb = (id, v) => {
-  const el = $(id);
-  if (!el) return;
-  if (el.id && uiLocks.has(el.id)) return;
-  el.checked = !!v;
-};
-
-// LED 状态回显
-// setCb 是之前定义的辅助函数：setCb("#bit1", ...)
-// cfg.ledRaw 是 Chaos 的旧字段，cfg.rgb_switch 也可以
-if (IS_RAPOO) {
-  setCb("#ledToggle", cfg.ledLowBattery);
-} else {
-  setCb("#ledToggle", !!cfg.ledRaw); 
-}
-
-	setCb("#bit1", st.motionSync ?? st.motion_sync ?? cfg.motionSync);
-	setCb("#bit2", st.linearCorrection ?? st.linear_correction ?? cfg.linearCorrection);
-	setCb("#bit3", st.rippleControl ?? st.ripple_control ?? cfg.rippleControl);
-	if (!IS_RAPOO) setCb("#bit6", st.glassMode ?? st.glass_mode ?? cfg.glassMode);
-
-// Rapoo: 基础性能页底部开关回显
-if (IS_RAPOO) {
-  const ws = (st.wirelessStrategy ?? cfg.wirelessStrategy ?? cfg.wireless_strategy);
-  if (ws != null) setCb("#wirelessStrategyToggle", String(ws).toLowerCase() === "full");
-
-  const cp = (st.commProtocol ?? cfg.commProtocol ?? cfg.comm_protocol);
-  if (cp != null) setCb("#commProtocolToggle", String(cp).toLowerCase() === "initial");
-
-  try { syncRapooBasicExtraSwitchState(); } catch (_) {}
-}
-
-// ATK 配置回显
-if (DEVICE_ID === 'atk') {
-    // 超远距离模式回显
-    if (cfg.longRangeMode !== undefined) {
-        setCb("#longRangeModeToggle", cfg.longRangeMode);
+    const pollingHz = readMerged("pollingHz");
+    if (pollingHz != null) {
+      pickNearestPollingValue($("#pollingSelect"), pollingHz);
     }
-}
 
-// 仅用于展示（可选）：若后端仍提供 raw modeByte，可直接显示；否则展示为 "-"
-const mbRaw = st.modeByte ?? st.modeByteRaw ?? cfg.modeByte ?? cfg.modeByteRaw;
-const mbNum = Number.isFinite(Number(mbRaw)) ? Math.max(0, Math.min(255, Math.trunc(Number(mbRaw)))) : null;
-const mbText = mbNum == null ? "-" : `0x${mbNum.toString(16).padStart(2, "0").toUpperCase()}`;
-const mbEl = $("#modeByteText");
-if (mbEl) mbEl.textContent = mbText;
+    const pollingWirelessHz = readMerged("pollingWirelessHz");
+    if (__isDualPollingRates) {
+      const wirelessValue = pollingWirelessHz != null ? pollingWirelessHz : pollingHz;
+      if (wirelessValue != null) {
+        pickNearestPollingValue($("#pollingSelectWireless"), wirelessValue);
+      }
+    }
 
-	    if (cfg.sensorAngle != null) safeSetValue($("#angleInput"), cfg.sensorAngle);
+    const sleepSeconds = readMerged("sleepSeconds");
+    if (sleepSeconds != null) safeSetValue($("#sleepSelect"), sleepSeconds);
 
-	    // 光学引擎挡位同步
-	    if (IS_RAPOO) {
-	      // 优先从 opticalEngineLevel 读取，如果没有则读取寄存器原始值
-	      const level = cfg.opticalEngineLevel ?? cfg.lodHeightRaw;
-	      if (level != null) {
-	        safeSetValue($("#feelInput"), level);
-	      } else {
-	        // 兜底：如果没有 opticalEngineLevel，尝试从 opticalEngineHeightMm 推断
-	        const mm = cfg.opticalEngineHeightMm;
-	        if (mm != null) {
-	          // 反算公式: level = (mm * 10) - 6
-	          const levelFallback = Math.round(mm * 10) - 6;
-	          safeSetValue($("#feelInput"), Math.max(1, Math.min(11, levelFallback)));
-	        } else {
-	          // 最后兜底：从 lodHeight 推断
-	          const lh = String(cfg.lodHeight || "mid").toLowerCase();
-	          const mmFallback = lh === "low" ? 0.7 : (lh === "high" ? 1.7 : 1.2);
-	          const levelFallback = Math.round(mmFallback * 10) - 6;
-	          safeSetValue($("#feelInput"), Math.max(1, Math.min(11, levelFallback)));
-	        }
-	      }
-	    } else {
-	      if (cfg.sensorFeel != null) safeSetValue($("#feelInput"), cfg.sensorFeel);
-	    }
+    const debounceMs = readMerged("debounceMs");
+    if (debounceMs != null) safeSetValue($("#debounceSelect"), debounceMs);
+
+    if (__hasPerformanceMode) {
+      const perfMode = readMerged("performanceMode") || "low";
+      setRadio("perfMode", perfMode);
+    }
+
+    /**
+     * 设置逻辑。
+     * 目的：提供统一读写入口，降低耦合。
+     * @param {any} id - 参数 id。
+     * @param {any} v - 参数 v。
+     * @returns {any} 返回结果。
+     */
+    const setCb = (id, v) => {
+      const el = $(id);
+      if (!el) return;
+      if (el.id && uiLocks.has(el.id)) return;
+      el.checked = !!v;
+    };
+
+    const primarySurface = readMerged("surfaceModePrimary");
+    if (primarySurface != null) setCb("#bitLOD", primarySurface);
+
+    const primaryLed = readMerged("primaryLedFeature");
+    if (primaryLed != null) setCb("#ledToggle", primaryLed);
+
+    const motionSync = readMerged("motionSync");
+    if (motionSync != null) setCb("#bit1", motionSync);
+
+    const linearCorrection = readMerged("linearCorrection");
+    if (linearCorrection != null) setCb("#bit2", linearCorrection);
+
+    const rippleControl = readMerged("rippleControl");
+    if (rippleControl != null) setCb("#bit3", rippleControl);
+
+    const secondarySurface = readMerged("surfaceModeSecondary");
+    if (secondarySurface != null) setCb("#bit6", secondarySurface);
+
+    const wirelessMode = readMerged("wirelessStrategyMode");
+    if (wirelessMode != null) setCb("#wirelessStrategyToggle", wirelessMode);
+
+    const commMode = readMerged("commProtocolMode");
+    if (commMode != null) setCb("#commProtocolToggle", commMode);
+
+    if (hasFeature("hasWirelessStrategy") || hasFeature("hasCommProtocol")) {
+      try { syncBasicExtraSwitchState(); } catch (_) {}
+    }
+
+    const longRangeMode = readMerged("longRangeMode");
+    if (longRangeMode != null) setCb("#longRangeModeToggle", longRangeMode);
+
+    const angleVal = readMerged("sensorAngle");
+    if (angleVal != null) safeSetValue($("#angleInput"), angleVal);
+
+    const feelVal = readMerged("surfaceFeel");
+    if (feelVal != null) safeSetValue($("#feelInput"), feelVal);
+
+    const onboardMemoryMode = readMerged("onboardMemoryMode");
+    if (onboardMemoryMode != null) {
+      setCb("#lgOnboardMemoryToggle", onboardMemoryMode);
+    }
+
+    const lightforceSwitch = readMerged("lightforceSwitch");
+    if (lightforceSwitch != null) {
+      const lightforceToggle = $("#lgLightforceToggle");
+      if (lightforceToggle && !(lightforceToggle.id && uiLocks.has(lightforceToggle.id))) {
+        lightforceToggle.checked = String(lightforceSwitch || "").trim().toLowerCase() === "optical";
+      }
+    }
+
+    const surfaceMode = readMerged("surfaceMode");
+    if (surfaceMode != null) {
+      safeSetValue($("#lgSurfaceModeSelect"), __normalizeLgSurfaceMode(surfaceMode));
+    }
+
+    const bhopMs = readMerged("bhopMs");
+    if (bhopMs != null) {
+      const normalizedBhopMs = __clampLgBhop(bhopMs);
+      const bhopEnabled = normalizedBhopMs > 0;
+      setCb("#lgBhopToggle", bhopEnabled);
+      safeSetValue($("#lgBhopInput"), bhopEnabled ? __clampLgBhopEnabled(normalizedBhopMs) : 100);
+    }
 
 
-    // 同步高级参数页自定义 UI（分段快门/数码读数）
-    // safeSetValue 不会触发事件，这里手动刷新一次可视层。
     syncAdvancedPanelUi();
+    syncLogitechAdvancedUi();
 
     const mouseV = cfg.mouseFw ?? (cfg.mouseFwRaw != null ? ProtocolApi.uint8ToVersion(cfg.mouseFwRaw) : "-");
     const rxV = cfg.receiverFw ?? (cfg.receiverFwRaw != null ? ProtocolApi.uint8ToVersion(cfg.receiverFwRaw) : "-");
-    const fwText = `Mouse:${mouseV} · RX:${rxV}`;
+    const fwText = `Mouse:${mouseV} / RX:${rxV}`;
 
-    // 保存固件文本，供顶部设备卡片/电量回包刷新显示
+
     currentFirmwareText = fwText;
     if (isHidReady()) {
-      updateDeviceStatus(true, currentDeviceName || "已连接", currentBatteryText || "", currentFirmwareText);
+      updateDeviceStatus(true, currentDeviceName || "Unknown", currentBatteryText || "", currentFirmwareText);
     }
     syncBasicMonolithUI();
 
-    // Keys 页面：若固件回包包含按键映射，则同步左侧显示
+
     try { applyKeymapFromCfg?.(cfg); } catch (_) {}
 
-    // ATK 灯效配置回显
-    if (DEVICE_ID === 'atk') {
-        if (cfg.dpiLightEffect != null) {
-            updateAtkCycleUI('atkDpiLightCycle', cfg.dpiLightEffect, ATK_DPI_LIGHT_OPTS, false);
-        }
-        if (cfg.receiverLightEffect != null) {
-            updateAtkCycleUI('atkReceiverLightCycle', cfg.receiverLightEffect, ATK_RX_LIGHT_OPTS, false);
-        }
-    }
 
-    
+    if (hasFeature("hasAtkLights")) {
+      const dpiLight = readMerged("dpiLightEffect");
+      if (dpiLight != null) {
+        updateAtkCycleUI("atkDpiLightCycle", dpiLight, ATK_DPI_LIGHT_OPTS, false);
+      }
+      const rxLight = readMerged("receiverLightEffect");
+      if (rxLight != null) {
+        updateAtkCycleUI("atkReceiverLightCycle", rxLight, ATK_RX_LIGHT_OPTS, false);
+      }
+    }
   }
-  // ====== HID events ======
+
   hidApi.onBattery((bat) => {
     const p = Number(bat?.batteryPercent);
-    // -1 或 NaN 表示"未知电量"：先显示占位符，等设备首次状态包上报后再刷新
+
     if (!Number.isFinite(p) || p < 0) {
       if (hdrBatteryVal) {
         hdrBatteryVal.textContent = "...";
         hdrBatteryVal.classList.remove("connected");
       }
+      renderTopDeviceMeta(true, currentDeviceName || "已连接", "");
       return;
     }
 
@@ -4494,7 +6168,7 @@ if (mbEl) mbEl.textContent = mbText;
       hdrBatteryVal.classList.add("connected");
     }
 
-    // 更新顶部设备卡片的电量信息
+
     currentBatteryText = batteryText;
     updateDeviceStatus(true, currentDeviceName || "已连接", batteryText, currentFirmwareText || "");
 
@@ -4502,19 +6176,20 @@ if (mbEl) mbEl.textContent = mbText;
   });
 
   hidApi.onRawReport((raw) => {
-    // 调试用
+
   });
 
+
   /**
-   * 等待一次配置回包（用于连接握手）
-   * 关键：使用 replay:false，确保只等待"下一次"设备回包，不被旧缓存配置直接满足
-   * @param {number} timeoutMs - 超时时间（毫秒），默认 1600ms
-   * @returns {Promise<Object>} 配置对象
+   * 等待下一次配置回包。
+   * 目的：统一等待与超时处理，避免监听泄漏。
+   * @param {any} timeoutMs - 参数 timeoutMs。
+   * @returns {any} 返回结果。
    */
   function waitForNextConfig(timeoutMs = 1600) {
     return new Promise((resolve, reject) => {
       let done = false;
-      // 关键：replay:false，确保只等待"下一次"设备回包，不被旧缓存 cfg 直接满足
+
       const off = hidApi.onConfig((cfg) => {
         if (done) return;
         done = true;
@@ -4531,11 +6206,12 @@ if (mbEl) mbEl.textContent = mbText;
     });
   }
 
+
   /**
-   * 等待一次电量回包（用于连接握手）
-   * 注意：仅保留电量读取，不再读取配置
-   * @param {number} timeoutMs - 超时时间（毫秒），默认 1600ms
-   * @returns {Promise<Object>} 电量对象
+   * 等待下一次电量回包。
+   * 目的：统一等待与超时处理，避免监听泄漏。
+   * @param {any} timeoutMs - 参数 timeoutMs。
+   * @returns {any} 返回结果。
    */
   function waitForNextBattery(timeoutMs = 1600) {
     return new Promise((resolve, reject) => {
@@ -4557,254 +6233,182 @@ if (mbEl) mbEl.textContent = mbText;
   }
 
 
-  // ====== 连接互斥控制 ======
-  // 避免设备模式切换/多次 autoConnect 并发 open/close 导致 InvalidStateError
-  // - __connectInFlight: 当前是否正在执行一次 connectHid 操作
-  // - __connectPending: 若连接中又来了新请求，记住最后一次请求，待本次结束后立即再执行（latest-wins 策略）
-  let __connectInFlight = false;
-  let __connectPending = null;
-
-  // ====== 主连接流程 ======
+  // ============================================================
+  // 5) WebHID 连接编排（运行期而非设备逻辑）
+  // ============================================================
   /**
-   * 连接 HID 设备的主函数
-   * @param {boolean|object} mode - 连接模式：
-   *   - true: 强制弹窗让用户选择设备
-   *   - false: 自动查找已授权设备
-   *   - object: 直接传入设备对象（用于自动重连）
-   * @param {boolean} isSilent - 是否静默模式：
-   *   - true: 静默模式，失败不弹窗 alert
-   *   - false: 常规模式，失败时弹窗提示
-   * @returns {Promise<void>}
+   * 建立 HID 连接并完成配置拉取。
+   * 目的：统一握手流程与状态清理，避免并发连接冲突。
+   * @param {any} mode - 参数 mode。
+   * @param {any} isSilent - 参数 isSilent。
+   * @returns {Promise<any>} 异步结果。
    */
   async function connectHid(mode = false, isSilent = false) {
-    // 防并发处理：如果连接中又来了新的连接请求，记住最后一次请求，等本次完成后再自动执行
+
     if (__connectInFlight) {
       __connectPending = { mode, isSilent };
       return;
     }
     __connectInFlight = true;
+    __clearOnboardMemoryAutoEnableCheck();
     try {
       if (hidConnecting) return;
       if (isHidOpened()) return;
 
       try {
-      if (!navigator.hid) throw new Error("当前浏览器不支持 WebHID。");
-      
+        if (!navigator.hid) throw new Error("当前浏览器不支持 WebHID。");
+
       let dev = null;
-
-      // 连接兜底：当设备模式切换(2.4G/有线/蓝牙)时，页面里缓存的 __autoDetectedDevice
-      // 很可能还是“旧接口/旧PID”，会导致 sendReport 写入失败或一直等不到回包。
-      // 这里准备一个候选列表：优先尝试当前 dev，失败后自动尝试其他已授权设备。
-      const collectCandidates = async (primary, preferType, { pinPrimary = false } = {}) => {
-        const uniq = [];
-        const push = (d) => {
-          if (!d) return;
-          if (uniq.includes(d)) return;
-          uniq.push(d);
-        };
-
-        push(primary);
-        try {
-          const devs = await navigator.hid.getDevices();
-          for (const d of (devs || [])) push(d);
-        } catch (_) {}
-
-        // 过滤成同一类型（如果能识别）
-        const t = preferType || null;
-        let list = uniq;
-        if (t) {
-          list = uniq.filter((d) => {
-            try { return DeviceRuntime.identifyDeviceType(d) === t; } catch (_) { return false; }
-          });
-          // 如果过滤后为空，退回原列表（避免误判导致无候选）
-          if (!list.length) list = uniq;
-        }
-
-        // 打分：优先 Vendor Collection + Rapoo rid=6 output report（协议解锁用到）
-        const hasUsagePage = (d, page) => {
-          const cols = d?.collections || [];
-          return Array.isArray(cols) && cols.some((c) => Number(c?.usagePage) === Number(page));
-        };
-        const hasAnyVendorPage = (d) => {
-          const cols = d?.collections || [];
-          return Array.isArray(cols) && cols.some((c) => {
-            const p = Number(c?.usagePage);
-            return Number.isFinite(p) && p >= 0xFF00 && p <= 0xFFFF;
-          });
-        };
-        const hasOutRid = (d, rid) => {
-          const cols = d?.collections || [];
-          return Array.isArray(cols) && cols.some((c) => Array.isArray(c?.outputReports) && c.outputReports.some((r) => Number(r?.reportId) === Number(rid)));
-        };
-
-        const score = (d) => {
-          let s = 0;
-          if (!d) return s;
-
-          // 通用 Vendor 优先
-          if (hasUsagePage(d, 65290)) s += 900;  // 0xFF0A
-          if (hasUsagePage(d, 0xFF00)) s += 600; // 0xFF00
-          if (hasAnyVendorPage(d)) s += 300;
-
-          // Rapoo：rid=6 output report 权重最高（_unlockDevice 用到）
-          if (hasOutRid(d, 6)) s += 1200;
-
-          if (t === "chaos") {
-            if (hasUsagePage(d, 65290)) s += 200;
-            if (hasUsagePage(d, 65280)) s += 80;
-          } else if (t === "rapoo") {
-            if (hasUsagePage(d, 0xFF00)) s += 200;
-          }
-
-          // 保底：优先非标准鼠标接口（usagePage!=0x0001）
-          if (Array.isArray(d?.collections) && d.collections.some((c) => Number(c?.usagePage) !== 0x0001)) s += 30;
-          return s;
-        };
-
-        // 根据分数排序。若 pinPrimary=true（用户刚手动选了设备），则保留 primary 在首位。
-        const sorted = [...list].sort((a, b) => score(b) - score(a));
-        if (pinPrimary && primary) {
-          return [primary, ...sorted.filter((d) => d !== primary)];
-        }
-        return sorted;
-      };
-
-      // 1. 确定设备对象
-      if (typeof mode === 'object' && mode.vendorId) {
-          // A. 直接传入了设备对象 (自动重连用)
-          dev = mode;
-      } else if (mode === true) {
-          // B. 强制弹窗 (用户点击了按钮)
-          try {
-            __armManualConnectGuard(3000);
-            dev = await DeviceRuntime.requestDevice();
-            // 兼容：某些实现里 connect 事件可能在 promise resolve 后才触发，刷新一次锁窗口
-            __armManualConnectGuard(3000);
-          } catch (e) {
-            // 用户在 WebHID 选择器点了取消/未选择设备：反向动画回到初始态
-            try { __reverseLandingToInitial(__landingClickOrigin); } catch (_) {}
-            return;
-          }
-          // 有些实现（或特定浏览器版本）在用户取消时不会 throw，而是返回 null/undefined
-          if (!dev) {
-            try { __reverseLandingToInitial(__landingClickOrigin); } catch (_) {}
-            return;
-          }
-      } else {
-          // C. 兜底逻辑
-          dev = __autoDetectedDevice;
-          // 如果没有预选设备，尝试从 getDevices() 里拿已授权设备（不需要用户手势）
-          // 仍拿不到才退出（浏览器会拦截非手势的 requestDevice）。
-          if (!dev) {
-            try {
-              const devs = await navigator.hid.getDevices();
-              dev = devs?.[0] || null;
-              if (dev) __autoDetectedDevice = dev;
-            } catch (_) {}
-          }
-          if (!dev) return;
-      }
-      
-      if (!dev) return;
-
-      // ============================================================
-      // 2. 自动识别类型并切换后端
-      // ============================================================
-      const detectedType = DeviceRuntime.identifyDeviceType(dev);
-      const currentType = DeviceRuntime.getSelectedDevice();
-
-      if (detectedType && detectedType !== currentType) {
-        console.log(`[AutoSwitch] 识别到 ${detectedType} (当前 ${currentType})，正在切换...`);
-        // 切换后端并刷新，刷新后 initAutoConnect 会再次触发此流程
-        DeviceRuntime.setSelectedDevice(detectedType, { reload: true });
-        return; 
-      }
-      // ============================================================
-
-      // 3. 准备候选列表（模式切换时可自动从"旧接口"切换到"新接口"）
-      const preferType = detectedType || currentType || null;
-      const pinPrimary = (mode === true);
       let candidates = [];
+      let detectedType = null;
 
-      if (preferType === 'rapoo') {
-        // 【硬编码】雷柏直接获取所有已授权设备，只保留 0xFF00 厂商接口
-        const all = await navigator.hid.getDevices();
-        candidates = all.filter(d => 
-          d.vendorId === 0x24ae && 
-          d.collections.some(c => c.usagePage === 0xff00 && (c.usage === 14 || c.usage === 15))
-        );
-        // 排序：优先选 Usage 14 (OUT 接口) 用于初始化握手
-        candidates.sort((a, b) => {
-          const ua = a.collections.find(c => c.usagePage === 0xff00)?.usage || 0;
-          const ub = b.collections.find(c => c.usagePage === 0xff00)?.usage || 0;
-          return (ua === 14) ? -1 : (ub === 14 ? 1 : 0);
+      const pinPrimary = (mode === true);
+
+      if (mode === true) __armManualConnectGuard(3000);
+
+      try {
+        const res = await DeviceRuntime.connect(mode, {
+          primaryDevice: __autoDetectedDevice,
+          preferredType: DeviceRuntime?.getSelectedDevice?.(),
+          pinPrimary,
         });
-        // 如果 primary 存在且不在列表中，添加到首位
-        if (pinPrimary && dev && !candidates.includes(dev)) {
-          candidates.unshift(dev);
+        if (mode === true) __armManualConnectGuard(3000);
+        dev = res?.device || null;
+        candidates = Array.isArray(res?.candidates) ? res.candidates : [];
+        detectedType = res?.detectedType || null;
+      } catch (e) {
+        if (mode === true) {
+          try { __reverseLandingToInitial(__landingClickOrigin); } catch (_) {}
         }
-      } else {
-        // ATK/Chaos 保留原有评分逻辑
-        candidates = await collectCandidates(dev, preferType, { pinPrimary });
+        return;
       }
-      
+
+      if (!dev) {
+        if (mode === true) {
+          try { __reverseLandingToInitial(__landingClickOrigin); } catch (_) {}
+        }
+        return;
+      }
+
+      const currentType = DeviceRuntime.getSelectedDevice();
+      if (detectedType && detectedType !== currentType) {
+        console.log(`[AutoSwitch] switching to ${detectedType} (from ${currentType})...`);
+        DeviceRuntime.setSelectedDevice(detectedType, { reload: true });
+        return;
+      }
+
+      if (!candidates.length) candidates = [dev];
+
       hidConnecting = true;
       hidLinked = false;
       if (!isSilent) __setLandingCaption("INITIATE SYNCHRONIZATION...");
 
-      // 4. 握手流程
+
+      /**
+       * 处理perform、handshake逻辑。
+       * 目的：统一处理perform、handshake相关流程，保证行为一致。
+       * [优化] 将"视觉进场"与"数据握手"解耦并行，提升用户体验。
+       * @param {any} targetDev - 参数 targetDev。
+       * @returns {Promise<any>} 异步结果。
+       */
       const performHandshake = async (targetDev) => {
         if (!targetDev) throw new Error("No HID device selected.");
-        // 强制复位僵死句柄
+
+        // 1. 先关闭旧连接
         try {
           if (targetDev.opened) {
             await targetDev.close();
-            await new Promise(r => setTimeout(r, 100));
+            // [优化] 减少硬编码等待，微任务队列足够处理关闭清理
+            await new Promise(r => setTimeout(r, 50));
           }
         } catch (_) {}
 
         hidApi.device = targetDev;
         try { applyCapabilitiesToUi(hidApi.capabilities); } catch {}
 
+        // 2. 打开设备
         await hidApi.open();
-        await new Promise(r => setTimeout(r, 200));
-        
-        const displayName = ProtocolApi.resolveMouseDisplayName(targetDev.vendorId, targetDev.productId, targetDev.productName || "HID Device");
+        // [优化] 减少握手前等待，从 200ms 降至 50ms
+        await new Promise(r => setTimeout(r, 50));
+
+        let displayName = ProtocolApi.resolveMouseDisplayName(targetDev.vendorId, targetDev.productId, targetDev.productName || "HID Device");
         console.log("HID Open, Handshaking:", displayName);
 
         __writesEnabled = false;
         __resetFirstConfigAppliedGate();
+        __armOnboardMemoryAutoEnableCheck();
 
-        // 获取配置并显式写入 UI
-        const cfgP = waitForNextConfig(2500); 
-        const reqFn = hidApi.requestConfig || hidApi.getConfig;
-        if (reqFn) await reqFn.call(hidApi);
+        // ============================================================
+        // [核心优化逻辑] 
+        // 这里的改动将"等待配置"和"进入主页"改为并行执行
+        // ============================================================
         
-        // 捕获握手阶段收到的配置包
-        const cfg = await cfgP; 
+        // 3. 立即触发 UI 进场（视觉欺骗）：
+        // 不等待 Config 回包，直接解除 Landing 页面的锁定。
+        // 利用进场动画的 1.5~2秒 时间在后台加载数据，用户感知就是"秒进"。
         
-        // 显式调用 UI 同步（避免重连后全局 Listener 可能失效导致 UI 不刷新的问题）
-        applyConfigToUi(cfg);
+        if (document.body.classList.contains("landing-active")) {
+            // 解除对 __firstConfigAppliedPromise 的强依赖
+            window.__LANDING_ENTER_GATE_PROMISE__ = Promise.resolve(); 
+            
+            // 立即开始动画
+            enterAppWithLiquidTransition(__landingClickOrigin);
+            
+            // 更新 UI 状态为"连接中"，避免显示空白数据
+            if (widgetDeviceName) widgetDeviceName.textContent = displayName;
+            if (widgetDeviceMeta) widgetDeviceMeta.textContent = "正在读取配置...";
+        }
+
+        // 4. 后台并行请求数据
+        // 使用 Promise.allSettled 避免某个请求失败导致整个流程卡死
         
-        // 恢复写入权限
+        // 启动配置请求（不 await 也不阻塞 UI 线程）
+        const configTask = (async () => {
+             // 关键：先挂一次性监听，再发请求，避免错过同一轮 onConfig 回包
+             const nextConfig = waitForNextConfig(2500);
+             const requested = await requestDeviceConfig();
+             if (!requested) throw new Error("requestConfig unavailable");
+             return await nextConfig; // 维持原有超时
+        })();
+
+        // 5. 等待数据返回并刷新 UI
+        try {
+            const cfg = await configTask;
+            applyConfigToUi(cfg);
+            const cfgDeviceName = String(cfg?.deviceName || "").trim();
+            if (cfgDeviceName) {
+                displayName = cfgDeviceName;
+                if (widgetDeviceName) widgetDeviceName.textContent = displayName;
+            }
+            // 数据加载完成，更新 UI 提示
+            if (widgetDeviceMeta) widgetDeviceMeta.textContent = "点击断开";
+            if (typeof updatePollingCycleUI === "function") {
+                // 强制刷新一次 UI 动画状态以确保数据同步
+                const rate = readStandardValueWithIntent(cfg, "keyScanningRate") || 1000;
+                updatePollingCycleUI(rate, false);
+              }
+        } catch (e) {
+            console.warn("Config load delayed or failed, using defaults:", e);
+            const recoveredName = String(getCachedDeviceConfig()?.deviceName || currentDeviceName || "").trim();
+            if (recoveredName) {
+                displayName = recoveredName;
+                if (widgetDeviceName) widgetDeviceName.textContent = displayName;
+            }
+            // 即使配置失败，因为设备已 open，我们依然保持连接状态，
+            // 允许用户后续手动点击刷新，而不是把用户踢回 Landing 页。
+        }
+
         __writesEnabled = true;
 
-        // 同步 Chaos 设备的 ModeByte，确保后续写入正确
-        if (!IS_RAPOO) {
-           const mb = cfg?.modeByte ?? cfg?.mode_byte ?? cfg?.deviceState?.modeByte ?? cfg?.deviceState?.mode_byte;
-           const n = Number(mb);
-           if (Number.isFinite(n)) __lastChaosModeByte = n & 0xff;
-        }
-        
+        // 应用键位映射
         if (typeof applyKeymapFromCfg === 'function') {
-          applyKeymapFromCfg(hidApi._cfg);
+          const cachedCfg = getCachedDeviceConfig();
+          if (cachedCfg) applyKeymapFromCfg(cachedCfg);
         }
         return displayName;
       };
 
-      // 重试逻辑：
-      // - 先尝试候选[0]（通常是 __autoDetectedDevice 或用户刚选的设备）
-      // - 若失败（写入失败/无回包），依次尝试其他已授权设备（常见于 2.4G->有线 切换）
+
       let lastErr = null;
       let displayName = "";
       let chosenDev = null;
@@ -4814,7 +6418,7 @@ if (mbEl) mbEl.textContent = mbText;
           try {
             if (i > 0) {
               try {
-                // Chaos: close({clearListeners:false})；Rapoo: close()
+
                 await hidApi.close?.({ clearListeners: false });
               } catch (_) {
                 try { await hidApi.close?.(); } catch (_) {}
@@ -4832,7 +6436,7 @@ if (mbEl) mbEl.textContent = mbText;
         }
         if (displayName) break;
 
-        // 候选失败：确保释放句柄后再尝试下一个
+
         try {
           await hidApi.close?.({ clearListeners: false });
         } catch (_) {
@@ -4843,14 +6447,14 @@ if (mbEl) mbEl.textContent = mbText;
 
       if (!displayName) throw lastErr;
 
-      // 5. 连接成功处理
+
       hidLinked = true;
       hidConnecting = false;
       currentDeviceName = displayName;
-      
-      // 连接完成后立即拉取一次电量（Rapoo 会通过状态包更新）
+
+
       requestBatterySafe("connect");
-      
+
       setHeaderChipsVisible(true);
       if (hdrBatteryVal) {
         hdrBatteryVal.textContent = currentBatteryText || "-";
@@ -4861,46 +6465,34 @@ if (mbEl) mbEl.textContent = mbText;
         hdrHidVal.classList.add("connected");
       }
       updateDeviceStatus(true, displayName, currentBatteryText || "", currentFirmwareText || "");
-      // 记录实际成功的设备（模式切换时可能与最初 dev 不同）
+
       if (chosenDev) dev = chosenDev;
-      // 记录本次真正握手成功的 HID 设备，避免下次仍优先选到“旧接口/旧模式”
+
       const finalDev = chosenDev || dev;
       __autoDetectedDevice = finalDev;
       saveLastHidDevice(finalDev);
       startBatteryAutoRead();
-      
-      try { 
-        if (document.body.classList.contains("landing-active")) {
-          // 使用之前记录的点击位置，如果没有则默认中心
-          // 进入主页前：在 SYSTEM READY 阶段等待“配置读取+UI刷新”完成；ATK 额外等待 120ms
-          window.__LANDING_ENTER_GATE_PROMISE__ = (async () => {
-            try {
-              await __firstConfigAppliedPromise;
-              await __waitForUiRefresh();
-              if (IS_ATK) await new Promise((r) => setTimeout(r, 120));
-            } catch (_) {}
-          })();
 
-          enterAppWithLiquidTransition(__landingClickOrigin); 
-        }
-      } catch (_) {}
+      // [优化] UI 进场逻辑已移至 performHandshake 内部，实现并行加载
+      // 此处不再需要重复处理
 
     } catch (err) {
+      __clearOnboardMemoryAutoEnableCheck();
       hidConnecting = false;
       hidLinked = false;
       try { await hidApi.close(); } catch {}
       updateDeviceStatus(false);
+      __applyDeviceVariantOnce({ keymapOnly: true });
       stopBatteryAutoRead();
       resetHeaderChipValues();
       setHeaderChipsVisible(false);
-      
+
       logErr(err, "连接失败");
       try { document.body.classList.remove("landing-charging", "landing-holding", "landing-drop", "landing-system-ready", "landing-ready-out", "landing-reveal"); } catch (_) {}
       try { if (__triggerZone) __triggerZone.style.pointerEvents = ""; } catch (_) {}
        __setLandingCaption("CONNECTION SEVERED");
-      
-      // 只有非静默模式（用户主动点击）才弹窗报错
-      // 自动连接失败通常是因为设备被独占或未开机，静默失败即可，保留在起始页
+
+
       if (!isSilent && err && err.message && !err.message.includes("cancel")) {
          alert(`连接失败：${err.message}\n请尝试重新插拔设备或重启页面。`);
       }
@@ -4909,66 +6501,65 @@ if (mbEl) mbEl.textContent = mbText;
     __connectInFlight = false;
     const pend = __connectPending;
     __connectPending = null;
-    // 若连接过程中又插拔/切换了模式，自动执行最后一次请求（避免必须刷新页面）
+
     if (pend && !hidConnecting && !isHidOpened()) {
       setTimeout(() => connectHid(pend.mode, pend.isSilent), 0);
     }
   }
 
 
-
   }
 
+
   /**
-   * 断开 HID 设备连接
-   * 清理所有连接状态，停止自动读取，并返回起始页
+   * 断开HID。
+   * 目的：集中释放连接资源并同步 UI，避免残留状态。
+   * @returns {Promise<any>} 异步结果。
    */
   async function disconnectHid() {
     if (!hidApi || !hidApi.device) return;
     try {
-      // 断开时取消任何排队的自动连接请求
+
+      __clearOnboardMemoryAutoEnableCheck();
       __connectPending = null;
       hidConnecting = false;
       hidLinked = false;
 
       await hidApi.close();
-      hidApi.device = null;           // 清空 API 内部设备引用
-      __autoDetectedDevice = null;    // 清空自动检测到的设备缓存
+      hidApi.device = null;
+      __autoDetectedDevice = null;
 
-      // 更新 UI 状态
+
       updateDeviceStatus(false);
+      __applyDeviceVariantOnce({ keymapOnly: true });
       stopBatteryAutoRead();
       resetHeaderChipValues();
       setHeaderChipsVisible(false);
 
       log("HID 已断开");
-      // 断开/未连接：返回到起始页
+
       try { showLanding("disconnect"); } catch (_) {}
     } catch (err) {
       logErr(err, "断开失败");
     }
   }
 
-  deviceWidget?.addEventListener("click", async () => {
-    if (!isHidOpened()) {
-      await connectHid(true, false);
-      return;
-    }
+  disconnectBtn?.addEventListener("click", async () => {
+    if (!isHidOpened()) return;
     if (!confirm("确定要断开当前设备连接吗?")) return;
     await disconnectHid();
   });
 
-  
 
-  // Initial state
   updateDeviceStatus(false);
-  // 未连接时默认显示起始页（成功握手后会自动转场进入主应用）
+
   try { showLanding("init"); } catch (_) {}
-  // ====== 页面加载初始化 ======
-  // 策略：只要有已授权的设备，就自动连接！
+
+
   /**
-   * 初始化自动连接
-   * 检测已授权的设备并自动建立连接
+   * 初始化自动流程。
+   * 目的：统一连接流程并处理并发保护，避免重复连接或状态错乱。
+   * @returns {Promise<any>} 异步结果。
    */
   const initAutoConnect = async () => {
       const detectedDev = await autoConnectHidOnce();
@@ -4977,14 +6568,12 @@ if (mbEl) mbEl.textContent = mbText;
       }
   };
 
-  // ====== 启动页动画保护机制 ======
-  // 启动页动画期间，部分异步任务（枚举 HID / 读电量等）可能抢占主线程导致"偶发丢帧"
-  // 策略：在任务执行时短暂停帧（不影响交互），执行完再恢复
+
   /**
-   * 安全执行重量级任务
-   * 在执行任务期间暂停启动页动画，避免丢帧
-   * @param {Function} task - 要执行的异步任务
-   * @returns {Promise} 任务执行结果的 Promise
+   * 内部处理run、heavy逻辑。
+   * 目的：统一处理run、heavy相关流程，保证行为一致。
+   * @param {any} task - 参数 task。
+   * @returns {any} 返回结果。
    */
   const __runHeavyTaskSafely = (task) => {
     const landingVisible = !!(__landingLayer && __landingLayer.getAttribute("aria-hidden") !== "true");
@@ -5003,7 +6592,7 @@ if (mbEl) mbEl.textContent = mbText;
 
 
   if ("requestIdleCallback" in window) {
-    // 监听 HID 断开
+
     if (!window.__HID_EVENT_HOOKED__ && navigator.hid?.addEventListener) {
       window.__HID_EVENT_HOOKED__ = true;
       navigator.hid.addEventListener("disconnect", (e) => {
@@ -5014,14 +6603,15 @@ if (mbEl) mbEl.textContent = mbText;
           }
         } catch {}
       });
-      // 监听 HID 插入：支持热插拔自动连
+
       navigator.hid.addEventListener("connect", (e) => {
-         // 手动连接保护锁：在用户主动连接的短窗口内忽略 connect（权限授予也会触发 connect）
+
          if (__isManualConnectGuardOn()) return;
-         // 稍微延迟，等待设备就绪
+
+         // [优化] 缩短延迟，快速响应用户操作
          setTimeout(() => {
              if (!isHidOpened()) __runHeavyTaskSafely(initAutoConnect);
-         }, 500);
+         }, 150);
       });
     }
     requestIdleCallback(() => __runHeavyTaskSafely(initAutoConnect), { timeout: 1600 });
@@ -5029,62 +6619,147 @@ if (mbEl) mbEl.textContent = mbText;
     setTimeout(() => __runHeavyTaskSafely(initAutoConnect), 300);
   }
 
-  // 进入/刷新页面后尝试读取一次电量（已连接时才会生效）
-  // Rapoo 设备不执行此操作
-  if (!IS_RAPOO) {
+
+  if (adapterFeatures.supportsBatteryRequest !== false) {
     setTimeout(() => __runHeavyTaskSafely(() => requestBatterySafe("页面进入")), 1400);
   }
 
   log("页面已加载。点击页面顶部设备卡片开始连接设备。");
 
-  // ====== 侧边栏管理（稳健版） ======
-  // 策略：防抖全域展开 / 延迟收缩，优化性能和用户体验
+
   const sidebar = document.querySelector('.sidebar');
+  const NAV_COLLAPSE_KEY = "mouse_console_nav_collapsed";
+  const NAV_COLLAPSE_RATIO_BASE = 1.7;
+  const NAV_COLLAPSE_MIN_WIDTH = 980;
+  const NAV_COLLAPSE_MAX_WIDTH = 1480;
+  const NAV_TRANSITIONING_CLASS = "nav-transitioning";
+  const NAV_TRANSITION_TIMEOUT_MS = 760;
   let sidebarTimer = null;
   let __navRafId = 0;
+  let __navPreferredCollapsed = null;
+  let __navLastIsNarrow = null;
+  let __navTransitionTimer = null;
 
-  // JS 帧对齐优化：把 class 切换放到每一帧的起点，并合并同帧的多次调用
+  const readNavCollapsedPreference = () => {
+    try {
+      const raw = localStorage.getItem(NAV_COLLAPSE_KEY);
+      if (raw === "1") return true;
+      if (raw === "0") return false;
+    } catch (_) {}
+    return null;
+  };
+
+  const writeNavCollapsedPreference = (collapsed) => {
+    try {
+      localStorage.setItem(NAV_COLLAPSE_KEY, collapsed ? "1" : "0");
+    } catch (_) {}
+  };
+
+  const getAdaptiveCollapseWidth = () => {
+    const height = Math.max(1, Number(window.innerHeight || 0));
+    const byRatio = Math.round(height * NAV_COLLAPSE_RATIO_BASE);
+    return Math.max(NAV_COLLAPSE_MIN_WIDTH, Math.min(NAV_COLLAPSE_MAX_WIDTH, byRatio));
+  };
+
+  const isNarrowViewport = () => {
+    const width = Number(window.innerWidth || 0);
+    if (width <= 0) return false;
+    return width <= getAdaptiveCollapseWidth();
+  };
+
+  const clearNavTransitioning = () => {
+    if (__navTransitionTimer) {
+      clearTimeout(__navTransitionTimer);
+      __navTransitionTimer = null;
+    }
+    document.body.classList.remove(NAV_TRANSITIONING_CLASS);
+  };
+
+  const markNavTransitioning = () => {
+    document.body.classList.add(NAV_TRANSITIONING_CLASS);
+    if (__navTransitionTimer) clearTimeout(__navTransitionTimer);
+    __navTransitionTimer = setTimeout(() => {
+      __navTransitionTimer = null;
+      document.body.classList.remove(NAV_TRANSITIONING_CLASS);
+    }, NAV_TRANSITION_TIMEOUT_MS);
+  };
+
+
   /**
-   * 设置侧边栏折叠状态
-   * @param {boolean} collapsed - 是否折叠
+   * 设置导航。
+   * 目的：提供统一读写入口，降低耦合。
+   * @param {any} collapsed - 参数 collapsed。
+   * @returns {any} 返回结果。
    */
   const setNavCollapsed = (collapsed) => {
     if (__navRafId) cancelAnimationFrame(__navRafId);
+    const nextCollapsed = !!collapsed;
+    const prevCollapsed = document.body.classList.contains('nav-collapsed');
+    if (prevCollapsed === nextCollapsed) return;
+    markNavTransitioning();
     __navRafId = requestAnimationFrame(() => {
       __navRafId = 0;
-      document.body.classList.toggle('nav-collapsed', !!collapsed);
+      document.body.classList.toggle('nav-collapsed', nextCollapsed);
+      if (document.body.classList.contains("page-basic") && typeof __startLineAnimation === "function") {
+        __startLineAnimation(720);
+      }
     });
   };
   /**
-   * 切换侧边栏折叠状态
+   * 处理导航逻辑。
+   * 目的：统一处理导航相关流程，保证行为一致。
+   * @returns {any} 返回结果。
    */
+  const applyNavCollapsedPolicy = (force = false) => {
+    const isNarrow = isNarrowViewport();
+    if (!force && __navLastIsNarrow === isNarrow) return;
+    __navLastIsNarrow = isNarrow;
+    const shouldCollapse = isNarrow ? true : (__navPreferredCollapsed ?? false);
+    setNavCollapsed(shouldCollapse);
+  };
+
   const toggleNavCollapsed = () => {
-    if (__navRafId) cancelAnimationFrame(__navRafId);
-    __navRafId = requestAnimationFrame(() => {
-      __navRafId = 0;
-      document.body.classList.toggle('nav-collapsed');
-    });
+    const nextCollapsed = !document.body.classList.contains('nav-collapsed');
+    __navPreferredCollapsed = nextCollapsed;
+    writeNavCollapsedPreference(nextCollapsed);
+    setNavCollapsed(nextCollapsed);
   };
 
   if (sidebar) {
-    // 【核心优化】监听 CSS 过渡结束事件
-    // 只有当宽度变化动画彻底完成后，才触发一次 resize 刷新 DPI 连线等坐标
+    __navPreferredCollapsed = readNavCollapsedPreference();
+    applyNavCollapsedPolicy(true);
+
+
     sidebar.addEventListener('transitionend', (e) => {
-      if (e.propertyName === 'width') {
-        window.dispatchEvent(new Event('resize'));
-      }
+      if (!e || e.target !== sidebar) return;
+      if (e.propertyName !== 'width') return;
+      clearNavTransitioning();
+      window.dispatchEvent(new Event('resize'));
     });
 
-    // 针对原有切换按钮的兼容
+    sidebar.addEventListener('transitioncancel', (e) => {
+      if (!e || e.target !== sidebar) return;
+      if (e.propertyName !== 'width') return;
+      clearNavTransitioning();
+    });
+
+    window.addEventListener('resize', () => {
+      if (sidebarTimer) clearTimeout(sidebarTimer);
+      sidebarTimer = setTimeout(() => {
+        sidebarTimer = null;
+        applyNavCollapsedPolicy(false);
+      }, 120);
+    }, { passive: true });
+
+
     const sidebarToggle = document.getElementById('sidebarToggle');
     if (sidebarToggle) {
       sidebarToggle.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleNavCollapsed();
-        // 点击切换时由于是主动操作，可以不等待直接 resize 或等待 transitionend
+
       });
     }
   }
 
 })();
-

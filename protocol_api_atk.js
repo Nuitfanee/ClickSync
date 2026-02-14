@@ -43,6 +43,7 @@
   const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
   const clampInt = (n, min, max) => Math.min(max, Math.max(min, Math.trunc(Number(n))));
   const toU8 = (n) => clampInt(n, 0, 0xff);
+  const ATK_VENDOR_IDS = new Set([0x373b, 0x3710]);
   
   // byte[] -> hex
   function bytesToHex(bytes) {
@@ -314,6 +315,76 @@ function buildDpiSlotsWithPresets({ slots, targetCount, maxSlots, dpiMin, dpiMax
   return out;
 }
 
+function encodeAtkDpiScalar(dpi) {
+  const d = clampInt(dpi, 50, 30000);
+  if (d <= 10000) {
+    const code = Math.floor(d / 10) - 1;
+    return {
+      byte: code & 0xff,
+      modeByte: ((code >> 8) * 0x44) & 0xff,
+    };
+  }
+  const dpiAdj = Math.max(d, 10050);
+  const step = Math.floor((dpiAdj - 10050) / 50);
+  if (step <= 255) {
+    return { byte: step & 0xff, modeByte: 0x22 };
+  }
+  if (step <= 400) {
+    return { byte: (step - 256) & 0xff, modeByte: 0x66 };
+  }
+  return { byte: (step - 401) & 0xff, modeByte: 0x33 };
+}
+
+function decodeAtkDpiScalar(byte, modeByte) {
+  const b = toU8(byte);
+  const m = toU8(modeByte);
+  if (m === 0x22 || m === 0x66 || m === 0x33) {
+    const step = m === 0x22 ? b : (m === 0x66 ? b + 256 : b + 401);
+    return 10050 + step * 50;
+  }
+  const codeHigh = Math.round(m / 0x44);
+  const code = (codeHigh << 8) | b;
+  return (code + 1) * 10;
+}
+
+function quantizeAtkDpiByMode(target, modeByte, dpiMin, dpiMax) {
+  const safeMin = clampInt(dpiMin, 1, 60000);
+  const safeMax = clampInt(dpiMax, safeMin, 60000);
+  const wanted = clampInt(target, safeMin, safeMax);
+  const mode = toU8(modeByte);
+
+  if (mode === 0x22 || mode === 0x66 || mode === 0x33) {
+    let step = Math.round((wanted - 10050) / 50);
+    if (mode === 0x22) step = clampInt(step, 0, 255);
+    else if (mode === 0x66) step = clampInt(step, 256, 400);
+    else step = clampInt(step, 401, 656);
+    const byte = mode === 0x22 ? step : (mode === 0x66 ? step - 256 : step - 401);
+    const dpi = clampInt(10050 + step * 50, safeMin, safeMax);
+    return { byte: toU8(byte), dpi };
+  }
+
+  const codeHigh = Math.round(mode / 0x44);
+  const wantedCode = Math.round(wanted / 10) - 1;
+  const low = clampInt(wantedCode - (codeHigh << 8), 0, 0xff);
+  const dpi = clampInt(decodeAtkDpiScalar(low, mode), safeMin, safeMax);
+  return { byte: toU8(low), dpi };
+}
+
+function encodeAtkDpiPairWord(x, y, dpiMin, dpiMax) {
+  const safeMin = clampInt(dpiMin, 1, 60000);
+  const safeMax = clampInt(dpiMax, safeMin, 60000);
+  const seed = encodeAtkDpiScalar(clampInt(x, safeMin, safeMax));
+  const qx = clampInt(decodeAtkDpiScalar(seed.byte, seed.modeByte), safeMin, safeMax);
+  const qyInfo = quantizeAtkDpiByMode(y, seed.modeByte, safeMin, safeMax);
+  const word = makeSum55Word(seed.byte, qyInfo.byte, seed.modeByte);
+  return {
+    word,
+    x: qx,
+    y: qyInfo.dpi,
+    modeByte: seed.modeByte,
+  };
+}
+
   // ============================================================
   // 4) 字段适配
   // ============================================================
@@ -323,6 +394,10 @@ function buildDpiSlotsWithPresets({ slots, targetCount, maxSlots, dpiMin, dpiMax
     currentDpiIndex: "currentDpiIndex",
     dpi_index: "currentDpiIndex",
     dpiSlots: "dpiSlots",
+    dpiSlotsX: "dpiSlotsX",
+    dpi_slots_x: "dpiSlotsX",
+    dpiSlotsY: "dpiSlotsY",
+    dpi_slots_y: "dpiSlotsY",
     lodHeight: "lodHeight",
     debounceMs: "debounceMs",
     motionSync: "motionSync",
@@ -425,44 +500,18 @@ function buildDpiSlotsWithPresets({ slots, targetCount, maxSlots, dpiMin, dpiMax
 
     // DPI Word 编码 (规范 Section 5)
     dpiWord(dpi) {
-      const d = clampInt(dpi, 50, 30000);
-      let b0, b1, b2;
+      return encodeAtkDpiPairWord(dpi, dpi, 50, 30000).word;
+    },
 
-      if (d <= 10000) {
-        // 5.1 旧模式
-        const code = Math.floor((Math.floor(d / 10) * 10) / 10) - 1; // Simplify: floor(d/10) - 1
-        b0 = code & 0xff;
-        b1 = b0;
-        // b2 = ((code >> 8) * 0x44) & 0xFF
-        b2 = ((code >> 8) * 0x44) & 0xff;
-      } else {
-        // 5.2 新模式 (>10000)
-        const dpiAdj = Math.max(d, 10050);
-        // Step = floor((DPI_q - 10050)/50)
-        const step = Math.floor((dpiAdj - 10050) / 50);
-        
-        if (step <= 255) {
-          b2 = 0x22;
-          b0 = step & 0xff;
-          b1 = step & 0xff;
-        } else if (step <= 400) {
-          b2 = 0x66;
-          b0 = (step - 256) & 0xff;
-          b1 = b0;
-        } else {
-          b2 = 0x33;
-          b0 = (step - 401) & 0xff;
-          b1 = b0;
-        }
-      }
-      
-      // 生成 Sum55 Word: [b0, b1, b2, b3]
-      return makeSum55Word(b0, b1, b2);
+    dpiWordXY(x, y, opts = {}) {
+      const dpiMin = clampInt(opts.dpiMin ?? 50, 1, 60000);
+      const dpiMax = clampInt(opts.dpiMax ?? 30000, dpiMin, 60000);
+      return encodeAtkDpiPairWord(x, y, dpiMin, dpiMax);
     },
 
     // DPI Word 解码 (严格对齐规范 Section 5)
     decodeDpiWord(buf) {
-      if (!buf || buf.length < 4) return 800;
+      if (!buf || buf.length < 4) return { x: 800, y: 800 };
       const b0 = buf[0];
       const b1 = buf[1];
       const b2 = buf[2];
@@ -472,25 +521,10 @@ function buildDpiSlotsWithPresets({ slots, targetCount, maxSlots, dpiMin, dpiMax
       if (((b0 + b1 + b2 + b3) & 0xFF) !== 0x55) {
         console.warn("[Protocol] DPI Word Checksum 校验失败");
       }
-
-      // 1. 判断是否为新模式 (根据规范 5.2 章节定义的 b2 特征值)
-      if (b2 === 0x22 || b2 === 0x66 || b2 === 0x33) {
-        let step = 0;
-        if (b2 === 0x22) step = b0;
-        else if (b2 === 0x66) step = b0 + 256;
-        else if (b2 === 0x33) step = b0 + 401;
-        
-        // 公式：DPI_q = 10050 + 50 * Step
-        return 10050 + step * 50;
-      } 
-      
-      // 2. 否则为旧模式 (根据规范 5.1 章节)
-      // b2 的生成规则是 ((code >> 8) * 0x44)，反推高位字节
-      const codeHigh = Math.round(b2 / 0x44);
-      const code = (codeHigh << 8) | b0;
-      
-      // 公式：code = DPI_q / 10 - 1  =>  DPI_q = (code + 1) * 10
-      return (code + 1) * 10;
+      return {
+        x: decodeAtkDpiScalar(b0, b2),
+        y: decodeAtkDpiScalar(b1, b2),
+      };
     },
 
     // Action4 按键映射
@@ -777,28 +811,43 @@ function buildDpiSlotsWithPresets({ slots, targetCount, maxSlots, dpiMin, dpiMax
     dpiProfile: {
       key: "dpiProfile",
       kind: "virtual",
-      triggers: ["dpiSlots", "currentDpiIndex", "currentSlotCount"],
+      triggers: ["dpiSlots", "dpiSlotsX", "dpiSlotsY", "currentDpiIndex", "currentSlotCount"],
       
       plan(patch, nextState, ctx) {
         const cmds = [];
         const cap = ctx.profile.capabilities;
         
-        const slots = nextState.dpiSlots || [];
+        const dpiMin = cap.dpiMin ?? 50;
+        const dpiMax = cap.dpiMax ?? 30000;
+        const slotsX = Array.isArray(nextState.dpiSlotsX)
+          ? nextState.dpiSlotsX
+          : (Array.isArray(nextState.dpiSlots) ? nextState.dpiSlots : []);
+        const slotsY = Array.isArray(nextState.dpiSlotsY) ? nextState.dpiSlotsY : slotsX;
         const count = clampInt(nextState.currentSlotCount || 1, 1, cap.dpiSlotMax);
+        const normalizedX = Array.isArray(slotsX) ? slotsX.slice(0, cap.dpiSlotMax) : [];
+        const normalizedY = Array.isArray(slotsY) ? slotsY.slice(0, cap.dpiSlotMax) : [];
+        while (normalizedX.length < cap.dpiSlotMax) normalizedX.push(DPI_PRESETS[normalizedX.length] ?? 800);
+        while (normalizedY.length < cap.dpiSlotMax) normalizedY.push(normalizedX[normalizedY.length] ?? 800);
         
         // ATK 协议中每个 DPI 档位连续排列，各占 4 字节
         for (let i = 0; i < count; i++) {
-          const val = slots[i] || 800;
+          const vx = normalizedX[i] ?? 800;
+          const vy = normalizedY[i] ?? vx;
           const addr = REGS.DPI_BASE + (i * 4); // 偏移量：每个档位 4 字节
-          
-          const word = TRANSFORMERS.dpiWord(val); // 4 字节的 DPI 编码数据
+          const pair = TRANSFORMERS.dpiWordXY(vx, vy, { dpiMin, dpiMax });
+          normalizedX[i] = pair.x;
+          normalizedY[i] = pair.y;
           
           // 仅写入 4 字节 DPI 数据，不附带 aux 数据，避免覆盖后续档位
           cmds.push({
-            hex: ProtocolCodec.write(addr, word),
+            hex: ProtocolCodec.write(addr, pair.word),
             waitMs: 5
           });
         }
+
+        nextState.dpiSlotsX = normalizedX;
+        nextState.dpiSlotsY = normalizedY;
+        nextState.dpiSlots = normalizedX.slice(0);
         
         // 3. Slot Count (0x0002) - 保持不变
         if ("currentSlotCount" in patch) {
@@ -981,9 +1030,17 @@ function buildDpiSlotsWithPresets({ slots, targetCount, maxSlots, dpiMin, dpiMax
       const nextState = { ...prevState, ...patch }; // 简化合并
 
       // [保持原有的 DPI 触发逻辑]
-      if ("dpiSlots" in patch || "currentSlotCount" in patch || "currentDpiIndex" in patch) {
+      if ("dpiSlots" in patch || "dpiSlotsX" in patch || "dpiSlotsY" in patch || "currentSlotCount" in patch || "currentDpiIndex" in patch) {
         patch.dpiProfile = true;
       }
+
+      const dpiX = Array.isArray(nextState.dpiSlotsX)
+        ? nextState.dpiSlotsX
+        : (Array.isArray(nextState.dpiSlots) ? nextState.dpiSlots : []);
+      const dpiY = Array.isArray(nextState.dpiSlotsY) ? nextState.dpiSlotsY : dpiX;
+      nextState.dpiSlotsX = Array.isArray(dpiX) ? dpiX.slice(0) : [];
+      nextState.dpiSlotsY = Array.isArray(dpiY) ? dpiY.slice(0) : nextState.dpiSlotsX.slice(0);
+      nextState.dpiSlots = nextState.dpiSlotsX.slice(0);
 
       // 高级参数聚合触发逻辑
       // 当 patch 中包含任意高级参数时，触发 advParams 的全量写入
@@ -1022,7 +1079,7 @@ function buildDpiSlotsWithPresets({ slots, targetCount, maxSlots, dpiMin, dpiMax
 
 ProtocolApi.resolveMouseDisplayName = ProtocolApi.resolveMouseDisplayName || function (vendorId, productId, fallbackName) {
   const vid = Number(vendorId) >>> 0;
-  if (vid === 0x373b) return "ATK Mouse";
+  if (ATK_VENDOR_IDS.has(vid)) return "ATK Mouse";
   return fallbackName || `HID ${vid.toString(16)}:${(Number(productId)>>>0).toString(16)}`;
 };
 
@@ -1030,6 +1087,7 @@ ProtocolApi.resolveMouseDisplayName = ProtocolApi.resolveMouseDisplayName || fun
   ProtocolApi.ATK_HID = {
     filters: [
       { vendorId: 0x373b, usagePage: 0xff02, usage: 0x0002 },
+      { vendorId: 0x3710, usagePage: 0xff02, usage: 0x0002 },
     ],
   };
 
@@ -1081,6 +1139,7 @@ ProtocolApi.resolveMouseDisplayName = ProtocolApi.resolveMouseDisplayName || fun
     async requestDevice() {
       const filters = [
         { vendorId: 0x373b, usagePage: 0xff02, usage: 0x0002 },
+        { vendorId: 0x3710, usagePage: 0xff02, usage: 0x0002 },
 
       ];
       const devs = await navigator.hid.requestDevice({ filters });
@@ -1106,6 +1165,16 @@ ProtocolApi.resolveMouseDisplayName = ProtocolApi.resolveMouseDisplayName || fun
     onConfig(cb) { this._onConfigCbs.push(cb); }
     _emitConfig() { this._onConfigCbs.forEach(cb => cb(this._cfg)); }
 
+    getCachedConfig() {
+      const cfg = this._cfg;
+      if (!cfg || typeof cfg !== "object") return null;
+      try {
+        return JSON.parse(JSON.stringify(cfg));
+      } catch (_) {
+        return { ...cfg };
+      }
+    }
+
     
 
     // 电量事件：供 app.js 订阅
@@ -1118,9 +1187,12 @@ ProtocolApi.resolveMouseDisplayName = ProtocolApi.resolveMouseDisplayName || fun
 _makeDefaultCfg() {
   // ⚠️ ATK 后端暂未完善"读取配置"能力，为避免握手阶段因读配置失败导致无法进入主页，
   // 这里提供一份"稳定默认配置"作为兜底（后续补全读取能力后可再收敛）。
+  const dpiDefaults = [400, 800, 1600, 3200, 6400, 12800];
   return {
     // DPI
-    dpiSlots: [400, 800, 1600, 3200, 6400, 12800],
+    dpiSlotsX: dpiDefaults.slice(0),
+    dpiSlotsY: dpiDefaults.slice(0),
+    dpiSlots: dpiDefaults.slice(0),
     // 默认颜色（对应 6 档）
     dpiColors: ["#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#00FFFF", "#FF00FF"],
     currentSlotCount: 4,
@@ -1274,26 +1346,43 @@ try {
   );
 
   // 仅读取“当前启用”的挡位数量，追求极速；其余槽位用本地缓存/预设补齐
-  const readVals = [];
+  const readValsX = [];
+  const readValsY = [];
   for (let i = 0; i < count; i++) {
     try {
       const addr = REGS.DPI_BASE + (i * 4);
       const dpiBuf = await readReg(addr, 4);
-      readVals.push(TRANSFORMERS.decodeDpiWord(dpiBuf));
+      const pair = TRANSFORMERS.decodeDpiWord(dpiBuf);
+      readValsX.push(pair?.x ?? 800);
+      readValsY.push(pair?.y ?? pair?.x ?? 800);
     } catch (e) {
       console.warn(`[ATK] 读取第 ${i + 1} 档 DPI 失败`, e);
-      readVals.push(this._cfg?.dpiSlots?.[i] ?? DPI_PRESETS[i] ?? 800);
+      const fallbackX = this._cfg?.dpiSlotsX?.[i] ?? this._cfg?.dpiSlots?.[i] ?? DPI_PRESETS[i] ?? 800;
+      const fallbackY = this._cfg?.dpiSlotsY?.[i] ?? fallbackX;
+      readValsX.push(fallbackX);
+      readValsY.push(fallbackY);
     }
   }
 
-  const prevSlots = Array.isArray(this._cfg?.dpiSlots) ? this._cfg.dpiSlots.slice(0, maxSlots) : [];
-  const dpiSlots = [];
+  const prevSlotsX = Array.isArray(this._cfg?.dpiSlotsX)
+    ? this._cfg.dpiSlotsX.slice(0, maxSlots)
+    : (Array.isArray(this._cfg?.dpiSlots) ? this._cfg.dpiSlots.slice(0, maxSlots) : []);
+  const prevSlotsY = Array.isArray(this._cfg?.dpiSlotsY)
+    ? this._cfg.dpiSlotsY.slice(0, maxSlots)
+    : prevSlotsX.slice(0);
+
+  const dpiSlotsX = [];
+  const dpiSlotsY = [];
   for (let i = 0; i < maxSlots; i++) {
-    if (i < readVals.length) dpiSlots.push(readVals[i]);
-    else dpiSlots.push(prevSlots[i] ?? DPI_PRESETS[i] ?? 800);
+    const vx = i < readValsX.length ? readValsX[i] : (prevSlotsX[i] ?? DPI_PRESETS[i] ?? 800);
+    const vy = i < readValsY.length ? readValsY[i] : (prevSlotsY[i] ?? vx);
+    dpiSlotsX.push(vx);
+    dpiSlotsY.push(vy);
   }
 
-  snapshot.dpiSlots = dpiSlots;
+  snapshot.dpiSlotsX = dpiSlotsX;
+  snapshot.dpiSlotsY = dpiSlotsY;
+  snapshot.dpiSlots = dpiSlotsX.slice(0);
 
   const safeIdx = clampInt(
     snapshot.currentDpiIndex ?? this._cfg?.currentDpiIndex ?? 0,
@@ -1301,7 +1390,7 @@ try {
     Math.max(0, count - 1)
   );
   snapshot.currentDpiIndex = safeIdx;
-  snapshot.currentDpi = dpiSlots[safeIdx] ?? null;
+  snapshot.currentDpi = dpiSlotsX[safeIdx] ?? null;
 } catch (e) {
   console.warn("[ATK] 读取 DPI Slots 失败", e);
 }
@@ -1503,44 +1592,63 @@ async setBatchFeatures(payload) {
 
   // 0) 统一字段别名 + 防御性复制
   const externalPayload = normalizePayload(payload);
+  const hasSlotCount = Object.prototype.hasOwnProperty.call(externalPayload, "currentSlotCount");
+  const hasDpiPayload =
+    Object.prototype.hasOwnProperty.call(externalPayload, "dpiSlots") ||
+    Object.prototype.hasOwnProperty.call(externalPayload, "dpiSlotsX") ||
+    Object.prototype.hasOwnProperty.call(externalPayload, "dpiSlotsY") ||
+    hasSlotCount;
 
-  // 1) 主动预设：挡位数变化时，自动补全 dpiSlots（避免 UI 闪烁到最小值）
-  if (Object.prototype.hasOwnProperty.call(externalPayload, "currentSlotCount")) {
-    const targetCount = clampInt(externalPayload.currentSlotCount, 1, maxSlots);
-    externalPayload.currentSlotCount = targetCount;
+  if (hasDpiPayload) {
+    const targetCount = clampInt(
+      hasSlotCount ? externalPayload.currentSlotCount : (this._cfg?.currentSlotCount ?? 4),
+      1,
+      maxSlots
+    );
+    if (hasSlotCount) {
+      externalPayload.currentSlotCount = targetCount;
+      const baseIdx = Object.prototype.hasOwnProperty.call(externalPayload, "currentDpiIndex")
+        ? externalPayload.currentDpiIndex
+        : (this._cfg?.currentDpiIndex ?? 0);
+      externalPayload.currentDpiIndex = clampInt(baseIdx, 0, Math.max(0, targetCount - 1));
+    }
 
-    const baseSlots = Array.isArray(externalPayload.dpiSlots)
-      ? externalPayload.dpiSlots
+    const prevSlotsX = Array.isArray(this._cfg?.dpiSlotsX)
+      ? this._cfg.dpiSlotsX
       : (Array.isArray(this._cfg?.dpiSlots) ? this._cfg.dpiSlots : []);
+    const prevSlotsY = Array.isArray(this._cfg?.dpiSlotsY) ? this._cfg.dpiSlotsY : prevSlotsX;
 
-    externalPayload.dpiSlots = buildDpiSlotsWithPresets({
-      slots: baseSlots,
+    const rawSlotsX = Array.isArray(externalPayload.dpiSlotsX)
+      ? externalPayload.dpiSlotsX
+      : (Array.isArray(externalPayload.dpiSlots) ? externalPayload.dpiSlots : prevSlotsX);
+    const rawSlotsY = Array.isArray(externalPayload.dpiSlotsY)
+      ? externalPayload.dpiSlotsY
+      : (Array.isArray(externalPayload.dpiSlots) ? externalPayload.dpiSlots : prevSlotsY);
+
+    const nextSlotsX = buildDpiSlotsWithPresets({
+      slots: rawSlotsX,
       targetCount,
       maxSlots,
       dpiMin,
-      dpiMax
+      dpiMax,
     });
-
-    // 同步 index：防止缩档后 index 越界
-    const baseIdx = Object.prototype.hasOwnProperty.call(externalPayload, "currentDpiIndex")
-      ? externalPayload.currentDpiIndex
-      : (this._cfg?.currentDpiIndex ?? 0);
-
-    externalPayload.currentDpiIndex = clampInt(baseIdx, 0, Math.max(0, targetCount - 1));
-  } else if (Object.prototype.hasOwnProperty.call(externalPayload, "dpiSlots")) {
-    // 仅改 DPI 数值时：也补齐到 maxSlots，避免数组长度抖动
-    const baseSlots = Array.isArray(externalPayload.dpiSlots)
-      ? externalPayload.dpiSlots
-      : (Array.isArray(this._cfg?.dpiSlots) ? this._cfg.dpiSlots : []);
-
-    const targetCount = clampInt(this._cfg?.currentSlotCount ?? 4, 1, maxSlots);
-    externalPayload.dpiSlots = buildDpiSlotsWithPresets({
-      slots: baseSlots,
+    const nextSlotsY = buildDpiSlotsWithPresets({
+      slots: rawSlotsY,
       targetCount,
       maxSlots,
       dpiMin,
-      dpiMax
+      dpiMax,
     });
+
+    for (let i = 0; i < maxSlots; i++) {
+      const pair = encodeAtkDpiPairWord(nextSlotsX[i], nextSlotsY[i], dpiMin, dpiMax);
+      nextSlotsX[i] = pair.x;
+      nextSlotsY[i] = pair.y;
+    }
+
+    externalPayload.dpiSlotsX = nextSlotsX;
+    externalPayload.dpiSlotsY = nextSlotsY;
+    externalPayload.dpiSlots = nextSlotsX.slice(0);
   }
 
   // 计算下一状态
@@ -1582,6 +1690,14 @@ async setDpiSlotCount(n) {
 async setSlotCount(n) {
   // 兼容旧接口命名
   return this.setDpiSlotCount(n);
+}
+
+async setCurrentDpiIndex(index) {
+  const cap = this._profile?.capabilities || {};
+  const maxSlots = clampInt(cap.dpiSlotMax ?? 6, 1, cap.dpiSlotMax ?? 6);
+  const currentCount = clampInt(Number(this._cfg?.currentSlotCount ?? maxSlots), 1, maxSlots);
+  const idx = clampInt(Number(index), 0, currentCount - 1);
+  return this.setBatchFeatures({ currentDpiIndex: idx });
 }
 
 async setPollingHz(hz) {
@@ -1653,25 +1769,49 @@ async requestBattery() {
 async getConfig() { return this.requestConfig(); }
     // 快捷 API
     async setDpi(slot, value, options = {}) {
-      // 1. 更新本地缓存的 DPI 数组
-      const slots = [...(this._cfg.dpiSlots || [])];
-      slots[slot - 1] = value;
-      const patch = { dpiSlots: slots };
+      const cap = this._profile?.capabilities ?? {};
+      const maxSlots = clampInt(cap.dpiSlotMax ?? 6, 1, cap.dpiSlotMax ?? 6);
+      const dpiMin = clampInt(cap.dpiMin ?? 50, 1, 500);
+      const dpiMax = clampInt(cap.dpiMax ?? 26000, 1000, 60000);
+      const idx = clampInt(Number(slot), 1, maxSlots) - 1;
 
-      // 支持同时设置颜色
+      const valueObj = (value && typeof value === "object") ? value : null;
+      const fallbackX = this._cfg?.dpiSlotsX?.[idx] ?? this._cfg?.dpiSlots?.[idx] ?? 800;
+      const fallbackY = this._cfg?.dpiSlotsY?.[idx] ?? fallbackX;
+      const reqX = Number(valueObj ? (valueObj.x ?? valueObj.X ?? valueObj.y ?? valueObj.Y) : value);
+      const reqY = Number(valueObj ? (valueObj.y ?? valueObj.Y ?? reqX) : reqX);
+      const rawX = Number.isFinite(reqX) ? reqX : fallbackX;
+      const rawY = Number.isFinite(reqY) ? reqY : fallbackY;
+
+      const slotsX = Array.isArray(this._cfg?.dpiSlotsX)
+        ? this._cfg.dpiSlotsX.slice(0, maxSlots)
+        : (Array.isArray(this._cfg?.dpiSlots) ? this._cfg.dpiSlots.slice(0, maxSlots) : []);
+      const slotsY = Array.isArray(this._cfg?.dpiSlotsY)
+        ? this._cfg.dpiSlotsY.slice(0, maxSlots)
+        : slotsX.slice(0);
+      while (slotsX.length < maxSlots) slotsX.push(DPI_PRESETS[slotsX.length] ?? 800);
+      while (slotsY.length < maxSlots) slotsY.push(slotsX[slotsY.length] ?? 800);
+
+      const pair = encodeAtkDpiPairWord(rawX, rawY, dpiMin, dpiMax);
+      slotsX[idx] = pair.x;
+      slotsY[idx] = pair.y;
+
+      const patch = {
+        dpiSlotsX: slotsX,
+        dpiSlotsY: slotsY,
+        dpiSlots: slotsX.slice(0),
+      };
+
       if (options.color) {
         const colors = [...(this._cfg.dpiColors || [])];
-        colors[slot - 1] = options.color;
+        colors[idx] = options.color;
         patch.dpiColors = colors;
       }
 
-      // 只有当显式要求选中（如点击了档位行/选择按钮），
-      // 或者当前修改的就是正在使用的档位时，才下发 index 切换指令
       if (options.select === true) {
-        patch.currentDpiIndex = slot - 1;
+        patch.currentDpiIndex = idx;
       }
 
-      // 3. 调用批量设置方法
       await this.setBatchFeatures(patch);
     }
   }

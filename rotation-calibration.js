@@ -8,17 +8,13 @@
   const navRot = document.getElementById('navRot');
 
   const rotLockTarget = document.getElementById('rotLockTarget');
-  const rotLockState = document.getElementById('rotLockState');
-  const rotLockPill = document.getElementById('rotLockPill');
 
   const rotBox = document.getElementById('rotBox');
   const rotCanvas = document.getElementById('rotCanvas');
-  const rotTrendCanvas = document.getElementById('rotTrendCanvas');
 const rotResetBtn = document.getElementById('rotResetBtn');
 const rotCopyBtn = document.getElementById('rotCopyBtn');
 const rotWriteAngleBtn = document.getElementById('rotWriteAngleBtn');
 const rotAngleFinalEl = document.getElementById('rotAngleFinal');
-  const rotAngleSuggestedEl = document.getElementById('rotAngleSuggested');
 
   const rotSwipeCountEl = document.getElementById('rotSwipeCount');
   
@@ -26,20 +22,11 @@ const rotAngleFinalEl = document.getElementById('rotAngleFinal');
 const rotSampleCountEl = document.getElementById('rotSampleCount');
   const rotStabilityEl = document.getElementById('rotStability');
   const rotTopHint = document.getElementById('rotTopHint');
-const rotQualityHint = document.getElementById('rotQualityHint');
 
   // ===== 不同品牌驱动适配：已移除（仅保留原始角度显示，不做任何偏移） =====
   function applyRotBrand(theta){
     if(theta === null || !isFinite(theta)) return null;
     return clamp(wrap180(theta), -90, 90);
-  }
-
-  function setRotUiAngleText(txt){
-    const s = (txt==null ? '--' : String(txt)).trim();
-    rot.uiAngleText = s;
-    const v = parseFloat(s);
-    rot.uiAngleVal = Number.isFinite(v) ? clamp(v, -90, 90) : 0;
-    rot.uiAngleReady = (s !== '--' && Number.isFinite(v));
   }
 
   function refreshRotOutputsNow(){
@@ -50,20 +37,14 @@ const rotQualityHint = document.getElementById('rotQualityHint');
       const thetaDisp = applyRotBrand(thetaNow);
       const txt = fmtDeg(thetaDisp);
       rotAngleFinalEl.textContent = txt;
-      rotAngleSuggestedEl.textContent = txt;
-      setRotUiAngleText(txt);
 
     }else{
       rotAngleFinalEl.textContent = '--';
-      rotAngleSuggestedEl.textContent = '--';
-      setRotUiAngleText('--');
     }
-    try{ if(typeof drawGauge === 'function') drawGauge(performance.now()); }catch(_){ }
   }
 
   // Keep brand/lock labels in sync when UI language toggles
   window.addEventListener('uilangchange', ()=>{
-    try{ setLockUI(rot.locked); }catch(_){ }
     try{ refreshRotOutputsNow(); }catch(_){ }
   });
 
@@ -124,12 +105,6 @@ const rotQualityHint = document.getElementById('rotQualityHint');
     lastUiAt: 0,
     lastHistAt: 0,
     
-    // 显示缓存：以结果面板数值为准（用于仪表板保持一致）
-    uiAngleText: '--',
-    uiAngleVal: 0,
-    uiAngleReady: false,
-
-
     lastTickAt: 0,
 hist: [],          // {v,ts}
     rafId: 0,
@@ -202,22 +177,15 @@ hist: [],          // {v,ts}
     }
   }
 
-  function setLockUI(locked){
-    if(rotLockState) rotLockState.textContent = locked ? tr('已锁定','Locked') : tr('未锁定','Unlocked');
-    if(rotLockPill) rotLockPill.classList.toggle('okpill', locked);
-  }
-
   document.addEventListener('pointerlockchange', ()=>{
     if(!isRotActive()) return;
     const locked = (document.pointerLockElement === rotLockTarget);
     rot.locked = locked;
-    setLockUI(locked);
 
     if(locked){
       rot.recording = true;
       rotTopHint.textContent = tr('已开始：左右来回滑动 ≥ 10 次。右键暂停。','Started: swipe left/right ≥ 10 times. Right-click to pause.');
       /* rotTopHint 已在上方设置 */
-      if(rotQualityHint) rotQualityHint.textContent = tr('提示：尽量保持你认为的“水平”滑动；可多做几次提高稳定度','Tip: keep what feels like “horizontal” swipes; more swipes improves stability.');
       attachRotMove();
       attachRotFocusBlock();
       startRAF();
@@ -240,7 +208,6 @@ hist: [],          // {v,ts}
       rot.recording = false;
       rot.endRequested = false;
       rotTopHint.textContent = tr('已暂停（点击继续）','Paused (click to continue)');
-      if(rotQualityHint) rotQualityHint.textContent = tr('点击继续继续之前测量；仅“重置”会结束并清空','Click to continue; only “Reset” ends and clears.');
 
       // 暂停时也刷新一次结果，避免“结果 --”的观感
       {
@@ -249,10 +216,8 @@ hist: [],          // {v,ts}
           const thetaNow = wrap180(rot.thetaSmooth);
           const thetaDisp = applyRotBrand(thetaNow);
           rotAngleFinalEl.textContent = fmtDeg(thetaDisp);
-          rotAngleSuggestedEl.textContent = fmtDeg(thetaDisp);
 }else{
           rotAngleFinalEl.textContent = '--';
-          rotAngleSuggestedEl.textContent = '--';
         }
       }
 }
@@ -501,7 +466,6 @@ function computeThetaTarget(){
 
   // ===== 绘制（轨迹 + 仪表） =====
   const ctx = rotCanvas.getContext('2d');
-  const tctx = rotTrendCanvas ? rotTrendCanvas.getContext('2d') : null;
 
   function computeBBox(){
     let minX=0,maxX=0,minY=0,maxY=0;
@@ -605,9 +569,6 @@ function computeThetaTarget(){
     // 当前轨迹（更亮）
     strokeLine(rot.curPts, cssW, cssH, 0, 0.55);
 
-    // 角度仪表
-    drawGauge(t);
-
     // 持续动画：只要在锁定态或角度还在收敛/有脏数据就继续
     if(rot.locked || rot.dirty){
       rot.rafId = requestAnimationFrame(draw);
@@ -615,157 +576,6 @@ function computeThetaTarget(){
       rot.rafId = 0;
     }
   }
-
-  function drawGauge(t){
-    if(!rotTrendCanvas || !tctx) return;
-    const {cssW, cssH} = resizeCanvasToCSS(rotTrendCanvas, tctx, 2);
-    tctx.clearRect(0,0,cssW,cssH);
-
-    const w = cssW, h = cssH;
-    const pad = 14;
-    const cx = w/2;
-    const cy = h - pad;
-    const r  = Math.min(w/2 - pad, h - pad*1.8);
-    if(!isFinite(r) || r < 24) return;
-
-    // —— 以“结果面板”数值为准：避免 UI 节流(80ms) 与 RAF(60fps) 不同频导致的瞬时不一致 ——
-    const ready = !!rot.uiAngleReady;
-    const thetaDisp = ready ? clamp(rot.uiAngleVal, -90, 90) : 0;
-    const thetaText = ready ? rot.uiAngleText : '--';
-
-    const green = 'rgb(48, 120, 100)'; // 与 DPI2 一致的墨绿色
-    const awhite =  'rgba(255, 255, 255,0.50)';
-
-    tctx.save();
-    tctx.translate(cx, cy);
-
-    // 外弧（极简）
-    tctx.beginPath();
-    tctx.arc(0,0, r, -Math.PI, 0);
-    tctx.strokeStyle = 'rgba(255,255,255,0.22)';
-    tctx.lineWidth = 2.2;
-    tctx.lineCap = 'round';
-    tctx.stroke();
-
-    // 刻度（更少、更干净）
-    for(let deg=-90; deg<=90; deg+=15){
-      const rad = (deg - 90) * Math.PI / 180;
-      const major = (deg % 45 === 0) || (deg === 0);
-      const len = major ? 10 : 6;
-
-      const x1 = Math.cos(rad) * r;
-      const y1 = Math.sin(rad) * r;
-      const x2 = Math.cos(rad) * (r - len);
-      const y2 = Math.sin(rad) * (r - len);
-
-      tctx.beginPath();
-      tctx.moveTo(x1,y1);
-      tctx.lineTo(x2,y2);
-      tctx.strokeStyle = major ? 'rgba(255,255,255,0.30)' : 'rgba(255,255,255,0.16)';
-      tctx.lineWidth = major ? 1.8 : 1.0;
-      tctx.stroke();
-    }
-
-    // 0° 基准线（稍强调）
-    const rad0 = (0 - 90) * Math.PI / 180;
-    tctx.beginPath();
-    tctx.moveTo(Math.cos(rad0) * (r - 12), Math.sin(rad0) * (r - 12));
-    tctx.lineTo(Math.cos(rad0) * (r + 1),  Math.sin(rad0) * (r + 1));
-    tctx.strokeStyle = 'rgba(255,255,255,0.32)';
-    tctx.lineWidth = 2.0;
-    tctx.stroke();
-
-    // 端点与 0 标签（极简）
-    tctx.save();
-    tctx.fillStyle = 'rgba(255,255,255,0.55)';
-    tctx.font = '11px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
-    tctx.textAlign = 'center';
-    tctx.textBaseline = 'middle';
-    const labelR = r - 22;
-    const drawLbl = (deg, txt)=>{
-      const rr = (deg - 90) * Math.PI / 180;
-      tctx.fillText(txt, Math.cos(rr)*labelR, Math.sin(rr)*labelR);
-    };
-    drawLbl(-90, '-90');
-    drawLbl(0, '0');
-    drawLbl(90, '90');
-    tctx.restore();
-
-    // 指针（墨绿、极简）
-    if(ready){
-      const pr = (thetaDisp - 90) * Math.PI / 180;
-      const inner = Math.max(10, r*0.10);
-      const outer = r - 14;
-
-      const x0 = Math.cos(pr) * inner;
-      const y0 = Math.sin(pr) * inner;
-      const x1 = Math.cos(pr) * outer;
-      const y1 = Math.sin(pr) * outer;
-      
-      // 绘制箭头线
-      tctx.beginPath();
-      tctx.moveTo(x0, y0);
-      tctx.lineTo(x1, y1);
-      tctx.strokeStyle = green;
-      tctx.lineWidth = 2.5;
-      tctx.lineCap = 'round';
-      tctx.stroke();
-      
-      // 绘制简单箭头头部
-      const arrowSize = 6;
-      const angle = Math.atan2(y1 - y0, x1 - x0);
-      
-      tctx.beginPath();
-      tctx.moveTo(x1, y1);
-      tctx.lineTo(
-        x1 - arrowSize * Math.cos(angle) - arrowSize * Math.sin(angle),
-        y1 - arrowSize * Math.sin(angle) + arrowSize * Math.cos(angle)
-      );
-      tctx.lineTo(
-        x1 - arrowSize * Math.cos(angle) + arrowSize * Math.sin(angle),
-        y1 - arrowSize * Math.sin(angle) - arrowSize * Math.cos(angle)
-      );
-      tctx.closePath();
-      tctx.fillStyle = green;
-      tctx.fill();
-    }
-
-    // 轮毂
-    tctx.beginPath();
-    tctx.arc(0,0, r*0.055, 0, Math.PI*2);
-    tctx.fillStyle = 'rgba(0,0,0,0.30)';
-    tctx.fill();
-    tctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    tctx.lineWidth = 1.2;
-    tctx.stroke();
-
-    // 中心数值（与推荐角一致）
-    tctx.save();
-    tctx.textAlign = 'center';
-    tctx.textBaseline = 'middle';
-    const valY = -r*0.46;
-
-    tctx.fillStyle = 'rgba(255,255,255,0.25)';
-    tctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
-    tctx.fillText('', 0, valY - 18);
-
-    tctx.font = '800 32px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
-    if(ready){
- 
-      tctx.fillStyle = awhite;
-      tctx.fillText(thetaText + '°', 0, valY + 8);
-    }else{
-      tctx.fillStyle = 'rgba(255,255,255,0.60)';
-      tctx.fillText('*', 0, valY + 8);
-      tctx.fillStyle = 'rgba(255,255,255,0.38)';
-      tctx.font = '11px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
-      tctx.fillText(tr('≥10 次往返后显示','Shown after ≥10 round trips'), 0, valY + 34);
-    }
-    tctx.restore();
-
-    tctx.restore();
-  }
-
 
   function startRAF(){
     if(rot.rafId) return;
@@ -835,13 +645,9 @@ rotSampleCountEl.textContent = String(rot.sampleTotal);
           const thetaDisp = applyRotBrand(thetaNow);
           const txt = fmtDeg(thetaDisp);
           rotAngleFinalEl.textContent = txt;
-          rotAngleSuggestedEl.textContent = txt;
-          setRotUiAngleText(txt);
         }else{
 
           rotAngleFinalEl.textContent = '--';
-          rotAngleSuggestedEl.textContent = '--';
-          setRotUiAngleText('--');
         }
       }
       rot.lastUiAt = t;
@@ -868,12 +674,7 @@ rotSampleCountEl.textContent = String(rot.sampleTotal);
     const txt = fmtDeg(thetaDisp);
 
     rotAngleFinalEl.textContent = txt;
-    rotAngleSuggestedEl.textContent = txt;
-    setRotUiAngleText(txt);
-
-    if(rotQualityHint) rotQualityHint.textContent = tr('已达到 ≥ 10 次：可复制结果；继续滑动会更准确（仅“重置”会清空）','Reached ≥ 10: you can copy the result; more swipes improves accuracy (only “Reset” clears).');
     rotTopHint.textContent = tr('推荐角已可用：继续滑动可更准确；右键暂停','Result ready: more swipes improves accuracy; right-click to pause.');
-    if(rotQualityHint) rotQualityHint.textContent = tr('提示：继续滑动可提升精度；右键暂停；仅“重置”会清空本次测量','Tip: more swipes improves accuracy; right-click to pause; only “Reset” clears.');
 
     // 结束后：停止专注吞输入
     rot.recording = false;
@@ -918,19 +719,14 @@ rotSampleCountEl.textContent = String(rot.sampleTotal);
     rot.lastHistAt = 0;
     rot.hist = [];
     rotAngleFinalEl.textContent = '--';
-    rotAngleSuggestedEl.textContent = '--';
-    setRotUiAngleText('--');
     rotSwipeCountEl.textContent = '0';
     
     rotSwipePill.classList.remove('okpill');
 rotSampleCountEl.textContent = '0';
     rotStabilityEl.textContent = '--';
 
-   
+    
     rotTopHint.textContent = tr('点击下面区域开始；右键暂停。','Click the area to start; right-click to pause.');
-    if(rotQualityHint) rotQualityHint.textContent = tr('提示：锁定后请在区域内自由左右滑动，右键暂停','Tip: after locking, swipe left/right inside the area; right-click to pause.');
-
-    setLockUI(false);
 
     rot.dirty = true;
     startRAF();
@@ -969,20 +765,18 @@ rotResetBtn.addEventListener('click', ()=>{
   });
 
   rotCopyBtn.addEventListener('click', async ()=>{
-    const v = rotAngleSuggestedEl.textContent;
+    const v = rotAngleFinalEl.textContent;
     if(!v || v==='--') return;
     const text = `${v}°`;
     try{
       await navigator.clipboard.writeText(text);
-      if(rotQualityHint) rotQualityHint.textContent = tr('已复制：','Copied: ') + text;
     }catch(err){
-      if(rotQualityHint) rotQualityHint.textContent = tr('复制失败（浏览器限制）：','Copy failed (browser restriction): ') + text;
     }
   });
 
   // 将推荐角度写入“高级参数 → 传感器角度修正”
   rotWriteAngleBtn?.addEventListener('click', ()=>{
-    const raw = (rotAngleSuggestedEl?.textContent || '').trim();
+    const raw = (rotAngleFinalEl?.textContent || '').trim();
     const v = Number.parseFloat(raw);
     if(!Number.isFinite(v)) return;
 
@@ -1008,7 +802,6 @@ rotResetBtn.addEventListener('click', ()=>{
   // Expose a few helpers for the embedded navigation (optional)
   try{
     window.refreshRotOutputsNow = refreshRotOutputsNow;
-    window.drawGauge = drawGauge;
   }catch(_){ }
 
 })();

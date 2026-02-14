@@ -500,6 +500,10 @@
 
     dpiSlots: "dpiSlots",
     dpi_slots: "dpiSlots",
+    dpiSlotsX: "dpiSlotsX",
+    dpi_slots_x: "dpiSlotsX",
+    dpiSlotsY: "dpiSlotsY",
+    dpi_slots_y: "dpiSlotsY",
 
     // 虚拟字段：内部触发 DPI 计划（外部通常不用直接传）
     dpiProfile: "dpiProfile",
@@ -1268,8 +1272,8 @@
       key: "dpiProfile",
       kind: "virtual",
       priority: 30,
-      deps: ["dpiSlots", "currentSlotCount", "currentDpiIndex"],
-      triggers: ["dpiSlots", "currentSlotCount", "currentDpiIndex"],
+      deps: ["dpiSlots", "dpiSlotsX", "dpiSlotsY", "currentSlotCount", "currentDpiIndex"],
+      triggers: ["dpiSlots", "dpiSlotsX", "dpiSlotsY", "currentSlotCount", "currentDpiIndex"],
 
       validate(patch, nextState, profile) {
         const cap = profile.capabilities;
@@ -1282,13 +1286,22 @@
           throw new ProtocolError("currentDpiIndex 必须 < currentSlotCount", "BAD_PARAM", { idx, count });
         }
 
-        const slots = Array.isArray(nextState.dpiSlots) ? nextState.dpiSlots : [];
-        for (const [i, v] of slots.entries()) {
-          if (i >= count) break;
-          const n = Number(v);
-          if (!Number.isFinite(n)) throw new ProtocolError("dpiSlots 中存在非法数字", "BAD_PARAM", { index: i, value: v });
-          if (n < cap.dpiMin || n > cap.dpiMax) {
-            throw new ProtocolError("dpiSlots 值超出范围", "BAD_PARAM", { index: i, value: n, min: cap.dpiMin, max: cap.dpiMax });
+        const slotsX = Array.isArray(nextState.dpiSlotsX)
+          ? nextState.dpiSlotsX
+          : (Array.isArray(nextState.dpiSlots) ? nextState.dpiSlots : []);
+        const slotsY = Array.isArray(nextState.dpiSlotsY) ? nextState.dpiSlotsY : slotsX;
+        for (let i = 0; i < count; i++) {
+          const vx = slotsX[i];
+          const vy = slotsY[i];
+          const nx = Number(vx);
+          const ny = Number(vy);
+          if (!Number.isFinite(nx)) throw new ProtocolError("dpiSlotsX 中存在非法数字", "BAD_PARAM", { index: i, value: vx });
+          if (!Number.isFinite(ny)) throw new ProtocolError("dpiSlotsY 中存在非法数字", "BAD_PARAM", { index: i, value: vy });
+          if (nx < cap.dpiMin || nx > cap.dpiMax) {
+            throw new ProtocolError("dpiSlotsX 值超出范围", "BAD_PARAM", { index: i, value: nx, min: cap.dpiMin, max: cap.dpiMax });
+          }
+          if (ny < cap.dpiMin || ny > cap.dpiMax) {
+            throw new ProtocolError("dpiSlotsY 值超出范围", "BAD_PARAM", { index: i, value: ny, min: cap.dpiMin, max: cap.dpiMax });
           }
         }
       },
@@ -1308,21 +1321,26 @@
 
         const count = clampInt(Number(nextState.currentSlotCount ?? 1), 1, profile.capabilities.dpiSlotMax);
         const idx = clampInt(Number(nextState.currentDpiIndex ?? 0), 0, count - 1);
-        const slots = Array.isArray(nextState.dpiSlots) ? nextState.dpiSlots : [];
+        const slotsX = Array.isArray(nextState.dpiSlotsX)
+          ? nextState.dpiSlotsX
+          : (Array.isArray(nextState.dpiSlots) ? nextState.dpiSlots : []);
+        const slotsY = Array.isArray(nextState.dpiSlotsY) ? nextState.dpiSlotsY : slotsX;
 
-        const tableBytes = TRANSFORMERS.dpiTableBytes(slots, count, profile);
-        const lenOverride = tableBytes.length; // 变长：count * 2
+        const tableBytesA = TRANSFORMERS.dpiTableBytes(slotsX, count, profile);
+        const tableBytesB = TRANSFORMERS.dpiTableBytes(slotsY, count, profile);
+        const lenOverrideA = tableBytesA.length; // 变长：count * 2
+        const lenOverrideB = tableBytesB.length; // 变长：count * 2
 
         const commands = [];
 
         // 1) 写 DPI 表（必须双写）
-        const wA = ProtocolCodec.write({ bank: BANKS.SYSTEM, addr: ADDR.dpiTableA, dataBytes: tableBytes, lenOverride });
-        const wB = ProtocolCodec.write({ bank: BANKS.SYSTEM, addr: ADDR.dpiTableB, dataBytes: tableBytes, lenOverride });
+        const wA = ProtocolCodec.write({ bank: BANKS.SYSTEM, addr: ADDR.dpiTableA, dataBytes: tableBytesA, lenOverride: lenOverrideA });
+        const wB = ProtocolCodec.write({ bank: BANKS.SYSTEM, addr: ADDR.dpiTableB, dataBytes: tableBytesB, lenOverride: lenOverrideB });
         commands.push({ rid: 6, hex: wA });
         commands.push({ rid: 6, hex: wB, waitMs: t.dpiTableSecondWriteWaitMs });
 
         // 2) 写挡位数：只有当 patch 改动涉及 slotCount/dpiSlots 时才写
-        if ("currentSlotCount" in patch || "dpiSlots" in patch || "dpiProfile" in patch) {
+        if ("currentSlotCount" in patch || "dpiSlots" in patch || "dpiSlotsX" in patch || "dpiSlotsY" in patch || "dpiProfile" in patch) {
           const countCode = TRANSFORMERS.slotCountCode(count);
           const wCount = ProtocolCodec.write({ bank: BANKS.SYSTEM, addr: ADDR.currentSlotCount, dataBytes: [countCode] });
           // 这里 waitMs 使用统一节拍（如果没提供就 fallback 默认）
@@ -1330,7 +1348,7 @@
         }
 
         // 3) 写选中挡位 index：当 index/count 变动时写入，保证不会越界
-        if ("currentDpiIndex" in patch || "currentSlotCount" in patch || "dpiProfile" in patch) {
+        if ("currentDpiIndex" in patch || "currentSlotCount" in patch || "dpiSlots" in patch || "dpiSlotsX" in patch || "dpiSlotsY" in patch || "dpiProfile" in patch) {
           const idxByte = TRANSFORMERS.dpiIndexU8(idx, { currentSlotCount: count });
           const wIdx = ProtocolCodec.write({ bank: BANKS.SYSTEM, addr: ADDR.currentDpiIndex, dataBytes: [idxByte] });
           commands.push({ rid: 6, hex: wIdx, waitMs: t.slotCountRefreshWaitMs });
@@ -1551,7 +1569,7 @@
       }
 
       // DPI：只要相关字段变化，就触发 dpiProfile 虚拟计划
-      if ("dpiSlots" in out || "currentSlotCount" in out || "currentDpiIndex" in out) {
+      if ("dpiSlots" in out || "dpiSlotsX" in out || "dpiSlotsY" in out || "currentSlotCount" in out || "currentDpiIndex" in out) {
         out.dpiProfile = true; // 内部触发标记（不一定需要写入 state）
       }
 
@@ -1566,11 +1584,37 @@
       if (typeof next.performanceMode === "string") next.performanceMode = next.performanceMode.toLowerCase();
       if (typeof next.lodHeight === "string") next.lodHeight = next.lodHeight.toLowerCase();
 
-      // 确保 dpiSlots 长度满足最大 slot 数，避免各种越界
+      // 确保 dpiSlotsX/Y 长度满足最大 slot 数，dpiSlots 兼容为 X 轴
       const maxSlots = this.profile.capabilities.dpiSlotMax ?? 6;
-      if (!Array.isArray(next.dpiSlots)) next.dpiSlots = [];
-      while (next.dpiSlots.length < maxSlots) next.dpiSlots.push(800);
-      if (next.dpiSlots.length > maxSlots) next.dpiSlots.length = maxSlots;
+      const normalizeSlots = (raw, fallbackRaw) => {
+        const base = Array.isArray(raw) ? raw.slice(0) : (Array.isArray(fallbackRaw) ? fallbackRaw.slice(0) : []);
+        while (base.length < maxSlots) base.push(800);
+        if (base.length > maxSlots) base.length = maxSlots;
+        return base.map((v, idx) => {
+          const n = Number(v);
+          if (!Number.isFinite(n)) {
+            const fb = Number((Array.isArray(fallbackRaw) ? fallbackRaw[idx] : undefined) ?? 800);
+            return clampInt(Number.isFinite(fb) ? fb : 800, this.profile.capabilities.dpiMin, this.profile.capabilities.dpiMax);
+          }
+          return clampInt(n, this.profile.capabilities.dpiMin, this.profile.capabilities.dpiMax);
+        });
+      };
+
+      const prevSlotsX = Array.isArray(prevState?.dpiSlotsX)
+        ? prevState.dpiSlotsX
+        : (Array.isArray(prevState?.dpiSlots) ? prevState.dpiSlots : []);
+      const prevSlotsY = Array.isArray(prevState?.dpiSlotsY) ? prevState.dpiSlotsY : prevSlotsX;
+
+      const rawSlotsX = Array.isArray(next.dpiSlotsX)
+        ? next.dpiSlotsX
+        : (Array.isArray(next.dpiSlots) ? next.dpiSlots : prevSlotsX);
+      const rawSlotsY = Array.isArray(next.dpiSlotsY)
+        ? next.dpiSlotsY
+        : (Array.isArray(next.dpiSlots) ? next.dpiSlots : prevSlotsY);
+
+      next.dpiSlotsX = normalizeSlots(rawSlotsX, prevSlotsX);
+      next.dpiSlotsY = normalizeSlots(rawSlotsY, prevSlotsY);
+      next.dpiSlots = next.dpiSlotsX.slice(0);
 
       // 对 slotCount/index 做一致性裁剪，保证 index < count
       const count = clampInt(Number(next.currentSlotCount ?? 1), 1, maxSlots);
@@ -1879,6 +1923,16 @@
     get capabilities() {
       const cap = this._profile?.capabilities ?? {};
       return JSON.parse(JSON.stringify(cap));
+    }
+
+    getCachedConfig() {
+      const cfg = this._cfg;
+      if (!cfg || typeof cfg !== "object") return null;
+      try {
+        return JSON.parse(JSON.stringify(cfg));
+      } catch (_) {
+        return { ...cfg };
+      }
     }
 
     // -------------------------
@@ -2220,21 +2274,33 @@
     const idxRaw = await this._readRegisterU8(BANKS.SYSTEM, ADDR.currentDpiIndex);
     const currentDpiIndex = clampInt(Number(idxRaw), 0, currentSlotCount - 1);
 
-    const dpiBytes = await this._readRegisterBytes(BANKS.SYSTEM, ADDR.dpiTableA, currentSlotCount * 2);
-    const dpiVals = decodeU16leArray(dpiBytes).slice(0, currentSlotCount);
+    const dpiBytesA = await this._readRegisterBytes(BANKS.SYSTEM, ADDR.dpiTableA, currentSlotCount * 2);
+    const dpiBytesB = await this._readRegisterBytes(BANKS.SYSTEM, ADDR.dpiTableB, currentSlotCount * 2);
+    const dpiValsX = decodeU16leArray(dpiBytesA).slice(0, currentSlotCount);
+    const dpiValsY = decodeU16leArray(dpiBytesB).slice(0, currentSlotCount);
 
     // 补齐到 maxSlots：未读部分保持本地缓存值
-    const prevSlots = Array.isArray(this._cfg?.dpiSlots) ? this._cfg.dpiSlots.slice(0, maxSlots) : [];
-    const dpiSlots = [];
+    const prevSlotsX = Array.isArray(this._cfg?.dpiSlotsX)
+      ? this._cfg.dpiSlotsX.slice(0, maxSlots)
+      : (Array.isArray(this._cfg?.dpiSlots) ? this._cfg.dpiSlots.slice(0, maxSlots) : []);
+    const prevSlotsY = Array.isArray(this._cfg?.dpiSlotsY)
+      ? this._cfg.dpiSlotsY.slice(0, maxSlots)
+      : prevSlotsX.slice(0);
+    const dpiSlotsX = [];
+    const dpiSlotsY = [];
     for (let i = 0; i < maxSlots; i++) {
-      if (i < dpiVals.length) dpiSlots.push(dpiVals[i]);
-      else dpiSlots.push(prevSlots[i] ?? 800);
+      if (i < dpiValsX.length) dpiSlotsX.push(dpiValsX[i]);
+      else dpiSlotsX.push(prevSlotsX[i] ?? 800);
+      if (i < dpiValsY.length) dpiSlotsY.push(dpiValsY[i]);
+      else dpiSlotsY.push(prevSlotsY[i] ?? dpiSlotsX[i] ?? 800);
     }
 
-    snapshot.dpiSlots = dpiSlots;
+    snapshot.dpiSlotsX = dpiSlotsX;
+    snapshot.dpiSlotsY = dpiSlotsY;
+    snapshot.dpiSlots = dpiSlotsX.slice(0);
     snapshot.currentSlotCount = currentSlotCount;
     snapshot.currentDpiIndex = currentDpiIndex;
-    snapshot.currentDpi = dpiSlots[currentDpiIndex] ?? (dpiVals[currentDpiIndex] ?? null);
+    snapshot.currentDpi = dpiSlotsX[currentDpiIndex] ?? (dpiValsX[currentDpiIndex] ?? null);
   } catch (e) {
     console.warn("[Rapoo] 读取 DPI 相关寄存器失败", e);
   }
@@ -2353,14 +2419,38 @@
 
     // DPI 便捷接口：内部仍走 setBatchFeatures（保持统一入口）
     async setDpi(slot, value, opts = {}) {
-      const s = clampInt(assertFiniteNumber(slot, "slot"), 1, this._profile.capabilities.dpiSlotMax);
-      const dpi = clampInt(assertFiniteNumber(value, "dpi"), this._profile.capabilities.dpiMin, this._profile.capabilities.dpiMax);
+      const cap = this._profile.capabilities || {};
+      const maxSlots = clampInt(Number(cap.dpiSlotMax ?? 6), 1, 12);
+      const s = clampInt(assertFiniteNumber(slot, "slot"), 1, maxSlots);
+      const valueObj = (value && typeof value === "object") ? value : null;
+      const dpiX = clampInt(
+        assertFiniteNumber(valueObj ? (valueObj.x ?? valueObj.X ?? valueObj.y ?? valueObj.Y) : value, "dpiX"),
+        cap.dpiMin,
+        cap.dpiMax
+      );
+      const dpiY = clampInt(
+        assertFiniteNumber(valueObj ? (valueObj.y ?? valueObj.Y ?? dpiX) : dpiX, "dpiY"),
+        cap.dpiMin,
+        cap.dpiMax
+      );
 
-      const nextSlots = Array.isArray(this._cfg.dpiSlots) ? [...this._cfg.dpiSlots] : [];
-      while (nextSlots.length < this._profile.capabilities.dpiSlotMax) nextSlots.push(800);
-      nextSlots[s - 1] = dpi;
+      const baseX = Array.isArray(this._cfg.dpiSlotsX)
+        ? this._cfg.dpiSlotsX
+        : (Array.isArray(this._cfg.dpiSlots) ? this._cfg.dpiSlots : []);
+      const baseY = Array.isArray(this._cfg.dpiSlotsY) ? this._cfg.dpiSlotsY : baseX;
 
-      const patch = { dpiSlots: nextSlots };
+      const nextSlotsX = Array.isArray(baseX) ? [...baseX] : [];
+      const nextSlotsY = Array.isArray(baseY) ? [...baseY] : [];
+      while (nextSlotsX.length < maxSlots) nextSlotsX.push(800);
+      while (nextSlotsY.length < maxSlots) nextSlotsY.push(800);
+      nextSlotsX[s - 1] = dpiX;
+      nextSlotsY[s - 1] = dpiY;
+
+      const patch = {
+        dpiSlotsX: nextSlotsX,
+        dpiSlotsY: nextSlotsY,
+        dpiSlots: nextSlotsX.slice(0),
+      };
       if (opts && opts.select) patch.currentDpiIndex = s - 1;
 
       await this.setBatchFeatures(patch);
@@ -2433,6 +2523,8 @@
           pollingRates: [...pollingRates],
         },
 
+        dpiSlotsX: [800, 1200, 1600, 2400, 3200, 4800].slice(0, cap.dpiSlotMax),
+        dpiSlotsY: [800, 1200, 1600, 2400, 3200, 4800].slice(0, cap.dpiSlotMax),
         dpiSlots: [800, 1200, 1600, 2400, 3200, 4800].slice(0, cap.dpiSlotMax),
         currentSlotCount: Math.min(4, cap.dpiSlotMax),
         currentDpiIndex: 0,

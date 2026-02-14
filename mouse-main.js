@@ -110,7 +110,6 @@ function now() {
     // Keep non-ID text in sync when language toggles (no refresh required)
     window.addEventListener('uilangchange', ()=>{
       updateButtonTitles();
-      try{ if (typeof updateKeyMeta === 'function') updateKeyMeta(); }catch(_){}
     });
 
 
@@ -349,7 +348,6 @@ if (resetClicksBtn){
     const pageMainEl = document.getElementById('pageMain');
 const kPickBtn = document.getElementById('pickKeyBtn');
     const kResetBtn = document.getElementById('resetKeyBtn');
-    const kMeta = document.getElementById('customKeyMeta');
     const kState = document.getElementById('customKeyState');
 
     const kUI = {
@@ -414,15 +412,6 @@ function readKeyThreshold(){
       return t || tr('未选择','Not selected');
     }
 
-    function updateKeyMeta(){
-      if(!kMeta) return;
-      const hint = kPickMode ? tr('（录入中：请按一次键…）','(Picking: press a key once...)') : '';
-      const core = (selectedCode || selectedKey)
-        ? tr(`当前：${fmtSel()}`, `Current: ${fmtSel()}`)
-        : tr('当前：未选择（点击“录入”后按一次键）','Current: none (click “Pick”, then press a key once)');
-      kMeta.textContent = core + hint;
-    }
-
     function updateKeyState(text, isDown){
       if(!kState) return;
       kState.textContent = text;
@@ -465,7 +454,6 @@ function readKeyThreshold(){
       if(e.key === 'Escape'){
         kPickMode = false;
         syncPickBtnLabel();
-        updateKeyMeta();
         updateKeyState(tr('状态：已取消录入','Status: Pick canceled'), false);
         return true;
       }
@@ -473,7 +461,6 @@ function readKeyThreshold(){
       selectedCode = e.code;
       kPickMode = false;
       syncPickBtnLabel();
-      updateKeyMeta();
       updateKeyState(tr(`状态：已选择 ${selectedCode || selectedKey}`, `Status: Selected ${selectedCode || selectedKey}`), false);
       return true;
     }
@@ -577,7 +564,6 @@ function readKeyThreshold(){
           updateKeyState(tr('状态：已退出录入','Status: Exited picking'), false);
         }
         syncPickBtnLabel();
-        updateKeyMeta();
       });
     }
     if (kResetBtn){
@@ -587,7 +573,6 @@ function readKeyThreshold(){
         selectedCode = '';
         kPickMode = false;
         syncPickBtnLabel();
-        updateKeyMeta();
         resetCustomKeyStats(false);
       });
     }
@@ -608,7 +593,6 @@ if (kUI.thrInput){
       if (document.visibilityState !== 'visible') resetKeyDownStateOnly();
     });
 
-    updateKeyMeta();
     resetCustomKeyStats(false);
     syncPickBtnLabel();
 
@@ -674,6 +658,26 @@ if (kUI.thrInput){
     // 常见 USB 轮询档位：用于“轻微吸附”，避免 4k 显示 4.1k 这类小幅超出
     const COMMON_RATES = [125, 250, 500, 1000, 2000, 4000, 8000];
     const SNAP_TOL = 0.015; // 6%
+    const MULTI_DEVICE_WARN_THRESHOLD = 8500;
+    let multiDeviceWarned = false;
+
+    function resetMultiDeviceWarning() {
+      multiDeviceWarned = false;
+    }
+
+    function showMultiDeviceWarning(rate) {
+      if (multiDeviceWarned) return;
+      if (!Number.isFinite(rate) || rate <= MULTI_DEVICE_WARN_THRESHOLD) return;
+
+      multiDeviceWarned = true;
+      const warningText = tr(
+        '检测到轮询率异常，可能存在多设备同时上报。请断开其他设备后重测。',
+        'Multiple devices may be reporting at once. Disconnect other devices and test again.'
+      );
+
+      hzHint.textContent = warningText;
+      alert(warningText);
+    }
 
     function normTimeStamp(ts) {
       if (!Number.isFinite(ts)) return NaN;
@@ -747,13 +751,14 @@ if (kUI.thrInput){
       hzDisp.textContent = String(disp);
       applyColor(disp);
       updateExtraStats(disp);
+      showMultiDeviceWarning(disp);
 
       if (disp > peakRate) {
         peakRate = disp;
         hzPeak.textContent = `${peakRate} Hz`;
       }
 
-      if (!lastUsedCoalesced) {
+      if (!lastUsedCoalesced && !multiDeviceWarned) {
         hzHint.textContent = tr('浏览器未提供 coalesced 数据：高回报率可能被低估（建议 HTTPS/Chrome/Edge）', 'Coalesced events not available: high polling rates may be underestimated (try HTTPS + Chrome/Edge).');
       }
     }
@@ -1162,6 +1167,7 @@ function drawChart(now){
       hzPeak.textContent = '-- Hz';
 lastUsedCoalesced = true;
 lastIngestAt = performance.now();
+resetMultiDeviceWarning();
 
 // 即使鼠标不动，也要周期性刷新 UI，使轮询率能回到 0
 if (uiTimer) clearInterval(uiTimer);
@@ -1263,6 +1269,7 @@ hzDisp.style.color = '';
       drawChart(performance.now());
       hzHint.classList.remove('polling','paused');
       hzHint.textContent = tr('点击“开始测试”锁定光标以开始测量','Click “Start” to lock the cursor and begin measuring.');
+      resetMultiDeviceWarning();
     }
 
     // “结束”按钮：点击即退出锁定，并重置本次数据

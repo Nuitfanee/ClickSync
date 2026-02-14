@@ -11,11 +11,7 @@
   const pageMatch = document.getElementById('pageMatch');
   const pageRot = document.getElementById('pageRot');
 
-  const pageTitle = document.getElementById('pageTitle');
-
   const lockTarget = document.getElementById('lockTarget');
-  const matchLockState = document.getElementById('matchLockState');
-  const matchLockPill = document.getElementById('matchLockPill');
 
   function isMatchActive(){ return pageMatch.classList.contains('active'); }
   function isPollActive(){ return pagePoll.classList.contains('active'); }
@@ -43,12 +39,6 @@
     pageMatch.classList.toggle('active', isMatch);
     pageRot.classList.toggle('active', isRot);
 
-    if(pageTitle){
-      pageTitle.textContent =
-        isMain ? tr('双击检测','Double-click') :
-        (isPoll ? tr('轮询率检测','Polling rate') :
-         (isMatch ? tr('灵敏度匹配','Sensitivity match') : tr('鼠标角度校准','Rotation calibration')));
-    }
     // 页面切换时：若处于任何 PointerLock，优先退出，避免“无光标/误吞输入”
     if(document.pointerLockElement){
       document.exitPointerLock();
@@ -96,8 +86,6 @@
   // ========= PointerLock 状态（匹配页只关心 lockTarget） =========
   function setMatchLockUI(){
     const locked = (document.pointerLockElement === lockTarget);
-    if(matchLockState) matchLockState.textContent = locked ? tr('已锁定','Locked') : tr('未锁定','Unlocked');
-    if(matchLockPill) matchLockPill.style.borderColor = locked ? 'rgba(48,209,88,.55)' : 'rgba(255,255,255,.14)';
 
     // 如果用户已经按下左键，但锁定稍后才生效：锁定生效后自动进入记录状态（不需要反复点击）
     if(locked && match && match.activeMouse && match.waitingPress && match.pendingStart){

@@ -78,21 +78,21 @@ const MOUSE_HID = {
 // =====================================================================================
 const MOUSE_DEVICE_DISPLAY_NAME_BY_PID = Object.freeze({
   // CHAOS M1
-  0x521c: "CHAOS M1 有线",
-  0x520c: "CHAOS M1 无线1K",
-  0x520b: "CHAOS M1 无线8K",
+  0x521c: "CHAOS M1 ",
+  0x520c: "CHAOS M1 ",
+  0x520b: "CHAOS M1 ",
   // CHAOS M1 PRO
-  0x531c: "CHAOS M1 PRO 有线",
-  0x530c: "CHAOS M1 PRO 无线1K",
-  0x530b: "CHAOS M1 PRO 无线8K",
+  0x531c: "CHAOS M1 PRO ",
+  0x530c: "CHAOS M1 PRO ",
+  0x530b: "CHAOS M1 PRO ",
   // CHAOS M2 PRO
-  0x541c: "CHAOS M2 PRO 有线",
-  0x540c: "CHAOS M2 PRO 无线1K",
-  0x540b: "CHAOS M2 PRO 无线8K",
+  0x541c: "CHAOS M2 PRO ",
+  0x540c: "CHAOS M2 PRO ",
+  0x540b: "CHAOS M2 PRO ",
   // CHAOS M3 PRO
-  0x551c: "CHAOS M3 PRO 有线",
-  0x550c: "CHAOS M3 PRO 无线1K",
-  0x550b: "CHAOS M3 PRO 无线8K",
+  0x551c: "CHAOS M3 PRO ",
+  0x550c: "CHAOS M3 PRO ",
+  0x550b: "CHAOS M3 PRO ",
 });
 
 /**
@@ -751,6 +751,698 @@ function parseInputReport(report, { reportId = null } = {}) {
   };
 }
 
+// ============================================================
+// 0) 错误类型与基础工具函数
+// ============================================================
+class ProtocolError extends Error {
+  constructor(message, code = "UNKNOWN", detail = null) {
+    super(message);
+    this.name = "ProtocolError";
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+
+function assertFiniteNumber(n, name) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) throw new ProtocolError(`${name} 不是有效数字`, "BAD_PARAM", { name, value: n });
+  return x;
+}
+
+function clampInt(n, min, max) {
+  const x = Math.trunc(Number(n));
+  if (!Number.isFinite(x)) return min;
+  return Math.min(max, Math.max(min, x));
+}
+
+function toU8(n) {
+  return clampInt(n, 0, 0xff);
+}
+
+function toI8(n) {
+  const x = clampInt(n, -128, 127);
+  return x < 0 ? (0x100 + x) : x;
+}
+
+// ============================================================
+// 1) 传输层：UniversalHidDriver
+// ============================================================
+class SendQueue {
+  constructor() {
+    this._p = Promise.resolve();
+  }
+  enqueue(task) {
+    this._p = this._p.then(task, task);
+    return this._p;
+  }
+}
+
+class UniversalHidDriver {
+  constructor({ reportId = MOUSE_HID.reportId, reportSize = MOUSE_HID.reportSize } = {}) {
+    this.device = null;
+    this.queue = new SendQueue();
+    this.reportId = reportId;
+    this.reportSize = reportSize;
+    this.sendTimeoutMs = 1200;
+    this.defaultInterCmdDelayMs = 12;
+  }
+
+  setDevice(device) {
+    this.device = device || null;
+  }
+
+  _requireDeviceOpen() {
+    if (!this.device) throw new ProtocolError("设备未注入（hidApi.device 为空）", "NO_DEVICE");
+    if (!this.device.opened) throw new ProtocolError("设备未打开（请先 open()）", "NOT_OPEN");
+  }
+
+  _fitToLen(u8, expectedLen) {
+    if (!(u8 instanceof Uint8Array)) u8 = new Uint8Array(u8 || []);
+    const n = Number(expectedLen);
+    if (!Number.isFinite(n) || n <= 0) return u8;
+    if (u8.byteLength === n) return u8;
+    const out = new Uint8Array(n);
+    out.set(u8.subarray(0, n));
+    return out;
+  }
+
+  async _sendReportDirect(reportId, bytes) {
+    this._requireDeviceOpen();
+    const rid = Number(reportId);
+    const dev = this.device;
+
+    const runWithTimeout = async (p) => {
+      await Promise.race([
+        p,
+        sleep(this.sendTimeoutMs).then(() => {
+          throw new ProtocolError(`写入超时：${this.sendTimeoutMs}ms`, "IO_TIMEOUT");
+        }),
+      ]);
+    };
+
+    const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+    const payload = this._fitToLen(raw, this.reportSize);
+    await runWithTimeout(dev.sendReport(rid, payload));
+  }
+
+  async sendBytes(reportId, bytes) {
+    return this.queue.enqueue(() => this._sendReportDirect(Number(reportId), bytes));
+  }
+
+  async runSequence(seq) {
+    if (!Array.isArray(seq) || seq.length === 0) return;
+    for (const cmd of seq) {
+      await this.sendBytes(Number(cmd.rid ?? this.reportId), cmd.bytes || cmd.payload || cmd.u8 || []);
+      const w = cmd.waitMs != null ? Number(cmd.waitMs) : this.defaultInterCmdDelayMs;
+      if (w != null && w > 0) await sleep(w);
+    }
+  }
+}
+
+// ============================================================
+// 2) 编码层：ProtocolCodec（Chaos 32 bytes）
+// ============================================================
+const ProtocolCodec = Object.freeze({
+  pack({ cmd, dataBytes = [], reportSize = MOUSE_HID.reportSize }) {
+    const out = new Uint8Array(reportSize);
+    out[0] = toU8(cmd);
+    const arr = dataBytes instanceof Uint8Array
+      ? Array.from(dataBytes)
+      : (Array.isArray(dataBytes) ? dataBytes : []);
+    for (let i = 0; i < Math.min(arr.length, reportSize - 1); i++) {
+      out[i + 1] = toU8(arr[i]);
+    }
+    return out;
+  },
+});
+
+// ============================================================
+// 3) Profile / 字段适配
+// ============================================================
+const DEFAULT_PROFILE = Object.freeze({
+  id: "chaos",
+  capabilities: Object.freeze({
+    dpiSlotCount: 6,
+    maxDpi: 26000,
+    pollingRates: Object.freeze([125, 250, 500, 1000]),
+  }),
+  timings: Object.freeze({
+    interCmdDelayMs: 8,
+  }),
+});
+
+const KEY_ALIASES = Object.freeze({
+  polling_rate: "pollingHz",
+  polling_rate_hz: "pollingHz",
+  polling_hz: "pollingHz",
+  pollingHz: "pollingHz",
+  pollingRateHz: "pollingHz",
+  reportRateHz: "pollingHz",
+  reportHz: "pollingHz",
+  polling: "pollingHz",
+
+  sleepTimeout: "sleepSeconds",
+  sleep_timeout: "sleepSeconds",
+  sleep_time: "sleepSeconds",
+  sleepSeconds: "sleepSeconds",
+  sleep_seconds: "sleepSeconds",
+
+  debounceMs: "debounceMs",
+  debounce_ms: "debounceMs",
+
+  performanceMode: "performanceMode",
+  performance_mode: "performanceMode",
+
+  lodHeight: "lodHeight",
+  lod: "lodHeight",
+  lod_height: "lodHeight",
+
+  motionSync: "motionSync",
+  motion_sync: "motionSync",
+
+  linearCorrection: "linearCorrection",
+  linear_correction: "linearCorrection",
+
+  rippleControl: "rippleControl",
+  ripple_control: "rippleControl",
+
+  glassMode: "glassMode",
+  glass_mode: "glassMode",
+
+  modeByte: "modeByte",
+  mode_byte: "modeByte",
+
+  sensorAngle: "sensorAngle",
+  sensor_angle: "sensorAngle",
+
+  sensorFeel: "sensorFeel",
+  sensor_feel: "sensorFeel",
+
+  ledEnabled: "ledEnabled",
+  led_enabled: "ledEnabled",
+  rgb_switch: "ledEnabled",
+  ledRaw: "ledEnabled",
+
+  currentSlotCount: "currentSlotCount",
+  slotCount: "currentSlotCount",
+  slot_count: "currentSlotCount",
+
+  currentDpiIndex: "currentDpiIndex",
+  dpiIndex: "currentDpiIndex",
+  dpi_index: "currentDpiIndex",
+
+  dpiSlots: "dpiSlots",
+  dpi_slots: "dpiSlots",
+
+  surfaceModePrimary: "lodHeight",
+  surfaceModeSecondary: "glassMode",
+  primaryLedFeature: "ledEnabled",
+  surfaceFeel: "sensorFeel",
+});
+
+function normalizePayload(payload) {
+  const src = isObject(payload) ? payload : {};
+  const out = {};
+  for (const [k, v] of Object.entries(src)) {
+    const nk = KEY_ALIASES[k] || k;
+    out[nk] = v;
+  }
+  return out;
+}
+
+// ============================================================
+// 4) 转换器：语义 -> 协议字节
+// ============================================================
+const TRANSFORMERS = Object.freeze({
+  pollingCode(hzOrCode) {
+    const n = Number(hzOrCode);
+    if (Number.isFinite(n) && MOUSE_HID.pollingHzToCode[n] != null) return toU8(MOUSE_HID.pollingHzToCode[n]);
+    if (Number.isFinite(n) && MOUSE_HID.pollingCodeToHz[n] != null) return toU8(n);
+    return 0x01;
+  },
+
+  sleepCode(secondsOrCode) {
+    const n = Number(secondsOrCode);
+    if (Number.isFinite(n) && MOUSE_HID.sleepCodeToSeconds[n] != null) return toU8(n);
+    let bestCode = 1;
+    let bestDist = Infinity;
+    for (const [codeStr, s] of Object.entries(MOUSE_HID.sleepCodeToSeconds)) {
+      const dist = Math.abs(s - n);
+      if (dist < bestDist) { bestDist = dist; bestCode = Number(codeStr); }
+    }
+    return toU8(bestCode);
+  },
+
+  debounceU8(ms) {
+    return toU8(clampInt(assertFiniteNumber(ms, "debounceMs"), 0, 255));
+  },
+
+  ledBytes(enabled) {
+    return [0x00, 0x01, 0x00, enabled ? 0xff : 0x00];
+  },
+
+  sensorAngleRaw(angle) {
+    const a = clampInt(assertFiniteNumber(angle, "sensorAngle"), -100, 100);
+    return int8ToUint8(a);
+  },
+
+  sensorFeelRaw(feel) {
+    const v = Number(feel) | 0;
+    const f = Math.max(-62, Math.min(65, v));
+    return f < 0 ? (128 + f) & 0x7f : (f & 0x7f);
+  },
+
+  dpiPayload(slot1to6, dpi, select = false) {
+    const slot = clampInt(assertFiniteNumber(slot1to6, "slot"), 1, 6);
+    const safeDpi = sanitizeDpiInput(dpi);
+    if (safeDpi == null) {
+      throw new ProtocolError(`Invalid DPI value: ${dpi}`, "BAD_PARAM", { dpi });
+    }
+    const index = (safeDpi / 50) & 0xffff;
+    const b1 = ((index >> 8) & 0x1f) | ((slot & 0x07) << 5);
+    const b2 = index & 0xff;
+    const cmd = select ? MOUSE_HID.cmds.SET_DPI_AND_SELECT : MOUSE_HID.cmds.SET_DPI_ONLY;
+    return { cmd, dataBytes: [b1, b2, 0x00], dpi: safeDpi, slot };
+  },
+
+  buttonMappingBytes(btnId1to6, funckey, keycode) {
+    const btn = normalizeButtonId(btnId1to6);
+    return [btn & 0xff, Number(funckey) & 0xff, Number(keycode) & 0xff];
+  },
+});
+
+// ============================================================
+// 5) 语义规范表：SPEC
+// ============================================================
+const MODEBYTE_FIELDS = Object.freeze([
+  "modeByte",
+  "performanceMode",
+  "lodHeight",
+  "motionSync",
+  "linearCorrection",
+  "rippleControl",
+  "glassMode",
+]);
+
+function planModeByteWrite(patch, nextState, ctx) {
+  if (ctx._modeBytePlanned) return [];
+  ctx._modeBytePlanned = true;
+
+  // 关键点：modeByte 的合并写入
+  // - 只读取本地快照 ctx.prevState（即 this._cfg）作为 base，避免覆盖其他 bit
+  // - 仅当 patch 中显式出现的字段才修改相应 bit，实现“增量更新”
+  // - 最终生成 SET_MODE_BYTE 指令，UI 无需关心位运算细节
+  const prev = ctx.prevState || {};
+  const base = Object.prototype.hasOwnProperty.call(patch, "modeByte")
+    ? (Number(patch.modeByte) & 0xff)
+    : (Number.isFinite(Number(prev.modeByte)) ? (Number(prev.modeByte) & 0xff) : encodeModeByteFromState(prev));
+
+  const delta = {};
+  for (const k of MODEBYTE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) delta[k] = patch[k];
+  }
+
+  const merged = encodeModeByteFromState({ modeByte: base, ...delta });
+  nextState.modeByte = merged;
+  const decoded = decodeModeByteToState(merged);
+  nextState.performanceMode = decoded.performanceMode;
+  nextState.lodHeight = decoded.lodHeight;
+  nextState.motionSync = decoded.motionSync;
+  nextState.linearCorrection = decoded.linearCorrection;
+  nextState.rippleControl = decoded.rippleControl;
+  nextState.glassMode = decoded.glassMode;
+  nextState.deviceState = decoded;
+
+  return [{
+    rid: MOUSE_HID.reportId,
+    bytes: ProtocolCodec.pack({ cmd: MOUSE_HID.cmds.SET_MODE_BYTE, dataBytes: [merged] }),
+  }];
+}
+
+const SPEC = Object.freeze({
+  pollingHz: {
+    key: "pollingHz",
+    kind: "direct",
+    priority: 10,
+    encode(value) {
+      return { cmd: MOUSE_HID.cmds.SET_POLLING, dataBytes: [TRANSFORMERS.pollingCode(value)] };
+    },
+  },
+
+  sleepSeconds: {
+    key: "sleepSeconds",
+    kind: "direct",
+    priority: 15,
+    encode(value) {
+      return { cmd: MOUSE_HID.cmds.SET_SLEEP, dataBytes: [TRANSFORMERS.sleepCode(value)] };
+    },
+  },
+
+  debounceMs: {
+    key: "debounceMs",
+    kind: "direct",
+    priority: 20,
+    encode(value) {
+      return { cmd: MOUSE_HID.cmds.SET_DEBOUNCE, dataBytes: [TRANSFORMERS.debounceU8(value)] };
+    },
+  },
+
+  ledEnabled: {
+    key: "ledEnabled",
+    kind: "direct",
+    priority: 20,
+    encode(value) {
+      return { cmd: MOUSE_HID.cmds.SET_LED, dataBytes: TRANSFORMERS.ledBytes(!!value) };
+    },
+  },
+
+  sensorAngle: {
+    key: "sensorAngle",
+    kind: "direct",
+    priority: 30,
+    encode(value) {
+      return { cmd: MOUSE_HID.cmds.SET_SENSOR_ANGLE, dataBytes: [TRANSFORMERS.sensorAngleRaw(value)] };
+    },
+  },
+
+  sensorFeel: {
+    key: "sensorFeel",
+    kind: "direct",
+    priority: 30,
+    encode(value) {
+      return { cmd: MOUSE_HID.cmds.SET_SENSOR_FEEL, dataBytes: [TRANSFORMERS.sensorFeelRaw(value)] };
+    },
+  },
+
+  currentSlotCount: {
+    key: "currentSlotCount",
+    kind: "direct",
+    priority: 35,
+    encode(value) {
+      const c = clampInt(assertFiniteNumber(value, "currentSlotCount"), 1, 6);
+      return { cmd: MOUSE_HID.cmds.SET_SLOT_COUNT, dataBytes: [c] };
+    },
+  },
+
+  dpiSlot: {
+    key: "dpiSlot",
+    kind: "virtual",
+    priority: 40,
+    triggers: ["dpiSlot"],
+    plan(patch) {
+      const info = patch.dpiSlot;
+      if (!isObject(info)) return [];
+      const slot = info.slot ?? info.slotIndex ?? info.index ?? info.id ?? 1;
+      const dpi = info.dpi ?? info.value ?? info.val ?? info.dpiValue;
+      const select = !!info.select;
+      const payload = TRANSFORMERS.dpiPayload(slot, dpi, select);
+      return [{
+        rid: MOUSE_HID.reportId,
+        bytes: ProtocolCodec.pack({ cmd: payload.cmd, dataBytes: payload.dataBytes }),
+      }];
+    },
+  },
+
+  dpiSlots: {
+    key: "dpiSlots",
+    kind: "virtual",
+    priority: 41,
+    triggers: ["dpiSlots"],
+    plan(patch, nextState, ctx) {
+      if (!Array.isArray(patch.dpiSlots)) return [];
+      const prev = ctx.prevState || {};
+      const prevSlots = Array.isArray(prev.dpiSlots) ? prev.dpiSlots : [];
+      const nextSlots = Array.isArray(nextState.dpiSlots) ? nextState.dpiSlots : [];
+      const cmds = [];
+      const maxSlots = clampInt(ctx.profile?.capabilities?.dpiSlotCount ?? 6, 1, 6);
+
+      for (let i = 0; i < Math.min(nextSlots.length, maxSlots); i++) {
+        const nv = Number(nextSlots[i]);
+        const pv = Number(prevSlots[i]);
+        if (Number.isFinite(nv) && nv === pv) continue;
+        const payload = TRANSFORMERS.dpiPayload(i + 1, nv, false);
+        cmds.push({
+          rid: MOUSE_HID.reportId,
+          bytes: ProtocolCodec.pack({ cmd: payload.cmd, dataBytes: payload.dataBytes }),
+        });
+      }
+      return cmds;
+    },
+  },
+
+  currentDpiIndex: {
+    key: "currentDpiIndex",
+    kind: "virtual",
+    priority: 42,
+    triggers: ["currentDpiIndex"],
+    plan(patch, nextState) {
+      if (!Object.prototype.hasOwnProperty.call(patch, "currentDpiIndex")) return [];
+      const idx = clampInt(Number(nextState.currentDpiIndex ?? 0), 0, Math.max(0, Number(nextState.currentSlotCount ?? 1) - 1));
+      const slots = Array.isArray(nextState.dpiSlots) ? nextState.dpiSlots : [];
+      const dpi = slots[idx];
+      if (!Number.isFinite(Number(dpi))) return [];
+      const payload = TRANSFORMERS.dpiPayload(idx + 1, dpi, true);
+      return [{
+        rid: MOUSE_HID.reportId,
+        bytes: ProtocolCodec.pack({ cmd: payload.cmd, dataBytes: payload.dataBytes }),
+      }];
+    },
+  },
+
+  buttonMapping: {
+    key: "buttonMapping",
+    kind: "virtual",
+    priority: 60,
+    triggers: ["buttonMapping"],
+    plan(patch) {
+      const bm = patch.buttonMapping;
+      if (!isObject(bm)) return [];
+      const btnId = bm.btnId ?? bm.btn ?? bm.button ?? bm.id ?? bm.index;
+      const fk = bm.funckey ?? bm.func ?? 0;
+      const kc = bm.keycode ?? bm.code ?? 0;
+      return [{
+        rid: MOUSE_HID.reportId,
+        bytes: ProtocolCodec.pack({
+          cmd: MOUSE_HID.cmds.SET_BUTTON_MAP,
+          dataBytes: TRANSFORMERS.buttonMappingBytes(btnId, fk, kc),
+        }),
+      }];
+    },
+  },
+
+  factoryReset: {
+    key: "factoryReset",
+    kind: "virtual",
+    priority: 5,
+    triggers: ["factoryReset"],
+    plan() {
+      return [{
+        rid: MOUSE_HID.reportId,
+        bytes: ProtocolCodec.pack({ cmd: MOUSE_HID.cmds.FACTORY_RESET, dataBytes: [] }),
+      }];
+    },
+  },
+
+  // modeByte 相关（compound）
+  performanceMode: { key: "performanceMode", kind: "compound", priority: 30, triggers: ["performanceMode"], plan: planModeByteWrite },
+  lodHeight: { key: "lodHeight", kind: "compound", priority: 30, triggers: ["lodHeight"], plan: planModeByteWrite },
+  motionSync: { key: "motionSync", kind: "compound", priority: 30, triggers: ["motionSync"], plan: planModeByteWrite },
+  linearCorrection: { key: "linearCorrection", kind: "compound", priority: 30, triggers: ["linearCorrection"], plan: planModeByteWrite },
+  rippleControl: { key: "rippleControl", kind: "compound", priority: 30, triggers: ["rippleControl"], plan: planModeByteWrite },
+  glassMode: { key: "glassMode", kind: "compound", priority: 30, triggers: ["glassMode"], plan: planModeByteWrite },
+  modeByte: { key: "modeByte", kind: "compound", priority: 30, triggers: ["modeByte"], plan: planModeByteWrite },
+});
+
+// ============================================================
+// 6) 计划器：CommandPlanner
+// ============================================================
+class CommandPlanner {
+  constructor(profile) {
+    this.profile = profile || DEFAULT_PROFILE;
+  }
+
+  _expandDependencies(patch) {
+    return patch;
+  }
+
+  _buildNextState(prevState, patch) {
+    const prev = prevState || {};
+    const next = { ...prev, ...patch };
+
+    const cap = this.profile?.capabilities || {};
+    const maxSlots = clampInt(cap.dpiSlotCount ?? 6, 1, 6);
+
+    const prevSlots = Array.isArray(prev.dpiSlots) ? prev.dpiSlots.slice(0, maxSlots) : [];
+    let slots = Array.isArray(next.dpiSlots) ? next.dpiSlots.slice(0, maxSlots) : prevSlots.slice();
+    while (slots.length < maxSlots) slots.push(prevSlots[slots.length] ?? 800);
+
+    if (isObject(patch.dpiSlot)) {
+      const info = patch.dpiSlot;
+      const slot = clampInt(Number(info.slot ?? info.slotIndex ?? info.index ?? info.id ?? 1), 1, maxSlots);
+      const dpi = sanitizeDpiInput(info.dpi ?? info.value ?? info.val ?? info.dpiValue);
+      if (dpi != null) slots[slot - 1] = dpi;
+      if (info.select) next.currentDpiIndex = slot - 1;
+    }
+
+    next.dpiSlots = slots;
+
+    const count = clampInt(Number(next.currentSlotCount ?? prev.currentSlotCount ?? maxSlots), 1, maxSlots);
+    next.currentSlotCount = count;
+
+    const idx = clampInt(Number(next.currentDpiIndex ?? prev.currentDpiIndex ?? 0), 0, Math.max(0, count - 1));
+    next.currentDpiIndex = idx;
+    next.currentDpi = slots[idx] ?? next.currentDpi ?? null;
+
+    if (isObject(patch.buttonMapping)) {
+      if (!Array.isArray(next.buttonMappings)) {
+        next.buttonMappings = Array.from({ length: 6 }, () => ({ funckey: 0, keycode: 0 }));
+      }
+      while (next.buttonMappings.length < 6) next.buttonMappings.push({ funckey: 0, keycode: 0 });
+      const btnId = patch.buttonMapping.btnId ?? patch.buttonMapping.btn ?? patch.buttonMapping.button ?? patch.buttonMapping.id ?? patch.buttonMapping.index;
+      const btn = normalizeButtonId(btnId);
+      next.buttonMappings[btn] = {
+        funckey: toU8(patch.buttonMapping.funckey ?? patch.buttonMapping.func ?? 0),
+        keycode: toU8(patch.buttonMapping.keycode ?? patch.buttonMapping.code ?? 0),
+      };
+    }
+
+    if (typeof next.performanceMode === "string") next.performanceMode = next.performanceMode.toLowerCase();
+    if (typeof next.lodHeight === "string") next.lodHeight = next.lodHeight.toLowerCase();
+
+    const modeTouched = MODEBYTE_FIELDS.some((k) => Object.prototype.hasOwnProperty.call(patch, k));
+    if (modeTouched) {
+      const base = Object.prototype.hasOwnProperty.call(patch, "modeByte")
+        ? (Number(patch.modeByte) & 0xff)
+        : (Number.isFinite(Number(prev.modeByte)) ? (Number(prev.modeByte) & 0xff) : encodeModeByteFromState(prev));
+      const delta = {};
+      for (const k of MODEBYTE_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(patch, k)) delta[k] = patch[k];
+      }
+      const mb = encodeModeByteFromState({ modeByte: base, ...delta });
+      next.modeByte = mb;
+      const decoded = decodeModeByteToState(mb);
+      next.performanceMode = decoded.performanceMode;
+      next.lodHeight = decoded.lodHeight;
+      next.motionSync = decoded.motionSync;
+      next.linearCorrection = decoded.linearCorrection;
+      next.rippleControl = decoded.rippleControl;
+      next.glassMode = decoded.glassMode;
+      next.deviceState = decoded;
+    } else if (Number.isFinite(Number(next.modeByte))) {
+      next.deviceState = decodeModeByteToState(next.modeByte);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(next, "pollingHz")) {
+      next.pollingCode = TRANSFORMERS.pollingCode(next.pollingHz);
+    }
+    if (Object.prototype.hasOwnProperty.call(next, "ledEnabled")) {
+      next.ledRaw = next.ledEnabled ? 0xff : 0x00;
+    }
+    if (Object.prototype.hasOwnProperty.call(next, "sleepSeconds")) {
+      next.sleep16 = TRANSFORMERS.sleepCode(next.sleepSeconds);
+    }
+
+    return next;
+  }
+
+  _collectSpecKeys(expandedPatch) {
+    const keys = new Set();
+    for (const k of Object.keys(expandedPatch)) {
+      if (SPEC[k]) keys.add(k);
+    }
+
+    for (const item of Object.values(SPEC)) {
+      if (item.kind === "compound") {
+        const triggers = item.triggers || [];
+        if (triggers.some((t) => t in expandedPatch)) keys.add(item.key);
+      }
+    }
+
+    for (const item of Object.values(SPEC)) {
+      if (item.kind === "virtual") {
+        const triggers = item.triggers || [];
+        if (triggers.some((t) => t in expandedPatch) || item.key in expandedPatch) keys.add(item.key);
+      }
+    }
+
+    return Array.from(keys);
+  }
+
+  _topoSort(keys) {
+    return keys
+      .map((k) => SPEC[k])
+      .filter(Boolean)
+      .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
+  }
+
+  _extractWriteKey(cmd) {
+    try {
+      const rid = Number(cmd.rid ?? MOUSE_HID.reportId);
+      const bytes = cmd.bytes instanceof Uint8Array
+        ? Array.from(cmd.bytes)
+        : (Array.isArray(cmd.bytes) ? cmd.bytes : []);
+      if (!bytes.length) return null;
+      const head = bytes.slice(0, 8).map((b) => toU8(b)).join(",");
+      return `${rid}:${head}`;
+    } catch {
+      return null;
+    }
+  }
+
+  _dedupeCommands(commands) {
+    const parsed = commands.map((c, idx) => ({ c, idx, key: this._extractWriteKey(c) }));
+    const lastIndexByKey = new Map();
+    for (const p of parsed) {
+      if (p.key) lastIndexByKey.set(p.key, p.idx);
+    }
+    return parsed
+      .filter((p) => !p.key || lastIndexByKey.get(p.key) === p.idx)
+      .map((p) => p.c);
+  }
+
+  plan(prevState, externalPayload) {
+    const patch0 = normalizePayload(externalPayload);
+    const patch = this._expandDependencies(patch0, prevState);
+    const nextState = this._buildNextState(prevState, patch);
+
+    const specKeys = this._collectSpecKeys(patch);
+    const ordered = this._topoSort(specKeys);
+    const commands = [];
+    const ctx = { profile: this.profile, prevState, _modeBytePlanned: false };
+
+    for (const item of ordered) {
+      if (!item) continue;
+
+      if (typeof item.plan === "function") {
+        const seq = item.plan(patch, nextState, ctx);
+        if (Array.isArray(seq) && seq.length) commands.push(...seq);
+        continue;
+      }
+
+      if (typeof item.encode === "function") {
+        const value = patch[item.key];
+        const enc = item.encode(value, nextState, ctx);
+        const writes = Array.isArray(enc) ? enc : [enc];
+        for (const w of writes) {
+          if (!w) continue;
+          const bytes = ProtocolCodec.pack({
+            cmd: w.cmd,
+            dataBytes: w.dataBytes || [],
+          });
+          commands.push({ rid: w.rid ?? MOUSE_HID.reportId, bytes, waitMs: w.waitMs });
+        }
+      }
+    }
+
+    const optimized = this._dedupeCommands(commands);
+    return { patch, nextState, commands: optimized };
+  }
+}
+
 /**
  * WebHID 高层封装：把“发命令/收回包”封装成 UI 友好的方法。
  *
@@ -808,501 +1500,453 @@ function defaultCapabilitiesForDevice(dev) {
 
 class MouseMouseHidApi {
 
-  constructor({ device = null, txTimeoutMs = 2000, clearListenersOnClose = true, capabilities = null } = {}) {
-    // 1. 初始化私有变量
+  constructor({ profile = DEFAULT_PROFILE, device = null, txTimeoutMs = 2000, clearListenersOnClose = true, capabilities = null } = {}) {
+    this._profile = profile || DEFAULT_PROFILE;
+    this._planner = new CommandPlanner(this._profile);
+
+    this._driver = new UniversalHidDriver({ reportId: MOUSE_HID.reportId, reportSize: MOUSE_HID.reportSize });
+    if (Number.isFinite(Number(txTimeoutMs))) this._driver.sendTimeoutMs = Math.max(0, Number(txTimeoutMs));
+    this._driver.defaultInterCmdDelayMs = this._profile.timings?.interCmdDelayMs ?? 8;
+
+    this._opQueue = new SendQueue();
+
     this._device = null;
-    
-    // 2. 通过 setter 设置设备 (这会自动调用 defaultCapabilitiesForDevice)
-    this.device = device; 
+    this._cfg = this._makeDefaultCfg();
 
-    // 注意：如果构造函数传入了 explicit capabilities，则覆盖自动计算的值
-    if (capabilities) {
-        this.capabilities = normalizeCapabilities(capabilities);
-    }
+    this._onConfigCbs = [];
+    this._onBatteryCbs = [];
+    this._onRawReportCbs = [];
 
-    this._onConfig = new Set();
-    this._onBattery = new Set();
-    this._onRawReport = new Set();
-
-    // 最近一次收到的配置快照（用于“增量写 modeByte”时的 base）
-    this._lastConfig = null;
-    this._lastModeByte = null;
-
-    this._boundHandler = (e) => this._handleInputReport(e);
-
-    // ===== Tx: 预分配 Buffer + 异步发送队列（避免 sendReport 并发/顺序错乱） =====
-    this._txBuffer = new Uint8Array(MOUSE_HID.reportSize);
-    this._txQueue = Promise.resolve();
-
-    // sendReport 超时：WebHID 本身没有内置超时；驱动/固件异常时 promise 可能悬挂导致队列堆积
-    this._txTimeoutMs = Number.isFinite(Number(txTimeoutMs)) ? Math.max(0, Number(txTimeoutMs)) : 2000;
+    this._boundInputHandler = null;
     this._clearListenersOnClose = !!clearListenersOnClose;
+
+    if (device) this.device = device;
+    if (capabilities) this.capabilities = normalizeCapabilities(capabilities);
   }
 
-  // device 的 getter/setter
   get device() {
     return this._device;
   }
 
   set device(dev) {
-    this._device = dev;
-    // 设备变更时清空快照，避免把上一只设备的 modeByte 当作 base 写入
-    this._lastConfig = null;
-    this._lastModeByte = null;
-    // 设备变更时立即根据 PID 重新计算能力（有线/无线8K）
-    // 确保 app.js 设置 device 后，hidApi.capabilities 立即更新为最新值
-    this.capabilities = normalizeCapabilities(defaultCapabilitiesForDevice(dev));
+    this._device = dev || null;
+    this._driver.setDevice(this._device);
+
+    const cap = normalizeCapabilities(defaultCapabilitiesForDevice(this._device));
+    this._applyCapabilities(cap);
+
+    // ???????????????????????
+    this._cfg = this._makeDefaultCfg();
+  }
+
+  _applyCapabilities(cap) {
+    const norm = normalizeCapabilities(cap);
+    this._profile = { ...(this._profile || DEFAULT_PROFILE), capabilities: norm };
+    this._planner.profile = this._profile;
+    if (this._cfg) this._cfg.capabilities = { ...norm };
+  }
+
+  get capabilities() {
+    return JSON.parse(JSON.stringify(this._profile?.capabilities || {}));
+  }
+
+  set capabilities(cap) {
+    this._applyCapabilities(cap);
+  }
+
+  getCachedConfig() {
+    const cfg = this._cfg;
+    if (!cfg || typeof cfg !== "object") return null;
+    try {
+      return JSON.parse(JSON.stringify(cfg));
+    } catch (_) {
+      return { ...cfg };
+    }
   }
 
   async requestDevice({ filters = MOUSE_HID.defaultFilters } = {}) {
     const devs = await navigator.hid.requestDevice({ filters });
     this.device = devs?.[0] ?? null;
-    
     return this.device;
   }
 
-  async open() {
-    if (!this.device) throw new Error("No HID device selected.");
+  _bindInputReport() {
+    if (!this.device) return;
+    if (this._boundInputHandler) {
+      try { this.device.removeEventListener("inputreport", this._boundInputHandler); } catch {}
+    }
 
-    // 强力重置逻辑：防止设备被旧句柄占用
+    this._boundInputHandler = (evt) => {
+      try {
+        const rid = Number(evt?.reportId ?? 0);
+        const dv = evt?.data;
+        const u8 = dv ? new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength) : null;
+
+        if (this._onRawReportCbs.length) {
+          for (const cb of this._onRawReportCbs.slice()) {
+            try { cb(dv, evt); } catch {}
+          }
+        }
+
+        if (u8 && u8.length) this._handleInputReport(rid, u8, evt);
+      } catch {}
+    };
+
+    try { this.device.addEventListener("inputreport", this._boundInputHandler); } catch {}
+  }
+
+  async open() {
+    if (!this.device) throw new ProtocolError("open() ?????? hidApi.device", "NO_DEVICE");
+
     if (this.device.opened) {
-      try { await this.device.close(); } catch (_) {}
-      // 等待释放
-      await new Promise(r => setTimeout(r, 100));
+      this._bindInputReport();
+      return;
     }
 
     try {
       await this.device.open();
     } catch (e) {
       const msg = String(e?.message || e);
-      // 如果提示已经打开或被占用，尝试关闭后重试
       if (msg.includes("open") || msg.includes("lock")) {
-         try { await this.device.close(); } catch (_) {}
-         await new Promise(r => setTimeout(r, 200));
-         await this.device.open();
+        try { await this.device.close(); } catch {}
+        await new Promise((r) => setTimeout(r, 120));
+        await this.device.open();
       } else {
-         throw e;
+        throw e;
       }
     }
-    
-    // 使用 addEventListener，避免覆盖已有的事件监听器
-    if (this._boundHandler) {
-      this.device.removeEventListener("inputreport", this._boundHandler);
-    } else {
-      this._boundHandler = (e) => this._handleInputReport(e);
-    }
-    this.device.addEventListener("inputreport", this._boundHandler);
+
+    this._bindInputReport();
   }
 
   async close({ clearListeners = this._clearListenersOnClose } = {}) {
     if (!this.device) return;
-    // 使用 removeEventListener 确保清理事件监听器
-    if (this._boundHandler) {
-      this.device.removeEventListener("inputreport", this._boundHandler);
-    }
-    this.device.oninputreport = null;
-    // 重要：SPA 页面切换时，若不清理回调，Set 会长期持有闭包导致内存泄漏
+
+    try { if (this._boundInputHandler) this.device.removeEventListener("inputreport", this._boundInputHandler); } catch {}
+    this._boundInputHandler = null;
+
     if (clearListeners) this.removeAllListeners();
-    // 让后续 send 不再等待旧队列
-    this._txQueue = Promise.resolve();
+
+    // ????????????????
+    this._opQueue = new SendQueue();
+    this._driver.queue = new SendQueue();
+
     if (this.device.opened) await this.device.close();
   }
 
-  /** 清空所有事件监听（用于页面卸载/切换） */
   removeAllListeners() {
-    this._onConfig.clear();
-    this._onBattery.clear();
-    this._onRawReport.clear();
+    this._onConfigCbs.length = 0;
+    this._onBatteryCbs.length = 0;
+    this._onRawReportCbs.length = 0;
   }
 
-  /** 修改 sendReport 默认超时（ms）。传 0 可禁用超时。 */
   setTxTimeoutMs(ms) {
     const n = Number(ms);
-    this._txTimeoutMs = Number.isFinite(n) ? Math.max(0, n) : this._txTimeoutMs;
+    if (Number.isFinite(n)) this._driver.sendTimeoutMs = Math.max(0, n);
   }
 
-  onConfig(cb) { this._onConfig.add(cb); return () => this._onConfig.delete(cb); }
-  onBattery(cb) { this._onBattery.add(cb); return () => this._onBattery.delete(cb); }
-  onRawReport(cb) { this._onRawReport.add(cb); return () => this._onRawReport.delete(cb); }
+  onConfig(cb, { replay = true } = {}) {
+    if (typeof cb !== "function") return () => {};
+    this._onConfigCbs.push(cb);
 
-  _ensureReady() {
-    if (!this.device || !this.device.opened) throw new Error("HID device not opened.");
+    if (replay && this._cfg) {
+      queueMicrotask(() => {
+        if (this._onConfigCbs.includes(cb)) cb(this._cfg);
+      });
+    }
+
+    return () => {
+      const idx = this._onConfigCbs.indexOf(cb);
+      if (idx >= 0) this._onConfigCbs.splice(idx, 1);
+    };
   }
 
-  _enqueueSend(taskFn) {
-    // 关键点：保证“串行”，且前一个任务失败不会阻断后续队列
-    const p = this._txQueue.then(taskFn);
-    this._txQueue = p.catch(() => undefined);
-    return p;
+  onBattery(cb, { replay = true } = {}) {
+    if (typeof cb !== "function") return () => {};
+    this._onBatteryCbs.push(cb);
+
+    if (replay && Number.isFinite(Number(this._cfg?.batteryPercent)) && this._cfg?.batteryPercent >= 0) {
+      queueMicrotask(() => {
+        if (this._onBatteryCbs.includes(cb)) cb({ batteryPercent: this._cfg.batteryPercent });
+      });
+    }
+
+    return () => {
+      const idx = this._onBatteryCbs.indexOf(cb);
+      if (idx >= 0) this._onBatteryCbs.splice(idx, 1);
+    };
   }
 
-  async _sendFromBytes(payloadBytes, { timeoutMs } = {}) {
-    this._ensureReady();
-
-    const buf = this._txBuffer;
-    // 32 bytes，fill 成本固定且很低；避免 “上次残留字节” 带来隐性 bug
-    buf.fill(0);
-
-    // payloadBytes 可能是 Uint8Array / ArrayLike<number>
-    const len = Math.min(MOUSE_HID.reportSize, payloadBytes?.length ?? 0);
-    for (let i = 0; i < len; i++) buf[i] = payloadBytes[i] & 0xff;
-
-    await this._sendReport(buf, { timeoutMs });
+  onRawReport(cb) {
+    if (typeof cb !== "function") return () => {};
+    this._onRawReportCbs.push(cb);
+    return () => {
+      const idx = this._onRawReportCbs.indexOf(cb);
+      if (idx >= 0) this._onRawReportCbs.splice(idx, 1);
+    };
   }
 
-  _sendReport(buf, { timeoutMs } = {}) {
-    this._ensureReady();
-    const msRaw = timeoutMs == null ? this._txTimeoutMs : Number(timeoutMs);
-    const ms = Number.isFinite(msRaw) ? Math.max(0, msRaw) : this._txTimeoutMs;
-
-    const p = this.device.sendReport(MOUSE_HID.reportId, buf);
-    if (ms <= 0) return p;
-
-    let timer = null;
-    const timeoutP = new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error(`sendReport timeout after ${ms}ms`));
-      }, ms);
-    });
-
-    return Promise.race([p, timeoutP]).finally(() => {
-      if (timer) clearTimeout(timer);
-    });
-  }
-
-  // 快速路径：避免为高频指令创建临时 Uint8Array
-  _send1(cmd, { timeoutMs } = {}) {
-    return this._enqueueSend(async () => {
-      this._ensureReady();
-      const buf = this._txBuffer;
-      buf.fill(0);
-      buf[0] = cmd & 0xff;
-      await this._sendReport(buf, { timeoutMs });
-    });
-  }
-  _send2(cmd, b1, { timeoutMs } = {}) {
-    return this._enqueueSend(async () => {
-      this._ensureReady();
-      const buf = this._txBuffer;
-      buf.fill(0);
-      buf[0] = cmd & 0xff;
-      buf[1] = b1 & 0xff;
-      await this._sendReport(buf, { timeoutMs });
-    });
-  }
-  _send4(cmd, b1, b2, b3, { timeoutMs } = {}) {
-    return this._enqueueSend(async () => {
-      this._ensureReady();
-      const buf = this._txBuffer;
-      buf.fill(0);
-      buf[0] = cmd & 0xff;
-      buf[1] = b1 & 0xff;
-      buf[2] = b2 & 0xff;
-      buf[3] = b3 & 0xff;
-      await this._sendReport(buf, { timeoutMs });
-    });
-  }
-  _send5(cmd, b1, b2, b3, b4, { timeoutMs } = {}) {
-    return this._enqueueSend(async () => {
-      this._ensureReady();
-      const buf = this._txBuffer;
-      buf.fill(0);
-      buf[0] = cmd & 0xff;
-      buf[1] = b1 & 0xff;
-      buf[2] = b2 & 0xff;
-      buf[3] = b3 & 0xff;
-      buf[4] = b4 & 0xff;
-      await this._sendReport(buf, { timeoutMs });
-    });
-  }
-
-  /**
-   * 通用 send：仍保留给外部/测试使用
-   * - 现在不会再 new Uint8Array(32)
-   * - 内部走发送队列，避免 sendReport 并发拥塞/乱序
-   */
-  async send(payloadBytes, { timeoutMs } = {}) {
-    return this._enqueueSend(() => this._sendFromBytes(payloadBytes, { timeoutMs }));
-  }
-
-  // ===== 高频/常用 API（尽量走快速路径，减少临时对象） =====
-  async requestConfig({ timeoutMs } = {}) {
-    return this._send2(MOUSE_HID.cmds.GET, MOUSE_HID.getSubcmd.CONFIG, { timeoutMs });
-  }
-  async requestBattery({ timeoutMs } = {}) {
-    return this._send2(MOUSE_HID.cmds.GET, MOUSE_HID.getSubcmd.BATTERY, { timeoutMs });
-  }
-
-  /** 等待下一次 config 包；超时会自动移除临时监听，避免泄漏 */
-  waitForConfig({ timeoutMs = 1000 } = {}) {
-    const ms = Number.isFinite(Number(timeoutMs)) ? Math.max(0, Number(timeoutMs)) : 1000;
+  waitForConfig(timeoutMs = 1000) {
     return new Promise((resolve, reject) => {
-      let timer = null;
       const off = this.onConfig((cfg) => {
-        if (timer) clearTimeout(timer);
+        clearTimeout(timer);
         off();
         resolve(cfg);
-      });
-      if (ms > 0) {
-        timer = setTimeout(() => {
-          off();
-          reject(new Error(`waitForConfig timeout after ${ms}ms`));
-        }, ms);
-      }
+      }, { replay: false });
+
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error(`waitForConfig timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
     });
   }
 
-  /** 等待下一次 battery 包；超时会自动移除临时监听，避免泄漏 */
-  waitForBattery({ timeoutMs = 1000 } = {}) {
-    const ms = Number.isFinite(Number(timeoutMs)) ? Math.max(0, Number(timeoutMs)) : 1000;
+  waitForBattery(timeoutMs = 1000) {
     return new Promise((resolve, reject) => {
-      let timer = null;
       const off = this.onBattery((bat) => {
-        if (timer) clearTimeout(timer);
+        clearTimeout(timer);
         off();
         resolve(bat);
-      });
-      if (ms > 0) {
-        timer = setTimeout(() => {
-          off();
-          reject(new Error(`waitForBattery timeout after ${ms}ms`));
-        }, ms);
-      }
+      }, { replay: false });
+
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error(`waitForBattery timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
     });
   }
 
-  /** 请求 config 并等待回包（可用于 UI 的“请求-响应”逻辑，避免无响应时一直挂起） */
   async requestConfigAndWait({ txTimeoutMs, responseTimeoutMs = 1000 } = {}) {
     await this.requestConfig({ timeoutMs: txTimeoutMs });
-    return this.waitForConfig({ timeoutMs: responseTimeoutMs });
+    return this.waitForConfig(responseTimeoutMs);
   }
 
-  /** 请求 battery 并等待回包（可用于 UI 的“请求-响应”逻辑，避免无响应时一直挂起） */
   async requestBatteryAndWait({ txTimeoutMs, responseTimeoutMs = 1000 } = {}) {
     await this.requestBattery({ timeoutMs: txTimeoutMs });
-    return this.waitForBattery({ timeoutMs: responseTimeoutMs });
+    return this.waitForBattery(responseTimeoutMs);
   }
 
-  async setDpi(slot1to6, dpi, { select = false } = {}) {
-    // DPI 指令 payload 4 bytes，频率相对低；保留 encoder（可读性更强）
-    return this.send(encodeSetDpi(slot1to6, dpi, { select }));
+  async requestConfig({ timeoutMs } = {}) {
+    return this._opQueue.enqueue(async () => {
+      if (!this.device) throw new ProtocolError("requestConfig() ?????? hidApi.device", "NO_DEVICE");
+      if (!this.device.opened) await this.open();
+
+      const bytes = ProtocolCodec.pack({
+        cmd: MOUSE_HID.cmds.GET,
+        dataBytes: [MOUSE_HID.getSubcmd.CONFIG],
+      });
+
+      await this._driver.runSequence([{ rid: MOUSE_HID.reportId, bytes, waitMs: 0 }]);
+    });
   }
 
-  async setSlotCount(count1to6) { return this.send(encodeSetSlotCount(count1to6)); }
-  async setPollingRateHz(hz) { return this.send(encodeSetPollingRateHz(hz)); }
-  async setSleepSeconds(sec) { return this.send(encodeSetSleepSeconds(sec)); }
+  async requestBattery({ timeoutMs } = {}) {
+    return this._opQueue.enqueue(async () => {
+      if (!this.device) throw new ProtocolError("requestBattery() ?????? hidApi.device", "NO_DEVICE");
+      if (!this.device.opened) await this.open();
 
+      const bytes = ProtocolCodec.pack({
+        cmd: MOUSE_HID.cmds.GET,
+        dataBytes: [MOUSE_HID.getSubcmd.BATTERY],
+      });
 
-// ===== 统一化设置接口（供 UI 使用） =====
-async setFeature(key, value) {
-  const k = String(key || "").trim().toLowerCase();
-  switch (k) {
-    case "polling_rate":
-    case "polling_rate_hz":
-      return this.setPollingRateHz(value);
-    case "sleep_timeout":
-    case "sleep_seconds":
-      return this.setSleepSeconds(value);
-    case "debounce_ms":
-      return this.setDebounceMs(value);
-    case "rgb_switch":
-    case "led_enabled":
-      return this.setLedEnabled(!!value);
-    // UI 侧常用 camelCase：sensorAngle
-    case "sensorangle":
-    case "sensor_angle":
-      return this.setSensorAngle(value);
-    // UI 侧常用 camelCase：sensorFeel
-    case "sensorfeel":
-    case "sensor_feel":
-      return this.setSensorFeel(value);
-    case "slot_count":
-      return this.setSlotCount(value);
-    default:
-      throw new Error(`Unknown feature key: ${k}`);
-  }
-}
-
-async setBatchFeatures(obj) {
-  const payload = (obj && typeof obj === "object") ? obj : {};
-  // Chaos：批量写入允许同时带上 polling_rate 等独立 feature。
-  // 关键点：polling_rate 不能走 modeByte，否则会被“吞掉”或导致误覆盖。
-
-  // 1) 独立 feature
-  const poll = payload.polling_rate ?? payload.polling_rate_hz ?? payload.pollingHz ?? payload.polling_hz;
-  if (poll != null) {
-    await this.setPollingRateHz(poll);
+      await this._driver.runSequence([{ rid: MOUSE_HID.reportId, bytes, waitMs: 0 }]);
+    });
   }
 
-  // 其它独立 feature（避免被 UI 的 enqueueDevicePatch 走 batch 时“吞掉”）
-  // 说明：这里只处理 Chaos 支持的 key；未知 key 直接忽略，交由上层决定是否降级。
-  const sleep = payload.sleep_timeout ?? payload.sleep_seconds;
-  if (sleep != null) {
-    await this.setSleepSeconds(sleep);
+  async setFeature(key, value) {
+    const k = String(key || "");
+    const payload = { [k]: value };
+    await this.setBatchFeatures(payload);
   }
 
-  const deb = payload.debounce_ms;
-  if (deb != null) {
-    await this.setDebounceMs(deb);
+  async setBatchFeatures(obj) {
+    const externalPayload = isObject(obj) ? obj : {};
+
+    return this._opQueue.enqueue(async () => {
+      if (!this.device) throw new ProtocolError("setBatchFeatures() ?????? hidApi.device", "NO_DEVICE");
+      if (!this.device.opened) await this.open();
+
+      const { patch, nextState, commands } = this._planner.plan(this._cfg, externalPayload);
+      await this._driver.runSequence(commands);
+
+      this._cfg = nextState;
+      this._emitConfig();
+      return { patch, commands };
+    });
   }
 
-  const led = payload.rgb_switch ?? payload.led_enabled;
-  if (led != null) {
-    await this.setLedEnabled(!!led);
+  async setDpi(slot, value, opts = {}) {
+    const s = clampInt(assertFiniteNumber(slot, "slot"), 1, 6);
+    await this.setBatchFeatures({ dpiSlot: { slot: s, dpi: value, select: !!opts.select } });
   }
 
-  const angle = payload.sensor_angle ?? payload.sensorAngle;
-  if (angle != null) {
-    await this.setSensorAngle(angle);
+  async setSlotCount(n) {
+    await this.setBatchFeatures({ currentSlotCount: n });
   }
 
-  const feel = payload.sensor_feel ?? payload.sensorFeel;
-  if (feel != null) {
-    await this.setSensorFeel(feel);
+  async setCurrentDpiIndex(index) {
+    await this.setBatchFeatures({ currentDpiIndex: index });
   }
 
-  const slotCount = payload.slot_count ?? payload.slotCount;
-  if (slotCount != null) {
-    await this.setSlotCount(slotCount);
+  async setPollingRateHz(hz) {
+    await this.setBatchFeatures({ pollingHz: hz });
   }
 
-  // 2) modeByte 相关字段（只要 payload 中包含这些字段之一，就写 modeByte）
-  const hasModeField = Object.prototype.hasOwnProperty.call(payload, "modeByte") ||
-    Object.prototype.hasOwnProperty.call(payload, "mode_byte") ||
-    Object.prototype.hasOwnProperty.call(payload, "performanceMode") ||
-    Object.prototype.hasOwnProperty.call(payload, "performance_mode") ||
-    Object.prototype.hasOwnProperty.call(payload, "lodHeight") ||
-    Object.prototype.hasOwnProperty.call(payload, "lod") ||
-    Object.prototype.hasOwnProperty.call(payload, "lod_height") ||
-    Object.prototype.hasOwnProperty.call(payload, "motionSync") ||
-    Object.prototype.hasOwnProperty.call(payload, "motion_sync") ||
-    Object.prototype.hasOwnProperty.call(payload, "linearCorrection") ||
-    Object.prototype.hasOwnProperty.call(payload, "linear_correction") ||
-    Object.prototype.hasOwnProperty.call(payload, "rippleControl") ||
-    Object.prototype.hasOwnProperty.call(payload, "ripple_control") ||
-    Object.prototype.hasOwnProperty.call(payload, "glassMode") ||
-    Object.prototype.hasOwnProperty.call(payload, "glass_mode");
-
-  if (!hasModeField) return;
-
-  // 如果调用方没有显式提供 base modeByte，则用最近一次 config 回包的 modeByte 作为 base。
-  // 这样只改一两个开关时，不会把其它 bit 重置成默认值（刷新页误开/误关的核心原因）。
-  const p2 = { ...payload };
-  if (p2.modeByte == null && p2.mode_byte == null) {
-    if (Number.isFinite(Number(this._lastModeByte))) {
-      p2.modeByte = this._lastModeByte;
-    } else {
-      // 兜底：如果刷新后 UI 很早就触发了写入（尚未收到 config 回包），
-      // 先拉一次 config 作为 base，避免用 0 作为 base 把其它 bit 误重置。
-      try {
-        const cfg = await this.requestConfigAndWait({ responseTimeoutMs: 400 });
-        if (Number.isFinite(Number(cfg?.modeByte))) {
-          this._lastModeByte = Number(cfg.modeByte) & 0xff;
-          p2.modeByte = this._lastModeByte;
-        }
-      } catch (_) {
-        // ignore
-      }
-    }
+  async setSleepSeconds(sec) {
+    await this.setBatchFeatures({ sleepSeconds: sec });
   }
-
-  const mb = encodeModeByteFromState(p2);
-  await this.setModeByte(mb);
-}
-
 
   async setDebounceMs(ms) {
-    const v = Math.max(0, Math.min(255, Number(ms) | 0));
-    return this._send2(MOUSE_HID.cmds.SET_DEBOUNCE, v);
+    await this.setBatchFeatures({ debounceMs: ms });
   }
 
   async setModeByte(modeByte) {
-    const mb = Number(modeByte) & 0xff;
-    // 乐观更新：避免下一次增量写仍然拿到旧 base
-    this._lastModeByte = mb;
-    return this._send2(MOUSE_HID.cmds.SET_MODE_BYTE, mb);
+    await this.setBatchFeatures({ modeByte });
   }
 
   async setLedEnabled(enabled) {
-    // [cmd, 0x00, 0x01, 0x00, 0xFF/0x00]
-    return this._send5(MOUSE_HID.cmds.SET_LED, 0x00, 0x01, 0x00, enabled ? 0xff : 0x00);
+    await this.setBatchFeatures({ ledEnabled: !!enabled });
   }
 
   async setSensorAngle(angle) {
-    const a = Math.max(-100, Math.min(100, Number(angle) | 0));
-    return this._send2(MOUSE_HID.cmds.SET_SENSOR_ANGLE, int8ToUint8(a));
+    await this.setBatchFeatures({ sensorAngle: angle });
   }
 
   async setSensorFeel(feel) {
-    const v = Number(feel) | 0;
-    const f = Math.max(-62, Math.min(65, v));
-    const raw = f < 0 ? (128 + f) & 0x7f : (f & 0x7f);
-    return this._send2(MOUSE_HID.cmds.SET_SENSOR_FEEL, raw);
+    await this.setBatchFeatures({ sensorFeel: feel });
   }
 
   async setButtonMapping(btnId1to6, funckey, keycode) {
-    // 低频；保留 encoder
-    return this.send(encodeButtonMapping(btnId1to6, funckey, keycode));
+    await this.setBatchFeatures({ buttonMapping: { btnId: btnId1to6, funckey, keycode } });
   }
 
-  /**
-   * Select 字符串设置按键映射（推荐 UI 使用）。
-   * @param {number} btnId - 1..6（UI 语义）或 0..5（固件语义）
-   * @param {string} selectLabel - 如 “左键”“A”“复制”“音量上”
-   * @param {{ctrl?:boolean,shift?:boolean,alt?:boolean,win?:boolean}} [mod]
-   */
   async setButtonMappingBySelect(btnId, selectLabel, mod = {}) {
     const { funckey, keycode } = resolveKeyAction(selectLabel, mod);
     return this.setButtonMapping(btnId, funckey, keycode);
   }
 
-  async factoryReset() { return this._send1(MOUSE_HID.cmds.FACTORY_RESET); }
+  async factoryReset() {
+    await this.setBatchFeatures({ factoryReset: true });
+  }
 
-  _handleInputReport(event) {
-    // 允许 ReportID=0（部分设备/系统特性）
-    if (event.reportId !== 0 && event.reportId !== MOUSE_HID.reportId) return;
+  _makeDefaultCfg() {
+    const cap = this._profile?.capabilities ?? DEFAULT_PROFILE.capabilities;
+    const maxSlots = clampInt(cap.dpiSlotCount ?? 6, 1, 6);
+    const pollingRates = Array.isArray(cap.pollingRates) && cap.pollingRates.length
+      ? cap.pollingRates
+      : [125, 250, 500, 1000];
+    const defaultPollingHz = pollingRates.includes(1000)
+      ? 1000
+      : (pollingRates[0] ?? 1000);
 
+    const dpiSlots = [800, 1200, 1600, 2400, 3200, 4800].slice(0, maxSlots);
+    const currentSlotCount = Math.min(4, maxSlots);
+    const currentDpiIndex = 0;
+
+    const cfg = {
+      capabilities: { ...cap },
+
+      dpiSlots,
+      currentSlotCount,
+      currentDpiIndex,
+      currentDpi: dpiSlots[currentDpiIndex] ?? 800,
+
+      pollingHz: defaultPollingHz,
+      pollingCode: TRANSFORMERS.pollingCode(defaultPollingHz),
+
+      performanceMode: "low",
+      lodHeight: "high",
+      motionSync: false,
+      linearCorrection: false,
+      rippleControl: false,
+      glassMode: false,
+
+      sleepSeconds: MOUSE_HID.sleepCodeToSeconds[1] ?? 10,
+      sleep16: 1,
+
+      debounceMs: 0,
+      ledEnabled: false,
+      ledRaw: 0x00,
+
+      sensorAngle: 0,
+      sensorFeel: 0,
+
+      batteryPercent: -1,
+
+      buttonMappings: Array.from({ length: 6 }, () => ({ funckey: 0, keycode: 0 })),
+    };
+
+    cfg.modeByte = encodeModeByteFromState(cfg);
+    cfg.deviceState = decodeModeByteToState(cfg.modeByte);
+
+    return cfg;
+  }
+
+  _emitConfig() {
+    const cfg = this._cfg;
+    for (const cb of this._onConfigCbs.slice()) {
+      try { cb(cfg); } catch {}
+    }
+  }
+
+  _emitBattery(bat) {
+    const b = bat || { batteryPercent: 100 };
+    for (const cb of this._onBatteryCbs.slice()) {
+      try { cb(b); } catch {}
+    }
+  }
+
+  _handleInputReport(reportId, u8, event) {
+    if (reportId !== 0 && reportId !== MOUSE_HID.reportId) return;
     try {
-      // event.data 本身就是 DataView，直接解析即可（避免额外创建/复制）
-      const dv = event.data;
-      if (!dv || dv.byteLength < 2) return;
-
-      // 可选：raw 回调（默认不建议在高频场景打开）
-      if (this._onRawReport.size) {
-        this._onRawReport.forEach((cb) => cb(dv, event));
-      }
-
-      const parsed = parseInputReport(dv, { reportId: event.reportId });
-
+      const parsed = parseInputReport(u8, { reportId });
       if (parsed.type === "config") {
-        if (!parsed.capabilities) parsed.capabilities = this.capabilities;
-        else parsed.capabilities = { ...this.capabilities, ...normalizeCapabilities(parsed.capabilities) };
-
-        // 记录最近一次配置，用于后续 setBatchFeatures 做 modeByte 的“增量写”
-        this._lastConfig = parsed;
+        const next = { ...this._cfg, ...parsed };
         if (Number.isFinite(Number(parsed.modeByte))) {
-          this._lastModeByte = Number(parsed.modeByte) & 0xff;
+          const decoded = decodeModeByteToState(parsed.modeByte);
+          next.modeByte = decoded.modeByte;
+          next.performanceMode = decoded.performanceMode;
+          next.lodHeight = decoded.lodHeight;
+          next.motionSync = decoded.motionSync;
+          next.linearCorrection = decoded.linearCorrection;
+          next.rippleControl = decoded.rippleControl;
+          next.glassMode = decoded.glassMode;
+          next.deviceState = decoded;
         }
 
-        this._onConfig.forEach((cb) => cb(parsed, event));
+        if (!parsed.capabilities) next.capabilities = this.capabilities;
+        else next.capabilities = { ...this.capabilities, ...normalizeCapabilities(parsed.capabilities) };
+
+        if (Array.isArray(next.dpiSlots)) {
+          const maxSlots = clampInt(next.currentSlotCount ?? next.dpiSlots.length ?? 1, 1, 6);
+          const idx = clampInt(Number(next.currentDpiIndex ?? 0), 0, Math.max(0, maxSlots - 1));
+          next.currentDpiIndex = idx;
+          next.currentDpi = next.dpiSlots[idx] ?? next.currentDpi;
+        }
+
+        this._cfg = next;
+        this._emitConfig();
       } else if (parsed.type === "battery") {
-        this._onBattery.forEach((cb) => cb(parsed, event));
+        const pct = clampInt(parsed.batteryPercent, 0, 100);
+        this._cfg = { ...this._cfg, batteryPercent: pct };
+        this._emitBattery({ batteryPercent: pct });
       }
     } catch (err) {
-      // 生产环境建议保持静默，避免控制台刷屏导致卡顿
-      // console.error(err);
+      // ??????????????????
     }
   }
 }
 
-/* 兼容非模块引入：<script src="protocol_api.js"></script> */
+/* ????????<script src="protocol_api_chaos.js"></script> */
 if (typeof window !== "undefined") {
-  window.ProtocolApi = {
+  const ProtocolApi = window.ProtocolApi = window.ProtocolApi || {};
+  Object.assign(ProtocolApi, {
     MOUSE_HID,
     resolveMouseDisplayName,
     uint8ToVersion,
     MouseMouseHidApi,
-    // 编码/解析辅助
+    // ??/????
     encodeRequestConfig,
     encodeRequestBattery,
     sanitizeDpiInput,
@@ -1316,7 +1960,7 @@ if (typeof window !== "undefined") {
     encodeModeByteFromState,
     encodeSetLedEnabled,
     encodeButtonMapping,
-    // Select 字符串 → (funckey,keycode) 映射
+    // Select ??? -> (funckey,keycode)
     KEYMAP_ACTIONS,
     KEYBOARD_MOD_BITS,
     resolveKeyAction,
@@ -1327,11 +1971,11 @@ if (typeof window !== "undefined") {
     encodeSetSensorFeel,
     encodeFactoryReset,
     parseInputReport,
-    // 新增：工具函数（便于外部按需使用）
+    // ????????????
     normalizeButtonId,
     int8ToUint8,
     uint8ToInt8,
     decodeSensorAngleRaw,
     decodeSensorFeelRaw,
-  };
+  });
 }
