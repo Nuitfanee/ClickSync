@@ -3,9 +3,8 @@
 ![WebHID](https://img.shields.io/badge/WebHID-enabled-blue)
 ![JavaScript](https://img.shields.io/badge/JavaScript-vanilla-yellow)
 
-> Click Sync 是一个基于 Web HID API 的鼠标网页驱动，旨在构建一个 **ALL IN ONE** 的鼠标网页驱动解决方案，支持多种品牌设备。无需安装任何驱动或软件，直接在浏览器中完成鼠标配置。
->
-> Click Sync is a WebHID-based browser mouse driver built as an **ALL-IN-ONE** configuration console. Currently supported device families: Logitech, Rapoo, ATK, and Chaos.
+Click Sync 是一个基于 Web HID API 的鼠标网页驱动，旨在构建一个 **ALL IN ONE** 的鼠标网页驱动解决方案，支持多种品牌设备。无需安装任何驱动或软件，直接在浏览器中完成鼠标配置。
+Click Sync is a WebHID-based browser mouse driver built as an **ALL-IN-ONE** configuration console. Currently supported device families: Logitech, Rapoo, ATK, and Chaos.
 
 当前实现覆盖品牌：`Logitech`、`Rapoo`、`ATK`、`Chaos`。  
 Currently implemented brands: `Logitech`, `Rapoo`, `ATK`, `Chaos`.
