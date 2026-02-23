@@ -1,0 +1,1778 @@
+<!doctype html>
+<!--
+  鼠标配置工具主页面
+  功能模块：
+  - 起始页：设备连接界面（Optical Slice 动画效果）
+  - 主应用层：设备配置界面
+    * 按键映射：自定义鼠标按键功能
+    * DPI设置：配置DPI档位和范围
+    * 基础性能：性能模式和回报率设置
+    * 高级参数：传感器参数、高级功能开关
+    * 测试工具：双击检测、轮询率检测、灵敏度匹配、角度校准
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Click Sync</title>
+  <meta name="color-scheme" content="light dark" />
+  <!-- 字体预连接优化 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- 引入字体：Inter、Noto Sans SC、Space Grotesk -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;900&family=Noto+Sans+SC:wght@900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <!-- 样式表 -->
+  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="./theme.css" />
+  <!-- 扩展字体权重（用于更多UI元素） -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&family=Noto+Sans+SC:wght@400;500;700;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+  <!-- ==================== PointerLock 目标区域 ==================== -->
+  <!-- 用于测试工具的指针锁定功能，避免影响主页面交互 -->
+  <!-- lockTarget: 灵敏度匹配工具使用 -->
+  <div id="lockTarget" tabindex="-1" class="tt-lock-target" aria-hidden="true"></div>
+  <!-- rotLockTarget: 鼠标角度校准工具使用 -->
+  <div id="rotLockTarget" tabindex="-1" class="tt-lock-target" aria-hidden="true"></div>
+  <!-- ==================== 起始页覆盖层 ==================== -->
+  <!-- 功能：设备未连接或断开时显示的启动界面 -->
+  <!-- 交互：长按触发区域启动系统并连接HID设备 -->
+  <div id="landing-layer" class="landing-layer" aria-hidden="false">
+    <!-- Optical Slice 动画效果：双层世界切换动画 -->
+    
+    <!-- 图层1：轮廓世界（默认显示，低回报率主题） -->
+    <div class="os-world" id="layer-outline" aria-hidden="true">
+      <div class="os-grid">
+        <div class="os-side-menu">
+          <div>Keymap</div>
+          <div>DPI</div>
+          <div>Basic</div>
+          <div>Advanced</div>
+        </div>
+
+        <div class="os-hero">
+          <div class="os-stack" style="opacity: 0.45">Gaius</div>
+          <div class="os-stack" style="opacity: 0.45">Cassius</div>
+          <div class="os-stack" style="opacity: 0.45">Longinus</div>
+          <div class="os-main">NUITFANEE</div>
+        </div>
+
+        <div class="os-specs">
+          <div class="os-spec-big">125 HZ</div>
+          <div class="os-spec-list">250 HZ<br>500 HZ<br>1000 HZ</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 图层2：实体世界（通过遮罩显示，高回报率主题） -->
+    <div class="os-world" id="layer-solid" aria-hidden="true">
+      <div class="os-grid">
+        <!-- 侧边菜单：与图层1相同 -->
+        <div class="os-side-menu">
+          <div>Keymap</div>
+          <div>DPI</div>
+          <div>Basic</div>
+          <div>Advanced</div>
+        </div>
+
+        <!-- 主标题区域：品牌名称（不透明显示） -->
+        <div class="os-hero">
+          <div class="os-stack">Gaius</div>
+          <div class="os-stack">Cassius</div>
+          <div class="os-stack">Longinus</div>
+          <div class="os-main">NUITFANEE</div>
+        </div>
+
+        <!-- 规格显示：高回报率档位 -->
+        <div class="os-specs">
+          <div class="os-spec-big">8000 HZ</div>
+          <div class="os-spec-list">2000 HZ<br>4000 HZ<br>ULTRA</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 提示文案：动态更新连接状态提示 -->
+    <!-- 注意：JavaScript 会通过 landingCaption 元素更新此文本 -->
+    <div class="os-hint" id="landingCaption">Hold to Initiate System</div>
+
+    <!-- Optical Slice 光标效果：跟随鼠标的视觉反馈 -->
+    <div class="os-cursor-ring" id="cursorRing" aria-hidden="true"></div>
+    <div class="os-cursor-dot" id="cursorDot" aria-hidden="true"></div>
+
+    <!-- 系统就绪过场动画：连接成功后的全屏提示 -->
+    <div class="flash-layer" aria-hidden="true">
+      <div class="flash-text">SYSTEM READY</div>
+    </div>
+
+    <!-- 交互触发区：全屏可点击区域，点击触发 connectHid() 连接设备 -->
+    <div id="trigger-zone" role="button" tabindex="0" aria-label="连接设备"></div>
+  </div>
+
+  <!-- ==================== 主应用层 ==================== -->
+  <!-- 功能：设备连接成功后显示的主要配置界面 -->
+  <div id="app-layer" class="app-layer" aria-hidden="true">
+    <div class="grid-bg"></div>
+
+    <div class="wrap">
+    <!-- ==================== 左侧导航侧边栏 ==================== -->
+    <!-- 功能：主功能模块导航菜单，支持展开/收缩 -->
+    <div class="sidebar" id="navLinks">
+        <!-- GitHub 标志按钮 -->
+        <a href="https://github.com/Nuitfanee/ClickSync" target="_blank" class="sidebar-github-btn" title="GitHub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+            </svg>
+        </a>
+
+        <!-- 原有的切换按钮 -->
+        <button id="sidebarToggle" class="sidebar-toggle" aria-label="切换菜单">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+        </button>
+
+        <!-- 导航菜单项：每个菜单项包含图标和文字，通过 data-key 属性关联对应页面 -->
+        <!-- 菜单项1：按键设置 -->
+        <div class="nav-item active" data-key="keys" data-color="#000000">
+            <!-- 图标：鼠标/按键（矩形图标） -->
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="12" height="16" rx="2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12" y2="16"/></svg>
+            <span class="nav-text">按键设置</span>
+        </div>
+        <!-- 菜单项2：DPI设置 -->
+        <div class="nav-item" data-key="dpi" data-color="#000000">
+            <!-- 图标：菱形（DPI 视觉标识） -->
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 4 20 12 12 20 4 12"/></svg>
+            <span class="nav-text">DPI设置</span>
+        </div>
+        <!-- 菜单项3：基础性能 -->
+        <div class="nav-item" data-key="basic" data-color="#000000">
+            <!-- 图标：调节滑块（性能调节） -->
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+            <span class="nav-text">基础性能</span>
+        </div>
+        <!-- 菜单项4：高级参数 -->
+        <div class="nav-item" data-key="advanced" data-color="#000000">
+            <!-- 图标：齿轮/设置（高级配置） -->
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span class="nav-text">高级参数</span>
+        </div>
+        <!-- 菜单项5：测试工具 -->
+        <div class="nav-item" data-key="testtools" data-color="#000000">
+             <!-- 图标：工具/扳手（测试工具） -->
+             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            <span class="nav-text">测试工具</span>
+        </div>
+
+        <!-- 侧边栏底部：设备状态小部件 -->
+        <div class="sidebar-tools">
+            <button id="disconnectBtn" class="sidebar-disconnect-btn" type="button" disabled>断开连接</button>
+        </div>
+    </div>
+
+    <!-- ==================== 主内容区域 ==================== -->
+    <main class="stage">
+      <!-- 页面头部（预留，当前为空） -->
+      <div class="stagehead" aria-label="Header">
+        <div class="topToolbar" id="topToolbar">
+          <div class="topSlotBar" id="topSlotBar" role="tablist" aria-label="配置槽位">
+            <button class="topSlotBtn" type="button" data-config-slot="1" role="tab" aria-selected="false">配置"壹"</button>
+            <button class="topSlotBtn active" type="button" data-config-slot="2" role="tab" aria-selected="true">配置"贰"</button>
+            <button class="topSlotBtn" type="button" data-config-slot="3" role="tab" aria-selected="false">配置"叁"</button>
+            <button class="topSlotBtn" type="button" data-config-slot="4" role="tab" aria-selected="false">配置"肆"</button>
+            <button class="topSlotBtn" type="button" data-config-slot="5" role="tab" aria-selected="false">配置"伍"</button>
+          </div>
+
+          <div class="topToolbarDivider" aria-hidden="true"></div>
+
+          <div class="topDeviceMeta" id="topDeviceMeta" aria-label="设备状态">
+            <div class="topDeviceName" id="topDeviceName">未连接设备</div>
+            <div class="topBatteryWrap" id="topBatteryWrap" aria-label="电量">
+              <span class="topBatteryPercent" id="topBatteryPercent">--%</span>
+              <span class="topBatteryIcon" aria-hidden="true">
+                <span class="topBatteryFill" id="topBatteryFill"></span>
+              </span>
+            </div>
+          </div>
+
+          <button id="langBtn" class="topIconBtn topLangBtn" type="button" aria-label="切换语言">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="2" y1="12" x2="22" y2="12"></line>
+              <path d="M12 2a15.5 15.5 0 0 1 0 20"></path>
+              <path d="M12 2a15.5 15.5 0 0 0 0 20"></path>
+            </svg>
+            <span id="langBtnLabel">EN</span>
+          </button>
+
+          <button id="themeBtn" class="topIconBtn" type="button" aria-label="切换主题">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path id="themePath" d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"></path>
+            </svg>
+          </button>
+
+          <button id="reservedTopActionBtn" class="topIconBtn" type="button" aria-label="预留按钮">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="8"></circle>
+              <path d="M18 6l2-2"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 页面主体：包含所有功能页面 -->
+      <div class="stagebody" id="stageBody" aria-label="Content">
+      <!-- ==================== 功能页面区域 ==================== -->
+      <!-- 注意：页面通过 hash 路由切换，每个 section 对应一个功能模块 -->
+      
+      <!-- ========== 页面1：DPI设置 ========== -->
+      <section class="page" id="dpi" aria-label="DPI">
+        <div class="pagegrid dpigrid">
+          <!-- DPI 配置卡片：设置档位数量和DPI范围 -->
+          <div class="card card-dpi-meta">
+            <div class="stack">
+              <!-- 新版 DPI 控制面板 -->
+              <div class="dpi-panel-redesign" aria-label="DPI configuration">
+                <!-- 模块 1: 挡位数量 (琴键式选择器) -->
+                <div class="ndp-group group-levels">
+                  <div class="ndp-label">LEVELS // DPI挡位总数</div>
+                  <div class="ndp-seg-control" id="uiSlotControl">
+                    <button type="button" data-val="1">1</button>
+                    <button type="button" data-val="2">2</button>
+                    <button type="button" data-val="3">3</button>
+                    <button type="button" data-val="4">4</button>
+                    <button type="button" data-val="5">5</button>
+                    <button type="button" data-val="6">6</button>
+                  </div>
+                </div>
+
+                <!-- 模块 2: 高级模式 (滑块开关) -->
+                <div class="ndp-group group-mode">
+                  <div class="ndp-label">AXIS //DPI高级模式</div>
+                  <button type="button" class="ndp-switch" id="uiModeSwitch" data-state="false">
+                    <div class="switch-track">
+                      <span class="s-opt s-sync">SYNC</span>
+                      <span class="s-opt s-split">SPLIT</span>
+                      <div class="switch-thumb"></div>
+                    </div>
+                  </button>
+                </div>
+
+                <!-- 模块 3: 范围限制 (数字读数 + 弹窗选择) -->
+                <div class="ndp-group group-range">
+                  <div class="ndp-label">RANGE // DPI可调值范围</div>
+                  <div class="ndp-range-display">
+                    <button type="button" class="range-box" id="uiRangeMinBtn">
+                      <span class="r-sub">FLOOR</span>
+                      <span class="r-val" id="uiRangeMinVal">100</span>
+                    </button>
+                    <div class="range-divider"></div>
+                    <button type="button" class="range-box" id="uiRangeMaxBtn">
+                      <span class="r-sub">CEIL</span>
+                      <span class="r-val" id="uiRangeMaxVal">8000</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 隐藏的原生控件 (用于保持 app.js 逻辑兼容) -->
+              <div style="display:none !important;" aria-hidden="true">
+                <select id="slotCountSelect">
+                  <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                  <option value="4">4</option><option value="5">5</option><option value="6" selected>6</option>
+                </select>
+                <button
+                  class="dpiAdvancedToggle"
+                  id="dpiAdvancedToggle"
+                  type="button"
+                  aria-pressed="false"
+                  aria-label="切换DPI高级模式"
+                >
+                  <span class="dpiAdvancedToggleText">高级</span>
+                  <span class="dpiAdvancedToggleState">关闭</span>
+                </button>
+                <select id="dpiMinSelect"></select>
+                <select id="dpiMaxSelect"></select>
+              </div>
+            </div>
+          </div>
+
+          <!-- DPI 档位编辑卡片：显示和编辑各个DPI档位的具体数值 -->
+          <div class="card card-dpi-editor">
+            <div class="cardhead">
+              <div class="title">DPI 档位<span class="dpiAdvancedTitleHint" id="dpiAdvancedTitleHint">独立设置X轴和Y轴的DPI值</span></div>
+              <div class="sub">光学引擎抬起距离</div>
+            </div>
+
+            <!-- DPI档位列表容器（由JavaScript动态生成） -->
+            <div class="stack dpiSlots" id="dpiList"></div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ========== 页面2：基础性能 ========== -->
+      <section class="page" id="basic" aria-label="基础性能">
+        <div class="basicMonolith" id="basicMonolith" aria-label="性能模式与回报率">
+          <!-- 动态连线层：显示性能模式与回报率之间的连接动画（SVG路径） -->
+          <svg id="basicSynapseLayer" aria-hidden="true">
+            <path class="basicConnectionPath" d="M0,0" />
+          </svg>
+
+          <div class="basicStage">
+            <!-- 左侧列：性能模式选择 -->
+            <div class="basicColumn basicColumnLeft" id="basicModeColumn" aria-label="性能模式">
+              <!-- 性能模式选项：低功耗模式 -->
+              <div class="basicItem active" role="button" tabindex="0" data-perf="low" data-mode="eco">
+                Low Power <div class="basicAnchor"></div>
+              </div>
+              <!-- 性能模式选项：标准模式 -->
+              <div class="basicItem" role="button" tabindex="0" data-perf="hp" data-mode="std">
+                STANDARD <div class="basicAnchor"></div>
+              </div>
+              <!-- 性能模式选项：竞技模式 -->
+              <div class="basicItem" role="button" tabindex="0" data-perf="sport" data-mode="comp">
+                COMPETITIVE <div class="basicAnchor"></div>
+              </div>
+              <!-- 性能模式选项：超频模式 -->
+              <div class="basicItem" role="button" tabindex="0" data-perf="oc" data-mode="oc">
+                OVERCLOCK <div class="basicAnchor"></div>
+              </div>
+            </div>
+
+            <!-- 右侧列：回报率（轮询率）选择 -->
+            <div class="basicColumn basicColumnRight" id="basicHzColumn" aria-label="回报率">
+              <div class="basicItem" role="button" tabindex="0" data-hz="125">
+                <div class="basicAnchor"></div> 125 Hz
+              </div>
+              <div class="basicItem" role="button" tabindex="0" data-hz="250">
+                <div class="basicAnchor"></div> 250 Hz
+              </div>
+              <div class="basicItem" role="button" tabindex="0" data-hz="500">
+                <div class="basicAnchor"></div> 500 Hz
+              </div>
+              <div class="basicItem" role="button" tabindex="0" data-hz="1000">
+                <div class="basicAnchor"></div> 1000 Hz
+              </div>
+              <div class="basicItem" role="button" tabindex="0" data-hz="2000">
+                <div class="basicAnchor"></div> 2000 Hz
+              </div>
+              <div class="basicItem" role="button" tabindex="0" data-hz="4000">
+                <div class="basicAnchor"></div> 4000 Hz
+              </div>
+              <div class="basicItem active" role="button" tabindex="0" data-hz="8000">
+                <div class="basicAnchor"></div> 8000 Hz
+              </div>
+            </div>
+          </div>
+
+          <!-- 底部状态栏：显示当前选择的回报率和性能模式状态 -->
+          <div class="basicFooter" aria-label="状态栏">
+            <div class="basicTicker" id="basicHzTicker">8000 HZ</div>
+            <div id="basicStatusText">POWER PRESERVATION</div>
+          </div>
+
+          <!-- Rapoo 设备专属开关：仅在 Rapoo 设备上显示 -->
+          <div class="basicRapooSwitches" id="basicRapooSwitches" aria-label="Rapoo extra settings">
+            <!-- 开关1：无线策略（智能调节 / 满格射频） -->
+            <label class="basicMiniSwitch" for="wirelessStrategyToggle">
+              <div class="miniMeta">
+                <div class="miniTitle">无线策略</div>
+                <div class="miniSub">智能调节 / 满格射频</div>
+              </div>
+              <div class="miniState" id="wirelessStrategyState">智能调节</div>
+              <input type="checkbox" class="raw-input" id="wirelessStrategyToggle" role="switch" aria-label="无线策略" />
+              <span class="miniTrack" aria-hidden="true"><span class="miniThumb"></span></span>
+            </label>
+
+            <!-- 开关2：通信协议（高效 / 初始） -->
+            <label class="basicMiniSwitch" for="commProtocolToggle">
+              <div class="miniMeta">
+                <div class="miniTitle">通信协议</div>
+                <div class="miniSub">高效 / 初始</div>
+              </div>
+              <div class="miniState" id="commProtocolState">高效</div>
+              <input type="checkbox" class="raw-input" id="commProtocolToggle" role="switch" aria-label="通信协议" />
+              <span class="miniTrack" aria-hidden="true"><span class="miniThumb"></span></span>
+            </label>
+          </div>
+
+          <!-- 隐藏的表单控件：保留用于向后兼容的数据写入逻辑 -->
+          <!-- 注意：这些控件被隐藏但保留，以确保现有JavaScript代码正常工作 -->
+          <div class="basicHiddenControls" aria-hidden="true">
+            <select class="input" id="pollingSelect" tabindex="-1">
+              <option value="8000">8000</option>
+              <option value="4000">4000</option>
+              <option value="2000">2000</option>
+              <option value="1000">1000</option>
+              <option value="500">500</option>
+              <option value="250">250</option>
+              <option value="125">125</option>
+            </select>
+            <select class="input" id="pollingSelectWireless" tabindex="-1">
+              <option value="8000">8000</option>
+              <option value="4000">4000</option>
+              <option value="2000">2000</option>
+              <option value="1000">1000</option>
+              <option value="500">500</option>
+              <option value="250">250</option>
+              <option value="125">125</option>
+            </select>
+
+            <input type="radio" name="perfMode" value="low" checked>
+            <input type="radio" name="perfMode" value="hp">
+            <input type="radio" name="perfMode" value="sport">
+            <input type="radio" name="perfMode" value="oc">
+          </div>
+        </div>
+      </section>
+        
+
+      <!-- ========== 页面3：高级参数 ========== -->
+      <section class="page" id="advanced" aria-label="高级参数">
+        <!-- 高级参数面板：采用分段快门 + 高端滑条 + Shutter List 设计风格 -->
+        <div class="advPanel" id="advancedPanel" aria-label="Advanced Panel">
+          <!-- 左列：电源配置 + 传感器调校 -->
+          <div class="advColLeft" id="advancedLegacyLeft">
+            <!-- 配置块1：电源按键参数 -->
+            <div class="advBlock">
+              <div class="advSectionHeader">01 // 电源按键参数</div>
+
+              <!-- 滑块组：休眠时间和防抖设置 -->
+              <!-- 注意：采用离散档位滑块，滑动时自动吸附到档位 -->
+              <div class="advSliderStack" aria-label="Power Sliders">
+                <!-- 滑块1：休眠时间 -->
+                <div class="slider-card" aria-label="Sleep Timeout">
+                  <!-- 卡片装饰角 -->
+                  <div class="card-corner corner-tl"></div><div class="card-corner corner-tr"></div>
+                  <div class="card-corner corner-bl"></div><div class="card-corner corner-br"></div>
+
+                  <div class="slider-header-row">
+                    <div class="slider-info">
+                      <span class="slider-name">休眠时间</span>
+                      <span class="slider-sub">TIMESCALE // 机械式步进逻辑</span>
+                    </div>
+                    
+                    <!-- 可视化组件：3D 动力学鳍片组（7个档位对应7个鳍片） -->
+                    <div class="kinetic-visual-group">
+                        <div class="value-readout" id="sleep_disp" data-unit="">-</div>
+                        <div class="fin-display" id="sleepFinDisplay">
+                            <!-- 7个鳍片，每个对应一个休眠时间档位 -->
+                            <div class="fin"></div><div class="fin"></div><div class="fin"></div>
+                            <div class="fin"></div><div class="fin"></div><div class="fin"></div>
+                            <div class="fin"></div>
+                        </div>
+                    </div>
+                  </div>
+
+                  <!-- 滑块控件 -->
+                  <div class="range-wrap">
+                    <div class="custom-track"></div>
+                    <input type="range" id="sleepInput" min="0" max="6" step="1" value="0" />
+                  </div>
+                </div>
+
+                <!-- 滑块2：防抖设置 -->
+                <div class="slider-card" aria-label="Debounce">
+                  <!-- 卡片装饰角 -->
+                  <div class="card-corner corner-tl"></div><div class="card-corner corner-tr"></div>
+                  <div class="card-corner corner-bl"></div><div class="card-corner corner-br"></div>
+
+                  <div class="slider-header-row">
+                    <div class="slider-info">
+                      <span class="slider-name">防抖</span>
+                      <span class="slider-sub">低数值极速响应，高数值过滤双击</span>
+                    </div>
+                    
+                    <!-- 可视化组件：宽幅信号稳定器（仪表盘风格） -->
+                    <div class="debounce-visual-group wide-mode">
+                        <!-- 数值显示（左侧，符合仪表盘习惯） -->
+                        <div class="value-readout" id="debounce_disp" data-unit="ms">1</div>
+                        <div class="debounce-visual-wide">
+                            <!-- 背景刻度线（5个刻度点） -->
+                            <div class="debounce-scale">
+                                <i></i><i></i><i></i><i></i><i></i>
+                            </div>
+                            <!-- 稳定条（核心可视化元素） -->
+                            <div class="debounce-bar-wide" id="debounceBar">
+                                <!-- 内部纹理效果 -->
+                                <div class="bar-texture"></div>
+                            </div>
+                        </div>
+                    </div>
+                  </div>
+
+                  <!-- 滑块控件 -->
+                  <div class="range-wrap">
+                    <div class="custom-track"></div>
+                    <input type="range" id="debounceInput" min="0" max="4" step="1" value="0" />
+                  </div>
+                </div>
+              </div>
+
+              <!-- 隐藏的表单控件：保留用于向后兼容的数据写入逻辑 -->
+              <div class="advHiddenControls" aria-hidden="true">
+                <select class="input" id="sleepSelect" tabindex="-1">
+                  <option value="10">10</option>
+                  <option value="30">30</option>
+                  <option value="50">50</option>
+                  <option value="60">60</option>
+                  <option value="120">120</option>
+                  <option value="900">15m</option>
+                  <option value="1800">30m</option>
+                </select>
+                <select class="input" id="debounceSelect" tabindex="-1">
+                  <option value="1">1</option><option value="2">2</option><option value="4">4</option>
+                  <option value="8">8</option><option value="15">15</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 配置块2：传感器参数调校 -->
+            <div class="advBlock">
+              <div class="advSectionHeader">02 // 传感器参数</div>
+
+              <div class="advSliderStack">
+                <!-- 滑块1：传感器角度校准 -->
+                <div class="slider-card" aria-label="Sensor Angle">
+                  <!-- 卡片装饰角 -->
+                  <div class="card-corner corner-tl"></div><div class="card-corner corner-tr"></div>
+                  <div class="card-corner corner-bl"></div><div class="card-corner corner-br"></div>
+
+                  <div class="slider-header-row">
+                    <div class="slider-info">
+                      <span class="slider-name">传感器角度</span>
+                      <span class="slider-sub">设置传感器的水平校准</span>
+                    </div>
+                    
+                    <!-- 可视化组件：水平仪风格（模拟水平仪界面） -->
+                    <div class="horizon-group">
+                        <!-- 角度数值显示（左侧） -->
+                        <div class="value-readout" id="angle_disp" data-unit="°">0</div>
+                        <div class="horizon-visual">
+                            <!-- 水平线（动态旋转） -->
+                            <div class="horizon-line" id="horizonLine"></div>
+                            <!-- 静态参考线：十字准星（水平和垂直参考线） -->
+                            <div class="horizon-ref-x"></div>
+                            <div class="horizon-ref-y"></div>
+                        </div>
+                    </div>
+                  </div>
+
+                  <!-- 滑块控件（带中心标记） -->
+                  <div class="range-wrap">
+                    <div class="custom-track"></div>
+                    <div class="center-mark"></div>
+                    <input type="range" id="angleInput" min="-60" max="60" value="0" />
+                  </div>
+                </div>
+
+                <!-- 滑块2：传感器手感值 -->
+                <div class="slider-card" aria-label="Sensor Feel">
+                  <!-- 卡片装饰角 -->
+                  <div class="card-corner corner-tl"></div><div class="card-corner corner-tr"></div>
+                  <div class="card-corner corner-bl"></div><div class="card-corner corner-br"></div>
+
+                  <div class="slider-header-row">
+                    <div class="slider-info">
+                      <span class="slider-name">传感器手感值</span>
+                      <span class="slider-sub">0为关闭, 数值越大越滑</span>
+                    </div>
+                    
+                    <!-- 可视化组件：高度/悬浮感（模拟悬浮效果） -->
+                    <div class="height-visual-group">
+                        <!-- 百分比数值显示（左侧） -->
+                        <div class="value-readout" id="feel_disp" data-unit="%">0</div>
+                        <div class="height-visual">
+                            <!-- 垂直参考虚线 -->
+                            <div class="height-guide"></div>
+                            <!-- 地面基准线 -->
+                            <div class="height-surface"></div>
+                            <!-- 悬浮滑块（高度随数值变化） -->
+                            <div class="height-block" id="heightBlock"></div>
+                        </div>
+                    </div>
+                  </div>
+
+                  <!-- 滑块控件 -->
+                  <div class="range-wrap">
+                    <div class="custom-track"></div>
+                    <input type="range" id="feelInput" min="0" max="60" value="0" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右列：高级性能参数（开关列表） -->
+          <div class="advColRight" id="advancedLegacyRight">
+            <div class="advSectionHeader">03 // 高级性能参数</div>
+
+            <!-- 快门式开关列表：采用分段快门设计风格 -->
+            <div class="shutter-list" aria-label="Advanced toggles">
+              <!-- 开关1：移动同步 (Motion Sync) - 位标识：bit3 -->
+              <label class="advShutterItem">
+                <input type="checkbox" class="raw-input" id="bit3" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">001 // Motion Sync</span>
+                      <span class="label-title">移动同步</span>
+                      <span class="label-desc">对鼠标移动进行平滑算法修正，移动轨迹更准确.</span>
+                    </div>
+                    <div class="status-indicator"><span class="status-text"></span><div class="crosshair"></div></div>
+                  </div>
+                </div>
+              </label>
+
+              <!-- 开关2：直线修正 (Angle Snap) - 位标识：bit1 -->
+              <label class="advShutterItem">
+                <input type="checkbox" class="raw-input" id="bit1" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">002 // Angle Snap</span>
+                      <span class="label-title">直线修正</span>
+                      <span class="label-desc">修正直线移动鼠标时的偏移抖动，变成直线移动.</span>
+                    </div>
+                    <div class="status-indicator"><span class="status-text"></span><div class="crosshair"></div></div>
+                  </div>
+                </div>
+              </label>
+
+              <!-- 开关3：纹波修正 (Ripple Fix) - 位标识：bit2 -->
+              <label class="advShutterItem">
+                <input type="checkbox" class="raw-input" id="bit2" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">003 // Ripple Fix</span>
+                      <span class="label-title">纹波修正</span>
+                      <span class="label-desc">对高移速情况下进行算法修正，消除波浪形抖动.</span>
+                    </div>
+                    <div class="status-indicator"><span class="status-text"></span><div class="crosshair"></div></div>
+                  </div>
+                </div>
+              </label>
+
+              <!-- 开关4：按键扫描率 / 辅助压枪 - 位标识：bit6 -->
+              <!-- 注意：Chaos 设备使用 checkbox 结构 -->
+              <label class="advShutterItem" id="bit6LabelChaos">
+                <input type="checkbox" class="raw-input" id="bit6" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">004 // Recoil Ast</span>
+                      <span class="label-title">辅助压枪</span>
+                      <span class="label-desc">开启后自动识别压枪轻微滤除鼠标波动.</span>
+                    </div>
+                    <div class="status-indicator"><span class="status-text"></span><div class="crosshair"></div></div>
+                  </div>
+                </div>
+              </label>
+              <!-- 注意：Rapoo 设备使用循环按钮结构（点击切换档位） -->
+              <div class="advShutterItem rapoo-polling-item" id="rapooPollingCycle" style="display: none;">
+                <div class="shutter-row">
+                  <!-- 背景层：保持当前档位颜色 -->
+                  <div class="shutter-bg-base"></div>
+                  <!-- 滑入层：点击时改变颜色并滑入，覆盖旧颜色（动画效果） -->
+                  <div class="shutter-bg-next"></div>
+                  <div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">004 // Polling Rate</span>
+                      <span class="label-title">按键扫描率</span>
+                      <span class="label-desc">点击循环切换：1k / 2k / 4k / 8k 采样率.</span>
+                    </div>
+                    <!-- 当前档位显示 -->
+                    <div class="status-indicator">
+                      <span class="status-text cycle-text">1k</span>
+                      <div class="crosshair"></div>
+                    </div>
+                  </div>
+                </div>
+                <!-- 隐藏的 select 元素：用于数据绑定和写入逻辑 -->
+                <div class="rapoo-polling" aria-hidden="true" style="display: none;">
+                  <select class="input rapoo-polling-select" id="rapooPollingSelectAdv" aria-label="按键扫描率">
+                    <option value="1000">1k</option>
+                    <option value="2000">2k</option>
+                    <option value="4000">4k</option>
+                    <option value="8000">8k</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- 开关5：LOD 静默高度 - 位标识：bitLOD -->
+              <label class="advShutterItem">
+                <input type="checkbox" class="raw-input" id="bitLOD" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">005 // LOD High</span>
+                      <span class="label-title">LOD 静默高度</span>
+                      <span class="label-desc">设置传感器在鼠标抬起时下最小静默高度.</span>
+                    </div>
+                    <div class="status-indicator"><span class="status-text"></span><div class="crosshair"></div></div>
+                  </div>
+                </div>
+              </label>
+
+              <!-- 开关6：LED 指示灯 - ID: ledToggle -->
+              <label class="advShutterItem">
+                <input type="checkbox" class="raw-input" id="ledToggle" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">006 // LED Master</span>
+                      <span class="label-title">LED 指示灯</span>
+                      <span class="label-desc">开启后可以指示DPI档位 显示不同颜色.</span>
+                    </div>
+                    <div class="status-indicator"><span class="status-text"></span><div class="crosshair"></div></div>
+                  </div>
+                </div>
+              </label>
+
+              <!-- ATK 设备专属功能：DPI 灯效（循环切换） -->
+              <div class="advShutterItem rapoo-polling-item" id="atkDpiLightCycle" style="display: none;">
+                <div class="shutter-row">
+                  <!-- 背景层：用于颜色切换动画 -->
+                  <div class="shutter-bg-base"></div>
+                  <div class="shutter-bg-next"></div>
+                  <div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">007 // DPI Light</span>
+                      <span class="label-title">DPI 灯效</span>
+                      <span class="label-desc">点击切换：关闭 / 常亮 / 呼吸</span>
+                    </div>
+                    <div class="status-indicator">
+                      <span class="status-text cycle-text">--</span>
+                      <div class="crosshair"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ATK 设备专属功能：接收器灯效（循环切换） -->
+              <div class="advShutterItem rapoo-polling-item" id="atkReceiverLightCycle" style="display: none;">
+                <div class="shutter-row">
+                  <div class="shutter-bg-base"></div>
+                  <div class="shutter-bg-next"></div>
+                  <div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">008 // RX Light</span>
+                      <span class="label-title">接收器灯效</span>
+                      <span class="label-desc">点击切换：关闭 / 回报率 / 电量 / 低电压</span>
+                    </div>
+                    <div class="status-indicator">
+                      <span class="status-text cycle-text">--</span>
+                      <div class="crosshair"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ATK 设备专属功能：超远距离模式 - ID: longRangeModeToggle -->
+              <label class="advShutterItem" id="atkLongRangeModeItem" style="display: none;">
+                <input type="checkbox" class="raw-input" id="longRangeModeToggle" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">009 // Long Range Mode</span>
+                      <span class="label-title">超远距离模式</span>
+                      <span class="label-desc">开启后增强无线信号传输能力，适合复杂电磁环境。</span>
+                    </div>
+                    <div class="status-indicator"><span class="status-text"></span><div class="crosshair"></div></div>
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <!-- ModeByte 显示：显示所有开关状态的十六进制值 -->
+            <div class="advModeByteRow" aria-label="ModeByte">
+              <span class="advModeByteLabel">MODEBYTE</span>
+              <span class="advModeByteValue" id="modeByteText">0x--</span>
+            </div>
+          </div>
+          <div class="advColRight" id="advancedLogitechColumn" aria-label="Logitech advanced controls" aria-hidden="true">
+            <div class="advSectionHeader">LOGITECH // Advanced</div>
+
+            <div class="shutter-list" aria-label="Logitech toggles">
+              <label class="advShutterItem lg-toggle-item">
+                <input type="checkbox" class="raw-input" id="lgOnboardMemoryToggle" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">LG01 // Onboard Memory</span>
+                      <span class="label-title">板载内存模式</span>
+                      <span class="label-desc">开启后配置写入板载内存，关闭时由GHUB接管，使用GHUB需要关闭</span>
+                    </div>
+                    <div class="status-indicator">
+                      <span class="status-text" data-off="关闭" data-on="开启"></span>
+                      <div class="crosshair"></div>
+                    </div>
+                  </div>
+                </div>
+              </label>
+
+              <label class="advShutterItem lg-toggle-item">
+                <input type="checkbox" class="raw-input" id="lgLightforceToggle" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">LG02 // Lightforce</span>
+                      <span class="label-title">Lightforce 微动</span>
+                      <span class="label-desc">切换左右键触发模式：仅光学模式 / 混合模式（节能）。</span>
+                    </div>
+                    <div class="status-indicator">
+                      <span class="status-text" data-off="混合模式（节能）" data-on="仅光学模式"></span>
+                      <div class="crosshair"></div>
+                    </div>
+                  </div>
+                </div>
+              </label>
+
+              <label class="advShutterItem lg-toggle-item" id="lgBhopToggleItem">
+                <input type="checkbox" class="raw-input" id="lgBhopToggle" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">LG04 // BHOP</span>
+                      <span class="label-title">BHOP 滚轮模式</span>
+                      <span class="label-desc">BHOP模式可防止意外触碰滚轮时产生的误跳跃。</span>
+                    </div>
+                    <div class="status-indicator">
+                      <span class="status-text" data-off="关闭" data-on="开启"></span>
+                      <div class="crosshair"></div>
+                    </div>
+                  </div>
+                </div>
+              </label>
+
+              <div class="advShutterItem rapoo-polling-item lg-surface-cycle" id="lgSurfaceModeCycle" role="button" tabindex="0" aria-label="Surface tuning mode">
+                <div class="shutter-row">
+                  <div class="shutter-bg-base"></div>
+                  <div class="shutter-bg-next"></div>
+                  <div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">LG03 // Surface Tuning</span>
+                      <span class="label-title">游戏表面模式</span>
+                      <span class="label-desc">开启后传感器参数已针对游戏专用表面进行优化。点击循环切换：自动 / 开启 / 关闭。</span>
+                    </div>
+                    <div class="status-indicator">
+                      <span class="status-text cycle-text">自动</span>
+                      <div class="crosshair"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="rapoo-polling" aria-hidden="true" style="display: none;">
+                  <select class="input rapoo-polling-select" id="lgSurfaceModeSelect" aria-label="Surface mode">
+                    <option value="auto">自动</option>
+                    <option value="on">打开</option>
+                    <option value="off">关闭</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="slider-card logitech-bhop-card" id="lgBhopSliderCard" aria-label="BHOP Delay">
+              <div class="card-corner corner-tl"></div><div class="card-corner corner-tr"></div>
+              <div class="card-corner corner-bl"></div><div class="card-corner corner-br"></div>
+
+              <div class="slider-header-row">
+                <div class="slider-info">
+                  <span class="slider-name">BHOP 灵敏度</span>
+                  <span class="slider-sub">RANGE // 100ms - 1000ms (step 100)</span>
+                </div>
+                <div class="debounce-visual-group wide-mode">
+                  <div class="value-readout" id="lgBhopValue" data-unit="ms">0</div>
+                  <div class="debounce-visual-wide">
+                    <div class="debounce-scale">
+                      <i></i><i></i><i></i><i></i><i></i>
+                    </div>
+                    <div class="debounce-bar-wide" id="lgBhopBar">
+                      <div class="bar-texture"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="range-wrap">
+                <div class="custom-track"></div>
+                <input type="range" id="lgBhopInput" min="100" max="1000" step="100" value="100" aria-label="BHOP delay in milliseconds" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+        
+
+      <!-- ========== 页面4：测试工具 ========== -->
+      <section class="page" id="testtools" aria-label="测试工具">
+        <div class="pagegrid testtoolsgrid">
+          <div class="card testtoolsCard">
+            <!-- 测试工具内部导航标签页（不影响左侧主菜单） -->
+            <div class="ttTabs" role="tablist" aria-label="测试工具导航">
+              <!-- 标签页背景和滑条动画 -->
+              <div class="ttTabs-bg">
+                <div class="ttGlider"></div>
+                <div class="ttGliderSecondary"></div>
+              </div>
+              <button class="btn ttTab active" id="navMain" type="button">双击检测</button>
+              <button class="btn ttTab" id="navPoll" type="button">轮询率检测</button>
+              <button class="btn ttTab" id="navMatch" type="button">灵敏度匹配</button>
+              <button class="btn ttTab" id="navRot" type="button">鼠标角度校准</button>
+            </div>
+
+            <!-- 测试工具页面容器 -->
+            <div class="ttPages" id="ttPages">
+              <!-- ========== 测试工具1：双击检测 ========== -->
+              <div id="pageMain" class="page active" aria-label="双击检测">
+                <div class="ttMainStack">
+                  <div class="ttBtnGrid" id="btnContainer" aria-label="Mouse buttons">
+                    <!-- 左键 -->
+                    <div class="mouse-btn left" tabindex="0" role="button" aria-label="左键统计">
+                      <div class="btn-title">左键</div>
+                      <div class="ttHero">
+                        <div class="hero-val dbl-val">0</div>
+                        <div class="hero-label">双击次数</div>
+                      </div>
+                      <div class="ttDivider"></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下计数</span>
+                        <span class="ttStatVal down-count">0</span>
+                      </div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">抬起计数</span>
+                        <span class="ttStatVal up-count">0</span>
+                      </div>
+                      <div class="ttDivider"></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下→按下</span>
+                        <span class="ttStatVal dd-curr">--</span>
+                      </div>
+                      <div class="ttMini">最小: <span class="dd-min">--</span></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下→抬起</span>
+                        <span class="ttStatVal du-curr">--</span>
+                      </div>
+                      <div class="ttMini">最小: <span class="du-min">--</span></div>
+                    </div>
+
+                    <!-- 中键 -->
+                    <div class="mouse-btn middle" tabindex="0" role="button" aria-label="中键统计">
+                      <div class="btn-title">中键</div>
+                      <div class="ttHero">
+                        <div class="hero-val dbl-val">0</div>
+                        <div class="hero-label">双击次数</div>
+                      </div>
+                      <div class="ttDivider"></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下计数</span>
+                        <span class="ttStatVal down-count">0</span>
+                      </div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">抬起计数</span>
+                        <span class="ttStatVal up-count">0</span>
+                      </div>
+                      <div class="ttDivider"></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下→按下</span>
+                        <span class="ttStatVal dd-curr">--</span>
+                      </div>
+                      <div class="ttMini">最小: <span class="dd-min">--</span></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下→抬起</span>
+                        <span class="ttStatVal du-curr">--</span>
+                      </div>
+                      <div class="ttMini">最小: <span class="du-min">--</span></div>
+                    </div>
+
+                    <!-- 右键 -->
+                    <div class="mouse-btn right" tabindex="0" role="button" aria-label="右键统计">
+                      <div class="btn-title">右键</div>
+                      <div class="ttHero">
+                        <div class="hero-val dbl-val">0</div>
+                        <div class="hero-label">双击次数</div>
+                      </div>
+                      <div class="ttDivider"></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下计数</span>
+                        <span class="ttStatVal down-count">0</span>
+                      </div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">抬起计数</span>
+                        <span class="ttStatVal up-count">0</span>
+                      </div>
+                      <div class="ttDivider"></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下→按下</span>
+                        <span class="ttStatVal dd-curr">--</span>
+                      </div>
+                      <div class="ttMini">最小: <span class="dd-min">--</span></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下→抬起</span>
+                        <span class="ttStatVal du-curr">--</span>
+                      </div>
+                      <div class="ttMini">最小: <span class="du-min">--</span></div>
+                    </div>
+
+                    <!-- 后退 -->
+                    <div class="mouse-btn back" tabindex="0" role="button" aria-label="后退键统计">
+                      <div class="btn-title">后退</div>
+                      <div class="ttHero">
+                        <div class="hero-val dbl-val">0</div>
+                        <div class="hero-label">双击次数</div>
+                      </div>
+                      <div class="ttDivider"></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下计数</span>
+                        <span class="ttStatVal down-count">0</span>
+                      </div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">抬起计数</span>
+                        <span class="ttStatVal up-count">0</span>
+                      </div>
+                      <div class="ttDivider"></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下→按下</span>
+                        <span class="ttStatVal dd-curr">--</span>
+                      </div>
+                      <div class="ttMini">最小: <span class="dd-min">--</span></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下→抬起</span>
+                        <span class="ttStatVal du-curr">--</span>
+                      </div>
+                      <div class="ttMini">最小: <span class="du-min">--</span></div>
+                    </div>
+
+                    <!-- 前进 -->
+                    <div class="mouse-btn fwd" tabindex="0" role="button" aria-label="前进键统计">
+                      <div class="btn-title">前进</div>
+                      <div class="ttHero">
+                        <div class="hero-val dbl-val">0</div>
+                        <div class="hero-label">双击次数</div>
+                      </div>
+                      <div class="ttDivider"></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下计数</span>
+                        <span class="ttStatVal down-count">0</span>
+                      </div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">抬起计数</span>
+                        <span class="ttStatVal up-count">0</span>
+                      </div>
+                      <div class="ttDivider"></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下→按下</span>
+                        <span class="ttStatVal dd-curr">--</span>
+                      </div>
+                      <div class="ttMini">最小: <span class="dd-min">--</span></div>
+                      <div class="ttStat">
+                        <span class="ttStatLabel">按下→抬起</span>
+                        <span class="ttStatVal du-curr">--</span>
+                      </div>
+                      <div class="ttMini">最小: <span class="du-min">--</span></div>
+                    </div>
+                  </div>
+
+                  <!-- 双击阈值设置 -->
+                  <div class="card ttThresholdCard">
+                    <div class="ttThresholdRow">
+                      <div class="ttThresholdText">
+                        <div class="title" id="thresholdTitle">双击阈值</div>
+                        <div class="sub" id="thresholdHint">建议 60~120ms。数值越小越严格；越大越容易判定为双击。</div>
+                      </div>
+
+                      <div class="ttThresholdControls">
+                        <label class="label" for="thresholdInput" id="thresholdLabel">阈值 (ms)</label>
+                        <input class="input ttInputSmall" id="thresholdInput" type="number" value="80" inputmode="numeric" />
+                        <button id="resetClicks" class="btn danger" type="button">重置统计</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 下方：滚轮 + 自定义键位 -->
+                  <div class="ttBottomGrid">
+                    <div class="card ttScrollCard" aria-label="滚轮统计">
+                      <div class="cardhead">
+                      </div>
+
+                      <div class="ttScrollGrid">
+                        <div class="ttScrollItem" id="wrapUp">
+                          <div class="scroll-arrow">↑</div>
+                          <div class="scroll-count" id="sUp">0</div>
+                          <div class="scroll-name" id="scrollUpName">上滚</div>
+                        </div>
+
+                        <div class="ttScrollItem" id="wrapDown">
+                          <div class="scroll-arrow">↓</div>
+                          <div class="scroll-count" id="sDown">0</div>
+                          <div class="scroll-name" id="scrollDownName">下滚</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="card ttKeyCard" aria-label="自定义键位检测">
+                      <div class="ttKeyHeader">
+                        <div class="ttKeyTitleBlock">
+                          <div class="title" id="keyTitle">自定义键位检测</div>
+                        </div>
+
+                        <div class="ttKeyHeaderRight">
+                          <div class="ttKeyPills">
+                            <div class="pill" id="customKeyState">状态：--</div>
+                          </div>
+                          <div class="ttKeyActions">
+                            <button id="pickKeyBtn" class="btn primary" type="button">录入</button>
+                            <button id="resetKeyBtn" class="btn" type="button">重置</button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="ttKeyGrid">
+                        <div class="ttKeyGridRow ttKeyGridRowTop">
+                          <div class="ttMetric">
+                            <div class="ttMetricTitle">按下计数</div>
+                            <div class="ttMetricVal" id="kDown">0</div>
+                          </div>
+                          <div class="ttMetric">
+                            <div class="ttMetricTitle">抬起计数</div>
+                            <div class="ttMetricVal" id="kUp">0</div>
+                          </div>
+                          <div class="ttMetric">
+                            <div class="ttMetricTitle">双击次数</div>
+                            <div class="ttMetricVal" id="kDbl">0</div>
+                          </div>
+                        </div>
+
+                        <div class="ttKeyGridRow ttKeyGridRowBottom">
+                          <div class="ttMetric ttMetricThreshold">
+                            <div class="ttMetricTitle">双击阈值 (ms)</div>
+                            <div class="ttMetricInline">
+                              <input id="kThresholdInput" class="input ttInputSmall" type="number" value="80" inputmode="numeric" />
+                            </div>
+                          </div>
+
+                          <div class="ttMetric">
+                            <div class="ttMetricTitle">按下→按下（连按间隔）</div>
+                            <div class="ttMetricInline">
+                              <span class="ttMetricBig" id="kDDCurr">--</span>
+                              <span class="sub">最小: <span id="kDDMin">--</span></span>
+                            </div>
+                          </div>
+
+                          <div class="ttMetric">
+                            <div class="ttMetricTitle">按下→抬起（按住时长）</div>
+                            <div class="ttMetricInline">
+                              <span class="ttMetricBig" id="kDUCurr">--</span>
+                              <span class="sub">最小: <span id="kDUMin">--</span></span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ========== 02 / 轮询率检测 ========== -->
+              <div id="pagePoll" class="page" aria-label="轮询率检测">
+                <div class="ttTwoCol">
+                  <div class="card ttPollLeft">
+                    <div class="cardhead">
+                      <div class="title">轮询率检测</div>
+                      <div class="sub">点击“开始测试”锁定光标后，做快速且稳定的圆周移动；ESC/右键退出锁定。</div>
+                    </div>
+
+                    <div class="ttPollRing" id="pollRing" aria-label="Polling ring">
+                      <canvas id="ringCanvas" aria-hidden="true"></canvas>
+                      <div class="ttPollRingInner">
+                        <div class="ttPollHz">
+                          <span class="ttPollHzVal" id="hzDisplay">--</span>
+                          <span class="ttPollHzUnit">Hz</span>
+                        </div>
+                        <div class="sub" id="hzHint">--</div>
+                      </div>
+                    </div>
+
+                    <div class="ttMetricRow">
+                      <div class="ttMiniMetric">
+                        <div class="label">峰值</div>
+                        <div class="value" id="hzPeak">--</div>
+                      </div>
+                      <div class="ttMiniMetric">
+                        <div class="label">平均</div>
+                        <div class="value" id="hzAvg">--</div>
+                      </div>
+                      <div class="ttMiniMetric">
+                        <div class="label">抖动</div>
+                        <div class="value" id="hzJit">--</div>
+                      </div>
+                      <div class="ttMiniMetric">
+                        <div class="label">样本</div>
+                        <div class="value" id="hzSamples">--</div>
+                      </div>
+                    </div>
+
+                    <div class="ttRowCenter">
+                      <button id="rateBox" class="btn primary" type="button">开始测试（锁定光标）</button>
+                      <button id="stopPoll" class="btn danger" type="button">结束</button>
+                    </div>
+
+                    <div class="hint">若数值异常，请优先使用 Chrome / Edge，并关闭浏览器鼠标手势功能。</div>
+                  </div>
+
+                  <div class="card ttPollRight">
+                    <div class="cardhead">
+                      <div class="title">实时曲线</div>
+                      <div class="sub">显示最近约 3 秒的输出</div>
+                    </div>
+
+                    <div class="ttCanvasWrap">
+                      <canvas id="hzChart" width="900" height="420"></canvas>
+                    </div>
+
+                    <div class="pill">常见档位：125 / 250 / 500 / 1000 / 2000 / 4000 / 8000</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ========== 03 / 灵敏度匹配 ========== -->
+              <div id="pageMatch" class="page" aria-label="灵敏度匹配">
+                <div class="ttTwoCol">
+                  <div class="card ttMatchLeft">
+                    <div class="ttMatchHead">
+                      <div class="ttMatchTitleGroup">
+                        <div class="title">灵敏度匹配</div>
+                      </div>
+                    </div>
+
+                    <!-- 使用方法卡片 -->
+                    <div class="ttMatchCard ttMatchInfoCard">
+                      <div class="card-label">使用方法</div>
+                      <div class="ttMatchSteps">
+                        <div class="step-item"><span class="step-num">1.</span><p><b>系统/驱动设置：</b>关闭win“增强指针精确度”；关闭驱动的移动同步 / 直线修正 / 纹波修正（Angle Snapping / Ripple / Motion Sync 等）。</p></div>
+                        <div class="step-item"><span class="step-num">2.</span><p><b>准备轨道：</b>建议用胶带贴一条直线导轨并标出起点与终点。</p></div>
+                        <div class="step-item"><span class="step-num">3.</span><p><b>输入基准鼠标 DPI1：</b>输入你需要匹配的鼠标的DPI</p></div>
+                        <div class="step-item"><span class="step-num">4.</span><p><b>开始测鼠标1：</b>点击“开始测鼠标1（3次）”。每次按住左键不松开后开始移动，推到终点后松开左键结束；共做 3 次。尽量匀速直推，避免回拉。</p></div>
+                        <div class="step-item"><span class="step-num">5.</span><p><b>开始测鼠标2：</b>同样做 3 次；右侧记录中若某次偏差较大，可点“重测”替换该次。</p></div>
+                      </div>
+                    </div>
+
+                    <!-- 控制区卡片 -->
+                    <div class="ttMatchCard ttMatchControlCard">
+                      <div class="ttMatchInputRow">
+                        <div class="input-group">
+                          <label for="dpi1Input">基准鼠标 DPI1</label>
+                          <div class="input-wrap">
+                            <input id="dpi1Input" class="input" type="number" value="800" inputmode="numeric" />
+                          </div>
+                        </div>
+                        <button class="btn btn-hint" type="button">计算匹配值</button>
+                      </div>
+
+                      <div class="ttMatchActionRow">
+                        <button id="startM1" class="btn btn-measure" type="button">开始测鼠标1（3次）</button>
+                        <button id="startM2" class="btn btn-measure" type="button">开始测鼠标2（3次）</button>
+                        <button id="resetMatch" class="btn btn-reset" type="button">重置</button>
+                      </div>
+
+                      <div class="ttStatus" id="matchStatus">状态：等待开始。</div>
+                    </div>
+
+                    <div class="ttMatchDivider"></div>
+
+                    <!-- 结果展示区 -->
+                    <div class="ttMatchResultArea">
+                      <div class="result-row">
+                        <div class="result-head">
+                          <span class="result-label">建议 DPI2</span>
+                          <div class="quality-text" id="qualityHint"></div>
+                        </div>
+                        <div class="result-value" id="dpi2Out">--</div>
+                      </div>
+                      <div class="result-footer">
+                        <div class="range-text" id="dpi2Range">误差范围：--</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="card ttMatchRight">
+                    <div class="cardhead">
+                      <div class="title">本次测量记录</div>
+                      <div class="sub">每只鼠标各做 3 次；偏差较大将提示；可点“重测”替换某次。</div>
+                    </div>
+
+                    <div class="record-sections">
+                      <div class="record-group">
+                        <div class="group-header">
+                          <span class="group-label">鼠标1：<b id="c1Med">C1 = --</b></span>
+                        </div>
+                        <div class="ttTrials" id="m1Trials"></div>
+                      </div>
+
+                      <div class="record-group">
+                        <div class="group-header">
+                          <span class="group-label">鼠标2：<b id="c2Med">C2 = --</b></span>
+                        </div>
+                        <div class="ttTrials" id="m2Trials"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ========== 04 / 鼠标角度校准 ========== -->
+              <div id="pageRot" class="page" aria-label="鼠标角度校准">
+                <div class="ttTwoCol">
+                  <div class="card ttRotLeft">
+                    <div class="ttMatchHead">
+                      <div class="ttMatchTitleGroup">
+                        <div class="title">鼠标角度校准</div>
+                      </div>
+                    </div>
+
+                    <!-- 使用方法卡片 -->
+                    <div class="ttMatchCard ttMatchInfoCard">
+                      <div class="card-label">使用方法</div>
+                      <div class="ttMatchSteps">
+                        <div class="step-item"><span class="step-num">1.</span><p>点击右侧测量区域开始，并锁定光标。</p></div>
+                        <div class="step-item"><span class="step-num">2.</span><p>自然握姿左右来回滑动不少于 10 次（尽量保持你认为的“水平”）。</p></div>
+                        <div class="step-item"><span class="step-num">3.</span><p>右键暂停，在左侧“结果”查看推荐角度与建议角度；需要继续就点击右侧测量区域。</p></div>
+                        <div class="step-item"><span class="step-num">4.</span><p>也可以在驱动里尝试不同角度并反复测量，直到“推荐角度”落在正负 1 度以内。</p></div>
+                      </div>
+                    </div>
+
+                    <div class="ttRotActions">
+                      <button id="rotResetBtn" class="btn btn-measure" type="button">重置</button>
+                      <button id="rotCopyBtn" class="btn btn-measure" type="button">复制角度</button>
+                      <button id="rotWriteAngleBtn" class="btn btn-measure" type="button">写入推荐角度</button>
+                    </div>
+
+                    <!-- 结果展示卡片 -->
+                    <div class="ttMatchCard ttRotControlCard">
+                      <div class="ttRotResultGroup">
+                        <div class="result-main">
+                          <span class="result-sub-label">推荐角度</span>
+                          <div class="ttRotAngle"><span id="rotAngleFinal">--</span><span class="ttRotDeg">°</span></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="card ttRotRight">
+                    <div class="ttRotStats">
+                      <div class="pill" id="rotSwipePill">往返：<b id="rotSwipeCount">0</b>/10</div>
+                      <div class="pill">样本：<b id="rotSampleCount">0</b></div>
+                      <div class="pill">稳定：<b id="rotStability">--</b></div>
+                    </div>
+
+                    <div class="ttRotBox" id="rotBox" role="button" aria-label="Mouse rotation box">
+                      <canvas id="rotCanvas" aria-hidden="true"></canvas>
+
+                      <div class="ttRotHud">
+                        <div class="ttRotHudTop">
+                          <div class="btn primary ttRotHintBtn" id="rotTopHint">点击下面区域开始；右键暂停。</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- ========== 页面5：按键映射 ========== -->
+      <section class="page active" id="keys" aria-label="Keys">
+        <div class="pagegrid singlegrid">
+          <div class="card kmCard">
+            <div class="cardhead">
+              <div class="title">按键映射</div>
+              <div class="sub">  </div>
+            </div>
+
+            <!-- 按键映射画布区域 -->
+            <div class="kmStage" id="kmStage">
+              <div class="kmCanvas" id="kmCanvas" aria-label="Mouse map">
+                <!-- 鼠标示意图 -->
+                <img class="kmImg" src="./image/default.png" alt="mouse" />
+
+                <!-- 按键映射点：每个按键在鼠标图上的位置和功能 -->
+                <!-- 按键1：左键（位置：左侧，坐标 42%, 24%） -->
+                <div class="kmPoint bubble-left" data-btn="1" style="--x:35; --y:20;">
+                  <button class="kmDotBtn" type="button" data-btn="1" aria-label="按键1"></button>
+                  <div class="kmBubble"><div class="kmBubbleKey">按键1</div><span class="kmBubbleText" id="kmLabel1">左键</span></div>
+                </div>
+
+                <!-- 按键2：右键（位置：右侧，坐标 62%, 38%） -->
+                <div class="kmPoint bubble-right" data-btn="2" style="--x:65; --y:38;">
+                  <button class="kmDotBtn" type="button" data-btn="2" aria-label="按键2"></button>
+                  <div class="kmBubble"><div class="kmBubbleKey">按键2</div><span class="kmBubbleText" id="kmLabel2">右键</span></div>
+                </div>
+
+                <!-- 按键3：中键/滚轮按下（位置：右侧，坐标 51%, 26%） -->
+                <div class="kmPoint bubble-right" data-btn="3" style="--x:51; --y:24;">
+                  <button class="kmDotBtn" type="button" data-btn="3" aria-label="按键3"></button>
+                  <div class="kmBubble"><div class="kmBubbleKey">按键3</div><span class="kmBubbleText" id="kmLabel3">中键</span></div>
+                </div>
+
+                <!-- 按键4：侧键-前进（位置：左侧，坐标 32%, 42%） -->
+                <div class="kmPoint bubble-left" data-btn="4" style="--x:24; --y:38;">
+                  <button class="kmDotBtn" type="button" data-btn="4" aria-label="按键4"></button>
+                  <div class="kmBubble"><div class="kmBubbleKey">按键4</div><span class="kmBubbleText" id="kmLabel4">前进</span></div>
+                </div>
+
+                <!-- 按键5：侧键-后退（位置：左侧，坐标 32%, 54%） -->
+                <div class="kmPoint bubble-left" data-btn="5" style="--x:26; --y:50;">
+                  <button class="kmDotBtn" type="button" data-btn="5" aria-label="按键5"></button>
+                  <div class="kmBubble"><div class="kmBubbleKey">按键5</div><span class="kmBubbleText" id="kmLabel5">后退</span></div>
+                </div>
+
+                <!-- 按键6：DPI切换键（位置：右侧，坐标 52%, 70%） -->
+                <div class="kmPoint bubble-right" data-btn="6" style="--x:52; --y:70;">
+                  <button class="kmDotBtn" type="button" data-btn="6" aria-label="按键6"></button>
+                  <div class="kmBubble"><div class="kmBubbleKey">按键6</div><span class="kmBubbleText" id="kmLabel6">DPI循环</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右侧弹出抽屉：按键映射选择列表 -->
+        <aside class="kmDrawer" id="kmDrawer" aria-hidden="true">
+          <div class="kmDrawerHead">
+            <div class="kmDrawerTitle" id="kmDrawerTitle">选择映射</div>
+            <button class="iconbtn" id="kmDrawerClose" type="button" aria-label="关闭">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6 6 18M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- 映射类型标签页（如：基础功能、宏、快捷键等） -->
+          <div class="kmTabs" id="kmTabs" role="tablist" aria-label="Keymap tabs"></div>
+
+          <div class="kmDrawerBody">
+            <!-- 搜索框：快速查找映射功能 -->
+            <div class="field">
+              <div class="label">搜索</div>
+              <input class="input" id="kmSearch" placeholder="输入关键字..." />
+            </div>
+            <!-- 映射列表：显示可选择的按键功能（由JavaScript动态生成） -->
+            <div class="kmList" id="kmList" role="list"></div>
+          </div>
+        </aside>
+
+        <!-- 抽屉背景遮罩：点击关闭抽屉 -->
+        <div class="kmBackdrop" id="kmBackdrop" aria-hidden="true"></div>
+      </section>
+      </div>
+    </main>
+  </div>
+  </div>
+
+  <!-- ==================== JavaScript 脚本引用 ==================== -->
+  <!-- 注意：脚本加载顺序很重要，请勿随意调整 -->
+  <!-- 设备运行时：HID设备连接和通信核心 -->
+  <script src="./device_runtime.js"></script>
+  <!-- 重构工具：通用工具函数和辅助方法 -->
+  <script src="./refactor.js"></script>
+  <!-- 主应用逻辑：页面路由、UI交互、数据绑定 -->
+  <script src="./app.js"></script>
+  <!-- 鼠标测试主功能：按键映射、DPI、性能等核心功能 -->
+  <script src="./mouse-main.js"></script>
+  <!-- 导航和匹配工具：灵敏度匹配功能 -->
+  <script src="./nav-match.js"></script>
+  <!-- 角度校准工具：鼠标角度校准功能 -->
+  <script src="./rotation-calibration.js"></script>
+
+  <script>
+  /**
+   * UI Bridge: 将新的设计控件与原有的 app.js 逻辑挂钩
+   * 目的：在不修改 app.js 核心逻辑的前提下，重绘 DPI 控制面板
+   */
+  (function () {
+    if (window.__dpiUiBridgeInited) return;
+    window.__dpiUiBridgeInited = true;
+
+    const refs = {
+      oldSlot: document.getElementById("slotCountSelect"),
+      oldMode: document.getElementById("dpiAdvancedToggle"),
+      oldMin: document.getElementById("dpiMinSelect"),
+      oldMax: document.getElementById("dpiMaxSelect"),
+
+      newPanel: document.querySelector(".dpi-panel-redesign"),
+      newSlotWrap: document.getElementById("uiSlotControl"),
+      newModeGroup: document.querySelector(".dpi-panel-redesign .group-mode"),
+      newModeBtn: document.getElementById("uiModeSwitch"),
+      newMinBtn: document.getElementById("uiRangeMinBtn"),
+      newMaxBtn: document.getElementById("uiRangeMaxBtn"),
+      newMinVal: document.getElementById("uiRangeMinVal"),
+      newMaxVal: document.getElementById("uiRangeMaxVal"),
+    };
+
+    const required = [
+      "oldSlot", "oldMode", "oldMin", "oldMax",
+      "newSlotWrap", "newModeBtn", "newMinBtn", "newMaxBtn", "newMinVal", "newMaxVal",
+    ];
+    for (const key of required) {
+      if (!refs[key]) {
+        console.warn("[DPI UI Bridge] Missing element:", key);
+        return;
+      }
+    }
+
+    function textForSelectValue(selectEl) {
+      const option = selectEl?.selectedOptions?.[0];
+      const text = (option?.textContent || selectEl?.value || "").trim();
+      return text || "";
+    }
+
+    function ensureSlotButtonsFromSelect() {
+      const optionValues = Array.from(refs.oldSlot.options || []).map((opt) => String(opt.value || ""));
+      const currentValues = Array.from(refs.newSlotWrap.querySelectorAll("button[data-val]")).map((btn) =>
+        String(btn.dataset.val || "")
+      );
+      const sameShape = optionValues.length === currentValues.length
+        && optionValues.every((val, idx) => val === currentValues[idx]);
+      if (sameShape) return;
+
+      refs.newSlotWrap.innerHTML = "";
+      optionValues.forEach((val) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.dataset.val = val;
+        btn.textContent = val;
+        refs.newSlotWrap.appendChild(btn);
+      });
+    }
+
+    // ----------------------------------------------------
+    // Logic 1: Slot Count (挡位数量) - 同步与交互
+    // ----------------------------------------------------
+    let lastSlotUiValue = null;
+    let slotAnimTimer = null;
+
+    function triggerSlotSwitchAnimation(activeBtn) {
+      if (!activeBtn) return;
+      refs.newSlotWrap.classList.remove("is-switching");
+      activeBtn.classList.remove("slot-switch-pop");
+      void refs.newSlotWrap.offsetWidth;
+      refs.newSlotWrap.classList.add("is-switching");
+      activeBtn.classList.add("slot-switch-pop");
+
+      if (slotAnimTimer) clearTimeout(slotAnimTimer);
+      slotAnimTimer = setTimeout(() => {
+        refs.newSlotWrap.classList.remove("is-switching");
+        activeBtn.classList.remove("slot-switch-pop");
+      }, 240);
+    }
+
+    function syncSlotUI() {
+      ensureSlotButtonsFromSelect();
+      const val = String(refs.oldSlot.value || "");
+      const oldValues = new Set(Array.from(refs.oldSlot.options || []).map((opt) => String(opt.value)));
+      const btns = refs.newSlotWrap.querySelectorAll("button");
+      let activeBtn = null;
+      btns.forEach((btn) => {
+        const btnVal = String(btn.dataset.val || "");
+        const enabled = oldValues.has(btnVal);
+        btn.disabled = !enabled;
+        btn.hidden = !enabled;
+        const isActive = enabled && btnVal === val;
+        btn.classList.toggle("active", isActive);
+        if (isActive) activeBtn = btn;
+      });
+
+      const shouldAnimate = lastSlotUiValue !== null && lastSlotUiValue !== val;
+      lastSlotUiValue = val;
+      if (shouldAnimate) triggerSlotSwitchAnimation(activeBtn);
+    }
+
+    refs.oldSlot.addEventListener("change", syncSlotUI);
+    const slotObserver = new MutationObserver(syncSlotUI);
+    slotObserver.observe(refs.oldSlot, { attributes: true, childList: true, subtree: true });
+
+    refs.newSlotWrap.addEventListener("click", (event) => {
+      const target = event.target?.closest?.("button[data-val]");
+      if (!target || target.disabled) return;
+      const val = String(target.dataset.val || "");
+      if (!val) return;
+      refs.oldSlot.value = val;
+      refs.oldSlot.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    // ----------------------------------------------------
+    // Logic 2: Advanced Mode (高级模式) - 同步与交互
+    // ----------------------------------------------------
+    function syncModeUI() {
+      const isOn = refs.oldMode.getAttribute("aria-pressed") === "true";
+      const canAdvanced = !refs.oldMode.disabled;
+      refs.newModeBtn.setAttribute("data-state", isOn ? "true" : "false");
+      refs.newModeBtn.disabled = !canAdvanced;
+      refs.newModeBtn.setAttribute("aria-pressed", isOn ? "true" : "false");
+      if (refs.newModeGroup) {
+        refs.newModeGroup.hidden = !canAdvanced;
+        refs.newModeGroup.setAttribute("aria-hidden", canAdvanced ? "false" : "true");
+      }
+      if (refs.newPanel) {
+        refs.newPanel.classList.toggle("no-axis", !canAdvanced);
+      }
+    }
+
+    const modeObserver = new MutationObserver(syncModeUI);
+    modeObserver.observe(refs.oldMode, { attributes: true, attributeFilter: ["aria-pressed", "disabled"] });
+
+    refs.newModeBtn.addEventListener("click", () => {
+      if (refs.newModeBtn.disabled) return;
+      refs.oldMode.click();
+      setTimeout(syncModeUI, 0);
+    });
+
+    // ----------------------------------------------------
+    // Logic 3: Range Picker (范围选择) - 弹窗逻辑
+    // ----------------------------------------------------
+    let pickerEl = null;
+    let pickerSource = null;
+
+    function createPicker() {
+      if (pickerEl) return pickerEl;
+      const el = document.createElement("div");
+      el.className = "ndp-popover";
+      el.setAttribute("role", "dialog");
+      el.setAttribute("aria-label", "DPI range picker");
+      document.body.appendChild(el);
+
+      document.addEventListener("click", (event) => {
+        const clickInsidePicker = el.contains(event.target);
+        const clickOnRangeBtn = !!event.target?.closest?.(".range-box");
+        if (el.classList.contains("open") && !clickInsidePicker && !clickOnRangeBtn) {
+          el.classList.remove("open");
+          pickerSource = null;
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && el.classList.contains("open")) {
+          el.classList.remove("open");
+          pickerSource = null;
+        }
+      });
+
+      return (pickerEl = el);
+    }
+
+    function openPicker(anchorBtn, sourceSelect) {
+      if (!sourceSelect || sourceSelect.disabled) return;
+      const picker = createPicker();
+      const opts = Array.from(sourceSelect.options || []);
+      if (!opts.length) return;
+
+      pickerSource = sourceSelect;
+      picker.innerHTML = "";
+      const currentVal = String(sourceSelect.value || "");
+
+      opts.forEach((opt) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ndp-option";
+        const optValue = String(opt.value || "");
+        if (optValue === currentVal) btn.classList.add("active");
+        btn.textContent = (opt.textContent || optValue).trim();
+
+        btn.addEventListener("click", () => {
+          sourceSelect.value = optValue;
+          sourceSelect.dispatchEvent(new Event("change", { bubbles: true }));
+          picker.classList.remove("open");
+          pickerSource = null;
+        });
+
+        picker.appendChild(btn);
+      });
+
+      const rect = anchorBtn.getBoundingClientRect();
+      const width = 280;
+      const margin = 12;
+      let left = rect.left;
+      if (left + width > window.innerWidth - margin) {
+        left = Math.max(margin, window.innerWidth - width - margin);
+      }
+      let top = rect.bottom + 10;
+      if (top + 320 > window.innerHeight - margin) {
+        top = Math.max(margin, rect.top - 320 - 10);
+      }
+
+      picker.style.left = left + "px";
+      picker.style.top = top + "px";
+      picker.classList.add("open");
+    }
+
+    function syncRangeUI() {
+      refs.newMinVal.textContent = textForSelectValue(refs.oldMin) || "100";
+      refs.newMaxVal.textContent = textForSelectValue(refs.oldMax) || "8000";
+    }
+
+    refs.oldMin.addEventListener("change", syncRangeUI);
+    refs.oldMax.addEventListener("change", syncRangeUI);
+    const rangeObserver = new MutationObserver(() => {
+      syncRangeUI();
+      if (pickerEl?.classList.contains("open") && pickerSource) {
+        const anchor = pickerSource === refs.oldMin ? refs.newMinBtn : refs.newMaxBtn;
+        openPicker(anchor, pickerSource);
+      }
+    });
+    rangeObserver.observe(refs.oldMin, { childList: true, subtree: true, attributes: true });
+    rangeObserver.observe(refs.oldMax, { childList: true, subtree: true, attributes: true });
+
+    refs.newMinBtn.addEventListener("click", () => openPicker(refs.newMinBtn, refs.oldMin));
+    refs.newMaxBtn.addEventListener("click", () => openPicker(refs.newMaxBtn, refs.oldMax));
+
+    // ----------------------------------------------------
+    // 初始化运行
+    // ----------------------------------------------------
+    function syncAll() {
+      syncSlotUI();
+      syncModeUI();
+      syncRangeUI();
+    }
+
+    syncAll();
+    setTimeout(syncAll, 100);
+    setTimeout(syncAll, 350);
+  })();
+  </script>
+
+  <!-- ==================== SVG 滤镜定义 ==================== -->
+  <!-- 液体流动效果滤镜（Gooey Effect）：用于测试工具等UI元素的特殊视觉效果 -->
+  <!-- 注意：此SVG元素被隐藏，仅用于定义滤镜，供CSS引用 -->
+  <svg style="visibility: hidden; position: absolute;" width="0" height="0" xmlns="http://www.w3.org/2000/svg" version="1.1">
+    <defs>
+      <filter id="ttGooey">
+        <!-- 高斯模糊：创建柔和的边缘效果 -->
+        <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur" />
+        <!-- 颜色矩阵：增强对比度，创建液体流动的粘合效果 -->
+        <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -9" result="goo" />
+        <!-- 合成：将原始图形与处理后的效果合成 -->
+        <feComposite in="SourceGraphic" in2="goo" operator="atop" />
+      </filter>
+    </defs>
+  </svg>
+</body>
+</html>

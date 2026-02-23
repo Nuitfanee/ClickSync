@@ -1,0 +1,44 @@
+/* ===========================================================
+   Device Theme Isolation
+   - 通过 body.device-* 命名空间隔离 Rapoo / ATK / Chaos
+   - 不依赖“链式继承”，ATK 如需 Rapoo 风格，通过显式重复规则实现（组合）
+   =========================================================== */
+
+body.device-chaos{
+  /* 预留：Chaos 专属 tokens（如需可在此扩展） */
+}
+
+body.device-rapoo{
+  /* 预留：Rapoo 专属 tokens（如需可在此扩展） */
+}
+
+body.device-atk{
+  /* 预留：ATK 专属 tokens（如需可在此扩展） */
+}
+
+/* =============================
+   ATK：显式复用 rapoo-family UI 皮肤（不再依赖 device-rapoo）
+   ============================= */
+
+/* Advanced panel remapping */
+body.device-atk #advancedPanel #bitLOD + .shutter-row .status-text::after{ content: "已关闭"; }
+body.device-atk #advancedPanel #bitLOD:checked + .shutter-row .status-text::after{ content: "已激活"; }
+
+/* replace bit6 toggle with polling selector */
+body.device-atk #advancedPanel .rapoo-polling{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+body.device-atk #advancedPanel #bit6{ display:none; }
+body.device-atk #advancedPanel #rapooPollingSelectAdv{
+  min-width: 92px;
+  height: 34px;
+}
+body.device-atk #advancedPanel .rapoo-polling .xSelectTrigger { font-weight: 800; }
+
+/* Basic performance page: extra switches container */
+/* 修改：ATK 不支持无线性能与通信协议，隐藏该容器 */
+body.device-atk #basicMonolith .basicRapooSwitches{ display: none; }
