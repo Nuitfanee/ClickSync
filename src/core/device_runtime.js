@@ -1,0 +1,589 @@
+/**
+ * Runtime layer: WebHID discovery and protocol bootstrap orchestration.
+ *
+ * Scope in this file:
+ * - Persist selected device id and last HID metadata.
+ * - Identify device type from HID fingerprint (vendor/product/usage signatures).
+ * - Build connect candidates for manual and auto connect.
+ * - Load selected protocol script and expose readiness promise.
+ *
+ * Out of scope in this file:
+ * - No DOM/UI rendering.
+ * - No profile key mapping or value transforms (handled by refactor.core/profiles).
+ * - No feature read/write business logic (handled by app.js + DeviceWriter/Reader).
+ *
+ * Startup chain:
+ * 1) app.js calls DeviceRuntime.whenProtocolReady().
+ * 2) ensureProtocolLoaded() injects protocol_api_* and resolves ProtocolApi.
+ * 3) app.js calls DeviceRuntime.connect(...) to get detectedType + candidates.
+ * 4) app.js performs bootstrapSession() handshake and drives UI.
+ *
+ * New device onboarding in runtime:
+ * 1) Add id to VALID.
+ * 2) Add matcher + request filters in DEVICE_REGISTRY.
+ * 3) Add vid/pid fallback in _inferTypeByVidPid when necessary.
+ * 4) Add script path branch in ensureProtocolLoaded().
+ * 5) Add profile in refactor.profiles.js (runtime only identifies and loads protocol).
+ */
+
+// ============================================================
+// 1) 常量与设备注册表（硬件指纹）
+// ============================================================
+(() => {
+  "use strict";
+
+  const STORAGE_KEY = "device.selected";
+  const LAST_HID_KEY = "mouse.lastHid";
+  const VALID = new Set(["chaos", "rapoo", "atk", "ninjutso", "logitech", "razer"]);
+  const ATK_VENDOR_IDS = new Set([0x373b, 0x3710]);
+  const NINJUTSO_VENDOR_ID = 0x093a;
+  const NINJUTSO_PRODUCT_ID = 0xeb02;
+  const NINJUTSO_ALLOWED_NAME = "ninjutso sora v3";
+  const RAZER_VENDOR_ID = 0x1532;
+  const RAZER_SUPPORTED_PIDS = new Set([0x00c0, 0x00c1, 0x00c2, 0x00c3, 0x00c4, 0x00c5]);
+
+  function _isRapooDevice(d) {
+    return (
+      d?.vendorId === 0x24ae &&
+      Array.isArray(d?.collections) &&
+      d.collections.some((c) => {
+        const page = Number(c?.usagePage);
+        const usage = Number(c?.usage);
+        return page === 0xff00 && (usage === 14 || usage === 15);
+      })
+    );
+  }
+
+  function _isAtkDevice(d) {
+    return (
+      ATK_VENDOR_IDS.has(Number(d?.vendorId)) &&
+      Array.isArray(d?.collections) &&
+      d.collections.some((c) => Number(c?.usagePage) === 0xff02 && Number(c?.usage) === 0x0002)
+    );
+  }
+
+  function _isChaosDevice(d) {
+    return (
+      d?.vendorId === 0x1915 &&
+      Array.isArray(d?.collections) &&
+      d.collections.some((c) => {
+        const page = Number(c?.usagePage);
+        return page === 65290 || page === 65280;
+      })
+    );
+  }
+
+  function _isLogitechDevice(d) {
+    return (
+      d?.vendorId === 0x046d &&
+      Array.isArray(d?.collections) &&
+      d.collections.some((c) => {
+        const page = Number(c?.usagePage);
+        const usage = Number(c?.usage);
+        if (page !== 0xff00) return false;
+        if (!Number.isFinite(usage)) return true;
+        return usage === 0x01 || usage === 0x02;
+      })
+    );
+  }
+
+  function _isRazerDevice(d) {
+    return (
+      Number(d?.vendorId) === RAZER_VENDOR_ID &&
+      RAZER_SUPPORTED_PIDS.has(Number(d?.productId))
+    );
+  }
+
+  function _isAllowedNinjutsoName(d) {
+    return String(d?.productName || "").trim().toLowerCase() === NINJUTSO_ALLOWED_NAME;
+  }
+
+  function _passesConnectionFilter(d) {
+    const vid = Number(d?.vendorId);
+    const pid = Number(d?.productId);
+    if (vid === NINJUTSO_VENDOR_ID && pid === NINJUTSO_PRODUCT_ID) {
+      return _isAllowedNinjutsoName(d);
+    }
+    return true;
+  }
+
+  function _isNinjutsoDevice(d) {
+    if (Number(d?.vendorId) !== NINJUTSO_VENDOR_ID || Number(d?.productId) !== NINJUTSO_PRODUCT_ID) return false;
+    if (!_isAllowedNinjutsoName(d)) return false;
+    // Some browsers/firmwares may not expose vendor pages consistently on first read.
+    if (!Array.isArray(d?.collections) || !d.collections.length) return true;
+    return d.collections.some((c) => {
+      const page = Number(c?.usagePage);
+      return page === 0xff01 || page === 0xff00;
+    });
+  }
+
+  /**
+   * DEVICE_REGISTRY 定义硬件指纹以识别设备类型
+   * 目的：在不依UI 的前提下完成设备类型识别
+   * 通过 vendor/product id usage page/usage 签名完成判定
+   */
+  const DEVICE_REGISTRY = [
+    {
+      type: "rapoo",
+      label: "Rapoo",
+
+      match: _isRapooDevice,
+      filters: [
+        { vendorId: 0x24ae, usagePage: 0xff00, usage: 14 },
+        { vendorId: 0x24ae, usagePage: 0xff00, usage: 15 },
+      ],
+    },
+    {
+      type: "atk",
+      label: "ATK",
+      match: _isAtkDevice,
+      filters: [
+        { vendorId: 0x373b, usagePage: 0xff02, usage: 0x0002 },
+        { vendorId: 0x3710, usagePage: 0xff02, usage: 0x0002 },
+      ],
+    },
+    {
+      type: "ninjutso",
+      label: "NINJUTSO",
+      match: _isNinjutsoDevice,
+      filters: [
+        { vendorId: NINJUTSO_VENDOR_ID, productId: NINJUTSO_PRODUCT_ID, usagePage: 0xff01 },
+        { vendorId: NINJUTSO_VENDOR_ID, productId: NINJUTSO_PRODUCT_ID, usagePage: 0xff00 },
+        { vendorId: NINJUTSO_VENDOR_ID, productId: NINJUTSO_PRODUCT_ID },
+      ],
+    },
+    {
+      type: "chaos",
+      label: "Chaos",
+      match: _isChaosDevice,
+      filters: [
+        { vendorId: 0x1915, usagePage: 65290 },
+        { vendorId: 0x1915, usagePage: 65280 },
+      ],
+    },
+    {
+      type: "logitech",
+      label: "Logitech",
+      match: _isLogitechDevice,
+      filters: [
+        { vendorId: 0x046d, usagePage: 0xff00, usage: 0x01 },
+        { vendorId: 0x046d, usagePage: 0xff00, usage: 0x02 },
+        { vendorId: 0x046d, usagePage: 0xff00 },
+      ],
+    },
+    {
+      type: "razer",
+      label: "Razer",
+      match: _isRazerDevice,
+      filters: Array.from(RAZER_SUPPORTED_PIDS, (productId) => ({
+        vendorId: RAZER_VENDOR_ID,
+        productId,
+      })),
+    },
+  ];
+
+  // ============================================================
+  // 2) 选择与持久化
+  // ============================================================
+  /**
+   * 规范化设ID
+   * 目的：统一入口并消除别名，避免状态漂移
+   *
+   * @param {string} id - 设备标识
+   * @returns {string} 规范化后的设备标识
+   */
+  const normalizeDeviceId = (id) => {
+    const x = String(id || "").toLowerCase();
+    return VALID.has(x) ? x : "chaos";
+  };
+
+  /**
+   * 获取当前选择的设备
+   * 目的：统一读取入口，保UI Runtime 一致
+   *
+   * @returns {string} 设备标识
+   */
+  function getSelectedDevice() {
+    const v = (localStorage.getItem(STORAGE_KEY) || "chaos").toLowerCase();
+    return VALID.has(v) ? v : "chaos";
+  }
+
+  /**
+   * 设置当前选择的设备，并按需触发刷新
+   * 目的：切换设备时刷新 UI 与协议绑定，确保状态一致
+   *
+   * @param {string} device - 设备标识
+   * @param {Object} [opts]
+   * @param {boolean} [opts.reload=true] - 是否刷新页面
+   * @returns {void} 无返回值
+   */
+  function setSelectedDevice(device, { reload = true } = {}) {
+    const next = normalizeDeviceId(device);
+    if (next !== getSelectedDevice()) {
+      try { localStorage.setItem(STORAGE_KEY, next); } catch (_) {}
+      if (reload) {
+        try { location.reload(); } catch (_) {}
+      }
+    }
+  }
+
+  /**
+   * 保存最近一次连接的 HID 设备信息
+   * 目的：为自动连接提供优先匹配依据，减少重复授权
+   *
+   * @param {HIDDevice} dev - HID 设备实例
+   * @returns {void} 无返回值
+   */
+  function saveLastHidDevice(dev) {
+    if (!dev) return;
+    try {
+      localStorage.setItem(
+        LAST_HID_KEY,
+        JSON.stringify({
+          vendorId: dev.vendorId,
+          productId: dev.productId,
+          productName: dev.productName || "",
+          ts: Date.now(),
+        })
+      );
+    } catch (_) {}
+  }
+
+  /**
+   * 读取上一次连接的 HID 设备信息
+   * 目的：基于历史选择提升自动连接命中率
+   *
+   * @returns {Object|null} 设备摘要信息
+   */
+  function loadLastHidDevice() {
+    try {
+      return JSON.parse(localStorage.getItem(LAST_HID_KEY) || "null");
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ============================================================
+  // 3) 低层辅助（脚本加载）
+  // ============================================================
+  /**
+   * 判断协议脚本是否已存在
+   * 目的：避免重复注入脚本导致副作用
+   *
+   * @param {string} src - 脚本路径
+   * @returns {boolean} 是否已存在
+   */
+  function _scriptExists(src) {
+    return Array.from(document.scripts).some((s) => (s.src || "").includes(src));
+  }
+
+  /**
+   * 动态加载协议脚本
+   * 目的：按需加载降低首屏负担并隔离协议差异
+   *
+   * @param {string} src - 脚本路径
+   * @returns {Promise<void>} 加载完成 Promise
+   */
+  function _loadScript(src) {
+    return new Promise((resolve, reject) => {
+      if (_scriptExists(src)) return resolve();
+      const el = document.createElement("script");
+      el.src = src;
+      el.async = true;
+      el.onload = () => resolve();
+      el.onerror = () => reject(new Error(`Failed to load ${src}`));
+      document.head.appendChild(el);
+    });
+  }
+
+  // ============================================================
+  // 4) 硬编码过滤候选设备（不使用评分排序）
+  // ============================================================
+  function _filterDevicesByType(devices, type) {
+    const list = Array.isArray(devices) ? devices : [];
+    if (type === "rapoo") return list.filter(_isRapooDevice);
+    if (type === "atk") return list.filter(_isAtkDevice);
+    if (type === "ninjutso") return list.filter(_isNinjutsoDevice);
+    if (type === "chaos") return list.filter(_isChaosDevice);
+    if (type === "logitech") return list.filter(_isLogitechDevice);
+    if (type === "razer") return list.filter(_isRazerDevice);
+    return [];
+  }
+
+  function _filterKnownDevices(devices) {
+    const list = Array.isArray(devices) ? devices : [];
+    return list.filter((d) => (
+      _isRapooDevice(d)
+      || _isAtkDevice(d)
+      || _isNinjutsoDevice(d)
+      || _isChaosDevice(d)
+      || _isLogitechDevice(d)
+      || _isRazerDevice(d)
+    ));
+  }
+
+  /**
+   * 收集并过滤候选设备列表
+   * 目的：完全使用硬编码过滤规则剔除非目标设备，不做通用评分排序
+   *
+   * @param {HIDDevice|null} primary - 主设备候选
+   * @param {string|null} preferType - 偏好类型
+   * @param {Object} [opts]
+   * @param {boolean} [opts.pinPrimary=false] - 是否固定主设备优先
+   * @returns {Promise<HIDDevice[]>} 过滤后的设备列表
+   */
+  async function _collectCandidatesByFilter(primary, preferType, { pinPrimary = false } = {}) {
+    const uniq = [];
+    const push = (d) => {
+      if (!d) return;
+      if (uniq.includes(d)) return;
+      uniq.push(d);
+    };
+
+    push(primary);
+    try {
+      const devs = await navigator.hid.getDevices();
+      for (const d of (devs || [])) push(d);
+    } catch (_) {}
+
+    const t = preferType ? String(preferType).toLowerCase() : null;
+    let list = [];
+    if (t) {
+      list = _filterDevicesByType(uniq, t);
+      if (!list.length) list = _filterKnownDevices(uniq);
+    } else {
+      list = _filterKnownDevices(uniq);
+    }
+
+    if (pinPrimary && primary) {
+      if (!list.includes(primary)) return [primary, ...list];
+      return [primary, ...list.filter((d) => d !== primary)];
+    }
+    return list;
+  }
+
+
+  // ============================================================
+  // 5) 连接策略
+  // ============================================================
+  /**
+   * 触发用户授权选择设备
+   * 目的：符合浏览器权限模型，保证由用户手势触发
+   *
+   * @returns {Promise<HIDDevice|null>} 选择的设备或 null
+   */
+  // Browser permission entrypoint for manual HID selection.
+  // Maintainers: keep filter source centralized in DEVICE_REGISTRY.
+  async function requestDevice({ preferDifferentFrom = null } = {}) {
+    if (!navigator.hid) throw new Error("当前浏览器不支持 WebHID");
+
+    const allFilters = DEVICE_REGISTRY.flatMap((entry) => entry.filters);
+    const uniqueFilters = [];
+    const seen = new Set();
+    for (const f of allFilters) {
+      const s = JSON.stringify(f);
+      if (!seen.has(s)) {
+        seen.add(s);
+        uniqueFilters.push(f);
+      }
+    }
+
+    const devices = await navigator.hid.requestDevice({ filters: uniqueFilters });
+    if (!Array.isArray(devices) || !devices.length) return null;
+    const filteredDevices = devices.filter(_passesConnectionFilter);
+    if (!filteredDevices.length) return null;
+
+    const avoidType = preferDifferentFrom ? normalizeDeviceId(preferDifferentFrom) : null;
+    if (avoidType && filteredDevices.length > 1) {
+      const typed = filteredDevices.map((dev) => ({
+        dev,
+        type: identifyDeviceType(dev),
+      }));
+      const hasAvoid = typed.some((x) => x.type === avoidType);
+      if (hasAvoid) {
+        const preferred = typed.find((x) => x.type && x.type !== avoidType);
+        if (preferred?.dev) return preferred.dev;
+      }
+    }
+
+    return filteredDevices[0] || null;
+  }
+
+
+  function _inferTypeByVidPid(device) {
+    const vid = Number(device?.vendorId);
+    const pid = Number(device?.productId);
+    if (vid === 0x24ae) return "rapoo";
+    if (ATK_VENDOR_IDS.has(vid)) return "atk";
+    if (vid === NINJUTSO_VENDOR_ID && pid === NINJUTSO_PRODUCT_ID) {
+      return _isAllowedNinjutsoName(device) ? "ninjutso" : null;
+    }
+    if (vid === 0x1915) return "chaos";
+    if (vid === 0x046d) return "logitech";
+    if (vid === RAZER_VENDOR_ID && RAZER_SUPPORTED_PIDS.has(pid)) return "razer";
+    return null;
+  }
+
+  /**
+   * 识别设备类型
+   * 目的：将设备与适配协议关联，避UI 参与判断
+   *
+   * @param {HIDDevice} device - HID 设备
+   * @returns {string|null} 设备类型
+   */
+  function identifyDeviceType(device) {
+    if (!device) return null;
+    for (const entry of DEVICE_REGISTRY) {
+      if (entry.match(device)) return entry.type;
+    }
+    return _inferTypeByVidPid(device);
+  }
+
+
+  /**
+   * 自动连接候选选择
+   * 目的：仅基于硬编码过滤规则选择候选，并优先复用已HID 句柄
+   *（navigator.hid.getDevices）以避免重复权限弹窗
+   *
+   * @param {Object} [args]
+   * @param {string|null} [args.preferredType] - 偏好设备类型
+   * @returns {Promise<Object>} 设备与候选列表
+   */
+  // Auto-connect probe using navigator.hid.getDevices() only (no permission prompt).
+  async function autoConnect({ preferredType = null } = {}) {
+    if (!navigator.hid) return { device: null, candidates: [], detectedType: null };
+    const candidates = await _collectCandidatesByFilter(null, preferredType);
+    const device = candidates[0] || null;
+    return {
+      device,
+      candidates,
+      detectedType: identifyDeviceType(device),
+      preferredType: preferredType || null,
+    };
+  }
+
+
+  /**
+   * 连接流程（手自动，带候选回退）
+   * 目的：统一连接入口，避免设备分支渗透到 UI
+   *
+   * @param {boolean|Object} mode - true 触发弹窗，Object 直接指定设备
+   * @param {Object} [opts]
+   * @param {Object|null} [opts.primaryDevice] - 主设备候选
+   * @param {string|null} [opts.preferredType] - 偏好设备类型
+   * @param {boolean} [opts.pinPrimary] - 是否固定主设备优先
+   * @returns {Promise<Object>} 连接结果与候选列表
+   */
+  // Build connection plan for app.js handshake stage.
+  // This function only selects and orders candidates; it does not open transport.
+  async function connect(mode = false, { primaryDevice = null, preferredType = null, pinPrimary = false } = {}) {
+    if (!navigator.hid) throw new Error("当前浏览器不支持 WebHID");
+
+    let primary = null;
+
+    if (mode && typeof mode === "object" && mode.vendorId) {
+      primary = mode;
+    } else if (mode === true) {
+      primary = await requestDevice({ preferDifferentFrom: preferredType || getSelectedDevice() });
+    } else if (primaryDevice) {
+      primary = primaryDevice;
+    } else {
+      const auto = await autoConnect({ preferredType });
+      primary = auto.device;
+    }
+
+    if (!primary) {
+      return { device: null, candidates: [], detectedType: null, preferredType: preferredType || null };
+    }
+    if (!_passesConnectionFilter(primary)) {
+      return { device: null, candidates: [], detectedType: null, preferredType: preferredType || null };
+    }
+
+    const detectedType = identifyDeviceType(primary);
+    const isManualPick = mode === true || (mode && typeof mode === "object" && mode.vendorId);
+    const preferType = (
+      isManualPick
+        ? (detectedType || preferredType)
+        : (preferredType || detectedType)
+    ) || getSelectedDevice();
+    const candidates = await _collectCandidatesByFilter(primary, preferType, { pinPrimary });
+
+    return { device: primary, candidates, detectedType, preferredType: preferType };
+  }
+
+
+  // ============================================================
+  // 6) 协议加载（按设备动态注入）
+  // ============================================================
+  /**
+   * 确保所选设备的协议 API 已加载
+   * 目的：按需加载保持 Runtime 轻量，并避免 UI 过早绑定协议脚本
+   *
+   * @returns {Promise<{device: string, ProtocolApi: Object}>} 设备与协议对象
+   */
+  // Load protocol_api_* script for current selected device.
+  // New device protocol onboarding must add mapping here.
+  async function ensureProtocolLoaded() {
+    const device = getSelectedDevice();
+    const src = (device === "rapoo")
+      ? "./src/protocols/protocol_api_rapoo.js"
+      : (device === "atk")
+        ? "./src/protocols/protocol_api_atk.js"
+        : (device === "ninjutso")
+          ? "./src/protocols/protocol_api_ninjutso.js"
+        : (device === "logitech")
+          ? "./src/protocols/protocol_api_logitech.js"
+        : (device === "razer")
+          ? "./src/protocols/protocol_api_razer.js"
+          : "./src/protocols/protocol_api_chaos.js";
+
+    if (!window.ProtocolApi) {
+      await _loadScript(src);
+    }
+
+    if (!window.ProtocolApi) {
+      throw new Error("ProtocolApi 未加载，期望 window.ProtocolApi 可用");
+    }
+
+    return { device, ProtocolApi: window.ProtocolApi };
+  }
+
+
+  /**
+   * 获取协议准备完成的单Promise
+   * 目的：避免重复加载脚本引发竞态或重复执行
+   *
+   * @returns {Promise<{device: string, ProtocolApi: Object}>} 协议准备结果
+   */
+  // Memoized readiness promise to prevent duplicate script injection races.
+  function whenProtocolReady() {
+    if (!this.__p) {
+      this.__p = ensureProtocolLoaded();
+    }
+    return this.__p;
+  }
+
+  // ============================================================
+  // 7) 对外 Runtime API
+  // ============================================================
+  const DeviceRuntime = {
+    getSelectedDevice,
+    setSelectedDevice,
+    normalizeDeviceId,
+    saveLastHidDevice,
+    loadLastHidDevice,
+    requestDevice,
+    identifyDeviceType,
+    autoConnect,
+    connect,
+    ensureProtocolLoaded,
+    whenProtocolReady,
+  };
+
+  window.DeviceRuntime = DeviceRuntime;
+  try { void DeviceRuntime.whenProtocolReady(); } catch (_) {}
+})();
+
+
+
