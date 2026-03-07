@@ -32,7 +32,7 @@
  */
 
 // ============================================================
-// 2) 设备画像与适配器（注册+ 翻译
+// 2) Device profiles and adapters (registration + translation)
 // ============================================================
 (function () {
   const {
@@ -69,7 +69,7 @@
   } = window.__DeviceRefactorCore || {};
 
   // ============================================================
-  // 画像构建函数
+  // Profile builder functions
   // ============================================================
 
   function mergeProfileSection(baseSection, overrideSection) {
@@ -120,6 +120,7 @@
       ui: {
         landingTitle: rapooTexts.landingTitle,
         landingCaption: rapooTexts.landingCaption,
+        landingReadyText: "",
         lod: rapooTexts.lod,
         led: rapooTexts.led,
         perfMode: rapooTexts.perfMode,
@@ -306,12 +307,13 @@
   // });
 
   // ============================================================
-  // 设备画像定义区（按设备名字母序）
+  // Device profile definitions (sorted alphabetically by device name)
   // ============================================================
 
   const AtkProfile = composeDeviceProfile({
     id: "atk",
     ui: {
+      landingReadyText: "ATK READY",
       landingTitle: atkTexts.landingTitle,
       landingCaption: atkTexts.landingCaption,
       lod: atkTexts.lod,
@@ -360,6 +362,7 @@
   const ChaosProfile = composeDeviceProfile({
     id: "chaos",
     ui: {
+      landingReadyText: "CHAOS  READY",
       landingTitle: "",
       landingCaption: "",
       lod: null,
@@ -478,6 +481,7 @@
   const LogitechProfile = composeDeviceProfile({
     id: "logitech",
     ui: {
+      landingReadyText: "LOGITECH READY",
       pollingThemeByWirelessHz: LOGITECH_POLLING_THEME_BY_HZ,
       basicModeTypography: {
         columnsOffsetX: -120,
@@ -488,13 +492,13 @@
           {
             deviceNames: ["PRO X 2 DEX"],
             imageSrc: "./assets/images/GPW_DEX.png",
-            // 占位点位：后续可按实际示意图继续微调
+            // Placeholder points: fine-tune against the final device illustration if needed.
             points: {
               1: { x: 32, y: 20, side: "left" },
               2: { x: 65, y: 38, side: "right" },
-              3: { x: 49.3, y: 24, side: "right" },
-              4: { x: 23, y: 36, side: "left" },
-              5: { x: 25, y: 47, side: "left" },
+              3: { x: 50.2, y: 24, side: "right" },
+              4: { x: 22, y: 39, side: "left" },
+              5: { x: 24, y: 52, side: "left" },
               6: { x: 52, y: 70, side: "right" },
             },
           },
@@ -658,6 +662,7 @@
     id: "ninjutso",
     ui: {
       skinClass: "atk",
+      landingReadyText: "NINJUTSO READY",
       keymap: {
         imageSrc: "./assets/images/ninjutso.png",
         points: {
@@ -776,6 +781,9 @@
 
   const RapooProfile = composeDeviceProfile({
     id: "rapoo",
+    ui: {
+      landingReadyText: "RAPOO READY",
+    },
     dpiSnapper: defaultDpiSnapper,
   });
 
@@ -818,7 +826,18 @@
   const RazerProfile = composeDeviceProfile({
     id: "razer",
     ui: {
-      keymap: razerTexts.keymap,
+      landingReadyText: "RAZER READY",
+      keymap: {
+        imageSrc: "./assets/images/VIPER_V3_耿鬼.png",
+        points: {
+          1: { x: 32, y: 14, side: "left" },
+          2: { x: 68, y: 40, side: "right" },
+          3: { x: 49.9, y: 25, side: "right" },
+          4: { x: 26, y: 43, side: "left" },
+          5: { x: 26, y: 54, side: "left" },
+          6: { x: 49.9, y: 82, side: "right" },
+        },
+      },
       perfMode: razerTexts.perfMode,
       pollingThemeByWirelessHz: LOGITECH_POLLING_THEME_BY_HZ,
       basicModeTypography: {
@@ -1130,7 +1149,7 @@
   };
 
   // ============================================================
-  // 运行期适配器区
+  // Runtime adapter section
   // ============================================================
 
 

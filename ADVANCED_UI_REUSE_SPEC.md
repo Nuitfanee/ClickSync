@@ -70,7 +70,7 @@
 7. 在 `refactor.ui.js` 仅补布局/可见性/排序/文案元数据（如有需要）。
 8. 做最小回归：切换、禁用态、读回态、能力门控、布局切换。
 
-## 8.2) 可视化复用注意事项
+## 8.1) 可视化复用注意事项
 - 先复用骨架，再扩展参数：优先复用现有 DOM + helper；只有现有骨架无法表达时才新增组件。
 - 文案参数化归 `profile.ui`：如 `smartTrackingLevelLabels`、`smartTrackingLevelHint`；`app.js` 仅消费参数渲染。
 - 视觉可见性门控归 `refactor.ui.js`：例如 `features.showHeightViz`；不要在 `app.js` 写品牌开关。

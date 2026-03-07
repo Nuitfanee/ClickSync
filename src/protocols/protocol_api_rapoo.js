@@ -1796,24 +1796,24 @@
     for (let i = 0; i < digits.length; i++) add(digits[i], "keyboard", 0x00, 0x1e + i);
 
     // 常用按键
-    add("回车", "keyboard", 0x00, 0x28);
-    add("ESC", "keyboard", 0x00, 0x29);
-    add("退格", "keyboard", 0x00, 0x2a);
+    add("Enter", "keyboard", 0x00, 0x28);
+    add("Esc", "keyboard", 0x00, 0x29);
+    add("Backspace", "keyboard", 0x00, 0x2a);
     add("Tab", "keyboard", 0x00, 0x2b);
-    add("空格", "keyboard", 0x00, 0x2c);
+    add("Space", "keyboard", 0x00, 0x2c);
 
     // 多媒体/系统（consumer key 示例）
     add("上一曲", "system", 0x04, 0x00b6);
     add("下一曲", "system", 0x04, 0x00b5);
     add("播放/暂停", "system", 0x04, 0x00cd);
-    add("停止", "system", 0x04, 0x00b7);
-    add("音量+", "system", 0x04, 0x00e9);
-    add("音量-", "system", 0x04, 0x00ea);
+    add("停止播放", "system", 0x04, 0x00b7);
+    add("音量加", "system", 0x04, 0x00e9);
+    add("音量减", "system", 0x04, 0x00ea);
     add("静音", "system", 0x04, 0x00e2);
 
     // 组合键（示例：02 + packed keycode）
-    add("显示桌面", "system", 0x02, 0x0708);
-    add("锁定电脑", "system", 0x02, 0x0f08);
+    add("显示桌面 Win + D", "system", 0x02, 0x0708);
+    add("锁定电脑 Win + L", "system", 0x02, 0x0f08);
 
     return Object.freeze(actions);
   })();

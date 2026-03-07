@@ -51,27 +51,27 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
 ]);
 
 // ============================================================
-// 1) AppConfig：公共范围、时序与文案
+// 1) AppConfig: shared ranges, timings, and text metadata
 // ============================================================
 (function () {
   /**
-   * 将数值钳制在指定区间内
-   * 目的：确保写入参数落在设备允许范围内，避免越界写入
+   * Clamp a numeric value to a target range.
+   * Purpose: keep write parameters inside device-allowed bounds.
    *
-   * @param {number} n - 待处理的数值
-   * @param {number} min - 下界
-   * @param {number} max - 上界
-   * @returns {number} 被钳制后的数值
+   * @param {number} n - Value to process.
+   * @param {number} min - Lower bound.
+   * @param {number} max - Upper bound.
+   * @returns {number} Clamped value.
    */
   const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
 
   /**
-   * 生成 select HTML 选项字符串
-   * 目的：集中生成选项模板，减少分散拼接带来的不一致
+   * Build select-option HTML string.
+   * Purpose: centralize option template generation and reduce inconsistent inline markup.
    *
-   * @param {Array<number|string>} values - 可选值列表
-   * @param {(value: number|string) => string} label - 展示文案构造器
-   * @returns {string} HTML 片段
+   * @param {Array<number|string>} values - Candidate value list.
+   * @param {(value: number|string) => string} label - Label builder.
+   * @returns {string} HTML fragment.
    */
   function buildSelectOptions(values, label) {
     return values.map((v) => `<option value="${v}">${label(v)}</option>`).join("");
@@ -291,17 +291,6 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
           advHz: [125, 250, 500, 1000, 2000, 4000, 8000],
         },
         texts: {
-          keymap: {
-            imageSrc: "./assets/images/VIPER_V3_耿鬼.png",
-            points: {
-              1: { x: 32, y: 14, side: "left" },
-              2: { x: 68, y: 40, side: "right" },
-              3: { x: 49.9, y:25, side: "right" },
-              4: { x: 26, y: 43, side: "left" },
-              5: { x: 26, y: 54, side: "left" },
-              6: { x: 49.9, y: 82, side: "right" },
-            },
-          },
           perfMode: {
             hyperspeed: { color: "#44d62c", text: "HYPERSPEED" },
           },
@@ -351,11 +340,11 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   const clamp = window.AppConfig?.utils?.clamp || ((n, min, max) => Math.min(max, Math.max(min, n)));
 
   /**
-   * 规范化设ID
-   * 目的：统一设备 ID 入口，避免别名导致的分支与漂移
+   * Normalize device ID.
+   * Purpose: unify the device-ID entrypoint and avoid alias-driven branching/drift.
    *
-   * @param {string} id - 设备标识
-   * @returns {string} 规范化后的设备标识
+   * @param {string} id - Device identifier.
+   * @returns {string} Normalized device identifier.
    */
   const normalizeDeviceId = (id) => {
     const x = String(id || "").toLowerCase();
@@ -368,11 +357,11 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   };
 
   /**
-   * 将输入安全转换为 number
-   * 目的：过NaN/非法值，避免协议层接收不可预期数据
+   * Safely convert input to number.
+   * Purpose: filter NaN/invalid values before protocol-layer consumption.
    *
-   * @param {unknown} v - 待转换的值
-   * @returns {number|undefined} 合法数值或 undefined
+   * @param {unknown} v - Value to convert.
+   * @returns {number|undefined} Valid number or undefined.
    */
   const toNumber = (v) => {
     const n = Number(v);
@@ -380,20 +369,20 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   };
 
   /**
-   * 将输入安全转换为 boolean
-   * 目的：统一布尔归一化，保持 0/1 true/false 的一致映射
+   * Safely convert input to boolean.
+   * Purpose: normalize boolean mapping consistently for 0/1 and true/false.
    *
-   * @param {unknown} raw - 原始值
-   * @returns {boolean|undefined} 布尔值或 undefined
+   * @param {unknown} raw - Raw value.
+   * @returns {boolean|undefined} Boolean value or undefined.
    */
   const readBool = (raw) => (raw == null ? undefined : !!raw);
 
   /**
-   * 将输入安全转换为 number（只读）
-   * 目的：读取回包时过滤无效值，避免 UI 接收 null/undefined
+   * Safely convert input to number (read path).
+   * Purpose: filter invalid readback values to avoid propagating null/undefined into UI.
    *
-   * @param {unknown} raw - 原始值
-   * @returns {number|undefined} 合法数值或 undefined
+   * @param {unknown} raw - Raw value.
+   * @returns {number|undefined} Valid number or undefined.
    */
   const readNumber = (raw) => (raw == null ? undefined : toNumber(raw));
 
@@ -587,12 +576,12 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   const MAX_CONFIG_SLOT_COUNT = 5;
 
   /**
-   * 读取表面手感的兼容降级逻辑
-   * 目的：在字段缺失时通过历史字段推算，保证兼容
+   * Compatibility fallback for reading surface-feel level.
+   * Purpose: infer from legacy fields when direct field is missing.
    *
-   * @param {unknown} raw - 直接读取的原始值
-   * @param {Object} ctx - 上下文（包含 cfg）
-   * @returns {number|undefined} 归一化后的等级
+   * @param {unknown} raw - Direct raw read value.
+   * @param {Object} ctx - Context (contains cfg).
+   * @returns {number|undefined} Normalized level.
    */
   const readSurfaceFeelFallback = (raw, ctx) => {
     const direct = readNumber(raw);
@@ -656,9 +645,9 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   const razerTexts = window.AppConfig?.ranges?.razer?.texts || {};
 
   /**
-   * 所有适配器共享的标准 Key 映射
-   * 目的：稳定语义槽位到固件 Key 的映射，
-   * 支持数组以实现多 Key 回退/兼容
+   * Shared standard-key mapping across all adapters.
+   * Purpose: stabilize semantic-slot to firmware-key mapping
+   * and support array-based multi-key fallback/compatibility.
    */
   const KEYMAP_COMMON = {
     pollingHz: ["pollingHz", "polling_rate"],
@@ -678,9 +667,9 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   };
 
   /**
-   * 共享的值转换器（单语义归一化）
-   * 目的：统一人类可读单位与协议编码之间的转换
-   * 协议层常要求字节/位域/枚举，必须集中转换
+   * Shared value transformers (single-semantic normalization).
+   * Purpose: centralize conversion between human-readable units and protocol encoding.
+   * Protocol layer commonly requires bytes/bitfields/enums.
    */
   const TRANSFORMS_COMMON = {
     pollingHz: {
@@ -739,11 +728,11 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   // Read / Write Chain
   // ============================================================
   /**
-   * 规范keyMap 的映射值为数组
-   * 目的：统一单多值映射形态，简化写入与读取流程
+   * Normalize keyMap mapping value into an array.
+   * Purpose: unify single/multi-key mapping shape for simpler read/write flow.
    *
-   * @param {string|string[]|null|undefined} mapVal - 映射值
-   * @returns {string[]} 规范化后key 列表
+   * @param {string|string[]|null|undefined} mapVal - Mapping value.
+   * @returns {string[]} Normalized key list.
    */
   const normalizeKeyList = (mapVal) => {
     if (!mapVal) return [];
@@ -782,14 +771,14 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
 
 
   /**
-   * 将标Key 的补丁通过适配器写入固件空间
-   * 目的：将标准写入入口集中化，确保统一转换与审计
+   * Write a standard-key patch into firmware space through adapter mapping.
+   * Purpose: centralize the write entrypoint for consistent conversion and auditability.
    *
    * @param {Object} args
-   * @param {Object} args.hidApi - WebHID 包装器（需提供 setFeature）
-   * @param {Object} args.adapter - 提供 keyMap/transforms 的适配器
-   * @param {Object} args.payload - UI 层标Key 补丁
-   * @returns {Promise<Object>} 写入结果元信息
+   * @param {Object} args.hidApi - WebHID wrapper (must expose setFeature).
+   * @param {Object} args.adapter - Adapter providing keyMap/transforms.
+   * @param {Object} args.payload - UI-layer standard-key patch.
+   * @returns {Promise<Object>} Write-result metadata.
    */
   async function invokeAdapterAction({ hidApi, action, value, stdKey, payload, adapter }) {
     if (!hidApi || !action) return false;

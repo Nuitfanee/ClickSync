@@ -27,7 +27,7 @@
     navMatch.classList.toggle('active', isMatch);
     navRot.classList.toggle('active', isRot);
 
-    // 更新滑块位置 (Ultra-Liquid Glider)
+    // Update glider position (Ultra-Liquid Glider)
     const ttTabs = document.querySelector('#testtools .ttTabs');
     if (ttTabs) {
       const index = isMain ? 0 : (isRot ? 1 : (isPoll ? 2 : 3));
@@ -39,18 +39,20 @@
     pageMatch.classList.toggle('active', isMatch);
     pageRot.classList.toggle('active', isRot);
 
-    // 页面切换时：若处于任何 PointerLock，优先退出，避免“无光标/误吞输入”
+    // On page switch: exit PointerLock first to avoid hidden cursor or swallowed input.
     if(document.pointerLockElement){
       document.exitPointerLock();
     }
 
-    // 角度校准页：首次进入时强制绘制一次仪表（避免隐藏态尺寸为 0 导致不显示）
+    // Rotation calibration tab: force an initial gauge draw when first entering
+    // to avoid hidden-layout zero-size rendering issues.
     if(isRot){
       try{
         requestAnimationFrame(()=>{ try{ if(typeof refreshRotOutputsNow==='function') refreshRotOutputsNow(); }catch(_){}
           try{ if(typeof drawGauge==='function') drawGauge(performance.now()); }catch(_){}
         });
-        // 再补一帧：给布局/字体渲染一点时间，确保 canvas 有正确尺寸
+        // Draw one more frame after a short delay so layout/font rendering settles
+        // and the canvas gets the correct size.
         setTimeout(()=>{ try{ if(typeof drawGauge==='function') drawGauge(performance.now()); }catch(_){} }, 60);
       }catch(_){}
     }
@@ -61,12 +63,14 @@
   navMatch.addEventListener('click', ()=>setPage('match'));
   navRot.addEventListener('click', ()=>setPage('rot'));
 
-  // ========= 阻止主面板的 window 级监听在匹配页生效 =========
-  // 主面板把 mousedown/mouseup/wheel 绑在 window；事件在 bubble 时会先到 document 再到 window。
-  // 这里在 document(bubble) 阶段 stopPropagation，从而不冒泡到 window。
+  // ========= Stop main-panel window listeners from affecting the match page =========
+  // The main panel binds mousedown/mouseup/wheel on window.
+  // During bubbling, events hit document first and then window.
+  // Stop propagation at document bubble phase so they never reach window.
   document.addEventListener('wheel', (e)=>{
     if(!isTestToolsActive()) return;
-    // 非主页：阻止事件冒泡到 window，避免触发双击检测页的全局统计
+    // On non-main tabs, prevent bubbling to window to avoid triggering
+    // global stats logic from the double-click test page.
     if(pageMain.classList.contains('active')) return;
     e.stopPropagation();
   }, {passive:true});
@@ -83,11 +87,12 @@
     e.stopPropagation();
   }, false);
 
-  // ========= PointerLock 状态（匹配页只关心 lockTarget） =========
+  // ========= PointerLock state (match page only cares about lockTarget) =========
   function setMatchLockUI(){
     const locked = (document.pointerLockElement === lockTarget);
 
-    // 如果用户已经按下左键，但锁定稍后才生效：锁定生效后自动进入记录状态（不需要反复点击）
+    // If the user already pressed left mouse button but lock becomes active later,
+    // auto-enter recording once locked so repeated clicks are not required.
     if(locked && match && match.activeMouse && match.waitingPress && match.pendingStart){
       match.pendingStart = false;
       match.waitingPress = false;
@@ -109,7 +114,7 @@
     try{ setMatchLockUI(); }catch(_){ }
   });
 
-  // ========= 灵敏度匹配 =========
+  // ========= Sensitivity matching =========
   const dpi1Input = document.getElementById('dpi1Input');
   const startM1 = document.getElementById('startM1');
   const startM2 = document.getElementById('startM2');
@@ -186,7 +191,7 @@
     return false;
   }
 
-  // —— 方向投影计数（对不完全直线更鲁棒）——
+  // Directional projection counting (more robust for non-perfect straight lines)
   function estimateCounts(deltas){
     if(deltas.length < 40) return { ok:false, reason:tr('样本太少（请移动更远/更快）','Too few samples (move farther/faster)') };
 
@@ -372,8 +377,9 @@
     if(!match.activeMouse || !match.waitingPress) return;
 
     if(document.pointerLockElement !== lockTarget){
-      // 有些浏览器 PointerLock 需要一次额外的用户手势/或锁定生效有延迟：
-      // 这里记下“已按下左键”，并立刻再次请求锁定；锁定生效后自动开始记录，避免反复点击。
+      // Some browsers require an extra user gesture for PointerLock,
+      // or activate lock with delay. Record "left button already pressed",
+      // re-request lock immediately, and auto-start recording once locked.
       match.pendingStart = true;
       ensureLock();
       setStatus(tr('状态：<span class="warn">正在请求锁定光标…</span>请<strong>保持按住左键</strong>，锁定成功后会自动开始记录。', 'Status: <span class="warn">Requesting cursor lock…</span> Please <strong>keep holding the left button</strong>; recording will start automatically after lock.'));
@@ -397,7 +403,8 @@
     if(e.button !== 0) return;
     if(!match.activeMouse) return;
 
-    // 如果还在等待 PointerLock（pendingStart=true），用户松开左键则视为取消这次“按住开始”
+    // If still waiting for PointerLock (pendingStart=true),
+    // releasing left mouse button cancels this "hold-to-start" attempt.
     if(match.pendingStart && match.waitingPress && !match.recording){
       match.pendingStart = false;
       setStatus(tr('状态：已取消（未开始记录）。请再次点击“开始测量”，然后按住左键开始移动。', 'Status: Canceled (recording did not start). Click “Start” again, then hold left button and begin moving.'));

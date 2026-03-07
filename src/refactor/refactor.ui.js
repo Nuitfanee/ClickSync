@@ -26,22 +26,25 @@
  */
 
 // ============================================================
-// 3) DeviceUI：语义槽-> 视图变体
+// 3) DeviceUI: semantic slots -> view variants
 // ============================================================
 (function () {
   const { buildSelectOptions } = window.AppConfig?.utils || {};
+  const tr = (zh, en) => (typeof window !== "undefined" && typeof window.tr === "function")
+    ? window.tr(zh, en)
+    : zh;
 
   // ============================================================
-  // DOM 基础工具
+  // DOM base utilities
   // ============================================================
 
   /**
-   * 缓存元素原始 innerHTML
-   * 目的：保留初始模板以支持可逆切换
+   * Cache the element's original innerHTML.
+   * Purpose: keep the initial template for reversible variant switching.
    *
-   * @param {HTMLElement|null} el - 目标元素
-   * @param {string} key - 缓存键
-   * @returns {void} 无返回值
+   * @param {HTMLElement|null} el - Target element.
+   * @param {string} key - Cache key.
+   * @returns {void} no return value
    */
   function cacheInnerHtml(el, key) {
     if (!el) return;
@@ -50,12 +53,12 @@
   }
 
   /**
-   * 恢复元素原始 innerHTML
-   * 目的：恢复初始模板，避免多次切换造成 DOM 污染
+   * Restore the element's original innerHTML.
+   * Purpose: restore initial template and avoid repeated-switch DOM pollution.
    *
-   * @param {HTMLElement|null} el - 目标元素
-   * @param {string} key - 缓存键
-   * @returns {void} 无返回值
+   * @param {HTMLElement|null} el - Target element.
+   * @param {string} key - Cache key.
+   * @returns {void} no return value
    */
   function restoreInnerHtml(el, key) {
     if (!el) return;
@@ -64,13 +67,13 @@
   }
 
   /**
-   * 将数值列表应用到 select 元素
-   * 目的：统一选项渲染出口，避免配置分散
+   * Apply a value list to a select element.
+   * Purpose: keep option rendering in one place and avoid scattered config logic.
    *
-   * @param {HTMLSelectElement|null} selectEl - 下拉框
-   * @param {Array<number|string>} values - 值列表
-   * @param {(value: number|string) => string} labelFn - 文案生成函数
-   * @returns {void} 无返回值
+   * @param {HTMLSelectElement|null} selectEl - Select element.
+   * @param {Array<number|string>} values - Value list.
+   * @param {(value: number|string) => string} labelFn - Label generator.
+   * @returns {void} no return value
    */
   function applySelectOptions(selectEl, values, labelFn) {
     if (!selectEl || !Array.isArray(values)) return;
@@ -87,7 +90,7 @@
   }
 
   // ============================================================
-  // 性能模式
+  // Performance mode
   // ============================================================
 
   const PERF_LABEL_MAP = Object.freeze({
@@ -155,7 +158,7 @@
   }
 
   // ============================================================
-  // 基础页脚
+  // Basic footer
   // ============================================================
 
   function ensureBasicFooterVariantStyle(docRef) {
@@ -290,7 +293,7 @@
   }
 
   // ============================================================
-  // 按键图变体区
+  // Keymap variant section
   // ============================================================
 
   const normalizeDeviceDisplayName = (name) =>
@@ -421,19 +424,21 @@
   }
 
   // ============================================================
-  // 高级布局
+  // Advanced layout
   // ============================================================
 
   const ADVANCED_LAYOUT_SINGLE = "single";
   const ADVANCED_LAYOUT_DUAL = "dual";
   const ADVANCED_PANEL_DENSITY_DEFAULT = "default";
   const ADVANCED_PANEL_DENSITY_COMPACT = "compact";
-  // 单列语义项白名单入口：key 必须profile.features.advancedSingleItems 对齐
-  // 新增单列项时，需要同时更新：
+  // Single-column semantic whitelist entry:
+  // keys must align with profile.features.advancedSingleItems.
+  // When adding a new single-column item, update all of the following:
   // 1) index.html data-adv-item
   // 2) refactor.profiles.js advancedSingleItems
-  // 3) app.js 中对应的语义查询与交互逻辑
-  // 4) 优先复用已有语义项（例如 sleepSeconds），不要为同一功能再造新卡片语义
+  // 3) Matching semantic query and interaction logic in app.js
+  // 4) Reuse existing semantic items first (for example sleepSeconds);
+  //    do not create duplicate card semantics for the same feature
   const ADVANCED_SINGLE_ITEM_SELECTORS = Object.freeze({
     onboardMemory: '[data-adv-region="single"] [data-adv-item="onboardMemory"]',
     lightforceSwitch: '[data-adv-region="single"] [data-adv-item="lightforceSwitch"]',
@@ -468,10 +473,13 @@
   function queryAdvancedItem(doc, itemKey, { region = "", control = "" } = {}) {
     const panel = getAdvancedPanel(doc);
     if (!panel || !itemKey) return null;
-    // 关键维护点：
-    // data-adv-item data-adv-control 在同一元素上，必须使用复合选择
-    // 例如 [data-adv-item=sleepSeconds][data-adv-control=select]，不能写后代空格
-    // 否则会导致高级页 select/range 查询失败，出现“滑块与可视化不动”的回归
+    // Key maintenance rule:
+    // data-adv-item and data-adv-control must live on the same element,
+    // so use compound selectors.
+    // Example:
+    // [data-adv-item=sleepSeconds][data-adv-control=select]
+    // Never use descendant spacing between them.
+    // Otherwise advanced-page select/range queries fail and sliders/visuals stop updating.
     const regionPrefix = region ? `[data-adv-region="${region}"] ` : "";
     const selector = `[data-adv-item="${itemKey}"]` + (control ? `[data-adv-control="${control}"]` : "");
     return panel.querySelector(regionPrefix + selector);
@@ -647,17 +655,17 @@
   }
 
   // ============================================================
-  // 滑轨工具
+  // Slider track utilities
   // ============================================================
 
   function installAutoTrackInterval(root) {
     /**
-     * 计算并写入滑轨刻度间距
-     * 目的：控制刻度密度，平衡性能与可读性
+     * Compute and write slider track tick interval.
+     * Purpose: control tick density to balance performance and readability.
      *
-     * @param {HTMLInputElement} input - range 输入
-     * @param {HTMLElement} customTrack - 轨道元素
-     * @returns {void} 无返回值
+     * @param {HTMLInputElement} input - Range input.
+     * @param {HTMLElement} customTrack - Track element.
+     * @returns {void} no return value
      */
     const updateTrackInterval = (input, customTrack) => {
       if (!input || !customTrack) return;
@@ -693,7 +701,7 @@
   }
 
   // ============================================================
-  // applyVariant 子工具区
+  // applyVariant helper section
   // ============================================================
 
   function __setHeightVizVisible({ heightVizWrap, heightBlock, feelCard, visible }) {
@@ -857,7 +865,8 @@
   function applyAdvancedCycleStateMeta({ doc, ui }) {
     __cleanupStaleCycleMetaBindings(doc);
 
-    // 每次变体应用先恢复为默认文案，再按本设备配置覆盖，避免设备切换串味
+    // Before applying each variant, restore default text first,
+    // then overlay current-device config to avoid text bleed between devices.
     cycleStateMetaBoundElements.forEach((cycleItem) => {
       if (!doc.contains(cycleItem)) return;
       const state = cycleStateMetaBindings.get(cycleItem);
@@ -898,8 +907,31 @@
     el.style.order = Number.isFinite(raw) ? String(raw) : String(advancedOrders[key]);
   }
 
+  function resolveLandingReadyText(ui) {
+    const explicitText = String(ui?.landingReadyText || "").trim();
+    if (explicitText) return explicitText;
+    const landingTitle = String(ui?.landingTitle || "").trim();
+    if (landingTitle) return `${landingTitle} READY`;
+    return "SYSTEM READY";
+  }
+
+  function applyLandingTexts({ doc, ui }) {
+    const landingLayer = doc.getElementById("landing-layer");
+    if (!landingLayer) return;
+    const landingCaption = doc.getElementById("landingCaption") || landingLayer.querySelector(".center-caption");
+    const verticalTitle = landingLayer.querySelector(".vertical-title");
+    const flashText = doc.getElementById("landingReadyText") || landingLayer.querySelector(".flash-text");
+    const landingTitle = String(ui?.landingTitle || "").trim();
+    const landingCaptionText = String(ui?.landingCaption || "").trim();
+    const landingReadyText = resolveLandingReadyText(ui);
+    landingLayer.dataset.readyText = landingReadyText;
+    if (verticalTitle && landingTitle) verticalTitle.textContent = landingTitle;
+    if (landingCaption && landingCaptionText) landingCaption.textContent = landingCaptionText;
+    if (flashText) flashText.textContent = landingReadyText;
+  }
+
   // ============================================================
-  // applyVariant 主流
+  // applyVariant main flow
   // ============================================================
 
   /**
@@ -922,6 +954,7 @@
     const cfg = adapter?.ranges || window.AppConfig?.ranges?.chaos;
     const ui = adapter?.ui || {};
     const features = adapter?.features || {};
+    applyLandingTexts({ doc, ui });
     if (keymapOnly) {
       applyAdvancedPanelDensity({ doc, ui });
       applyKeymapVariant({ doc, ui, deviceName });
@@ -945,13 +978,6 @@
         bodyEl.removeAttribute("data-variant-skin-class");
       }
     }
-
-    const landingLayer = doc.getElementById("landing-layer");
-    const landingCaption = landingLayer?.querySelector(".caption");
-    const verticalTitle = landingLayer?.querySelector(".vertical-title");
-    if (verticalTitle && ui?.landingTitle) verticalTitle.textContent = ui.landingTitle;
-    if (landingCaption && ui?.landingCaption) landingCaption.textContent = ui.landingCaption;
-
     const effectivePerfModes = resolveEffectivePerfModes({ ui, features });
     const selectedPerfMode = syncPerfModeRadios(doc, effectivePerfModes);
 
@@ -1113,8 +1139,8 @@
       }
       const isLogitech = String(adapter?.id || deviceId || "").trim().toLowerCase() === "logitech";
       dpiEditorHint.textContent = isLogitech
-        ? "光学引擎抬起距离"
-        : "在下方面板直接拖动或输入修改DPI";
+        ? tr("光学引擎抬起距离", "Optical Engine Lift-off Distance")
+        : tr("在下方面板直接拖动或输入修改DPI", "Drag below or enter values directly to edit DPI");
     }
 
     const isRazer = String(adapter?.id || deviceId || "").trim().toLowerCase() === "razer";
@@ -1247,7 +1273,7 @@
         const maxS = sleepSeconds[sleepSeconds.length - 1];
         const minT = minS < 60 ? `${minS}s` : `${minS / 60}min`;
         const maxT = maxS < 60 ? `${maxS}s` : `${maxS / 60}min`;
-        sub.textContent = `范围：${minT} - ${maxT}`;
+        sub.textContent = tr(`范围：${minT} - ${maxT}`, `Range: ${minT} - ${maxT}`);
       }
     } else if (sleepSel) {
       restoreInnerHtml(sleepSel, "sleepSelect");
@@ -1264,7 +1290,10 @@
       const debCard = debounceInput?.closest(".slider-card");
       const sub = debCard?.querySelector(".slider-sub");
       if (sub && debounceMs.length > 0) {
-        sub.textContent = `范围：${debounceMs[0]}ms - ${debounceMs[debounceMs.length - 1]}ms`;
+        sub.textContent = tr(
+          `范围：${debounceMs[0]}ms - ${debounceMs[debounceMs.length - 1]}ms`,
+          `Range: ${debounceMs[0]}ms - ${debounceMs[debounceMs.length - 1]}ms`
+        );
       }
     } else if (debounceSel) {
       restoreInnerHtml(debounceSel, "debounceSelect");

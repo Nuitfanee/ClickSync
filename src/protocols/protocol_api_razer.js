@@ -1581,7 +1581,7 @@
     add("前进", "mouse", 0x08, 0x0000);
     add("后退", "mouse", 0x10, 0x0000);
     add("DPI循环", "mouse", 0x20, 0x0005);
-    add("禁用按键", "mouse", 0x07, 0x0000);
+    add("禁止按键", "mouse", 0x07, 0x0000);
     add("左键双击", "mouse", 0x01, 0x0006);
     add("向上滚动", "mouse", 0x01, 0x0009);
     add("向下滚动", "mouse", 0x01, 0x000a);
@@ -1601,17 +1601,17 @@
     add("Backspace", "keyboard", 0x02, 0x002a);
     add("Tab", "keyboard", 0x02, 0x002b);
     add("Space", "keyboard", 0x02, 0x002c);
-    add("-", "keyboard", 0x02, 0x002d);
-    add("=", "keyboard", 0x02, 0x002e);
-    add("[", "keyboard", 0x02, 0x002f);
-    add("]", "keyboard", 0x02, 0x0030);
-    add("\\", "keyboard", 0x02, 0x0031);
-    add(";", "keyboard", 0x02, 0x0033);
-    add("'", "keyboard", 0x02, 0x0034);
-    add("`", "keyboard", 0x02, 0x0035);
-    add(",", "keyboard", 0x02, 0x0036);
-    add(".", "keyboard", 0x02, 0x0037);
-    add("/", "keyboard", 0x02, 0x0038);
+    add("- _", "keyboard", 0x02, 0x002d);
+    add("= +", "keyboard", 0x02, 0x002e);
+    add("[ {", "keyboard", 0x02, 0x002f);
+    add("] }", "keyboard", 0x02, 0x0030);
+    add("\\ |", "keyboard", 0x02, 0x0031);
+    add("; :", "keyboard", 0x02, 0x0033);
+    add("' \"", "keyboard", 0x02, 0x0034);
+    add("` ~", "keyboard", 0x02, 0x0035);
+    add(", <", "keyboard", 0x02, 0x0036);
+    add(". >", "keyboard", 0x02, 0x0037);
+    add("/ ?", "keyboard", 0x02, 0x0038);
     add("Caps Lock", "keyboard", 0x02, 0x0039);
     add("Print Screen", "keyboard", 0x02, 0x0046);
     add("Scroll Lock", "keyboard", 0x02, 0x0047);
@@ -1662,18 +1662,18 @@
     add("查找 Ctrl + F", "keyboard", 0x02, 0x0109);
     add("新建 Ctrl + N", "keyboard", 0x02, 0x0111);
     add("打印 Ctrl + P", "keyboard", 0x02, 0x0113);
-    add("切换窗口", "keyboard", 0x02, 0x042b);
-    add("关闭窗口", "keyboard", 0x02, 0x043d);
-    add("显示桌面", "keyboard", 0x02, 0x0807);
-    add("文件资源管理器", "keyboard", 0x02, 0x0808);
-    add("锁定电脑", "keyboard", 0x02, 0x080f);
-    add("运行", "keyboard", 0x02, 0x0815);
-    add("打开设置", "keyboard", 0x02, 0x080c);
-    add("任务管理器", 0x02, 0x0329);
-    add("恢复关闭的网页", 0x02, 0x0317);
+    add("切换窗口 Alt + Tab", "keyboard", 0x02, 0x042b);
+    add("关闭窗口 Alt + F4", "keyboard", 0x02, 0x043d);
+    add("显示桌面 Win + D", "keyboard", 0x02, 0x0807);
+    add("文件资源管理器 Win + E", "keyboard", 0x02, 0x0808);
+    add("锁定电脑 Win + L", "keyboard", 0x02, 0x080f);
+    add("运行 Win + R", "keyboard", 0x02, 0x0815);
+    add("打开设置 Win + I", "keyboard", 0x02, 0x080c);
+    add("任务管理器 Ctrl + Shift + Esc", "keyboard", 0x02, 0x0329);
+    add("恢复关闭标签页 Ctrl + Shift + T", "keyboard", 0x02, 0x0317);
 
-    add("音量上", "system", 0x40, 0x0000);
-    add("音量下", "system", 0x40, 0x0001);
+    add("音量加", "system", 0x40, 0x0000);
+    add("音量减", "system", 0x40, 0x0001);
     add("静音", "system", 0x40, 0x0002);
     add("播放/暂停", "system", 0x40, 0x0004);
     add("下一曲", "system", 0x40, 0x0005);
@@ -1693,41 +1693,6 @@
 
     return Object.freeze(actions);
   })();
-
-  const KEYMAP_LABEL_ALIASES = Object.freeze({
-    left: "左键",
-    "left click": "左键",
-    right: "右键",
-    "right click": "右键",
-    middle: "中键",
-    "middle click": "中键",
-    forward: "前进",
-    back: "后退",
-    "dpi loop": "DPI循环",
-    dpiloop: "DPI循环",
-    disable: "禁用按键",
-    disabled: "禁用按键",
-    dpiup: "dpiUp",
-    dpidown: "dpiDown",
-    tiltleft: "tiltLeft",
-    tiltright: "tiltRight",
-    "double click": "左键双击",
-    "wheel up": "向上滚动",
-    "wheel down": "向下滚动",
-    "volume up": "音量上",
-    "volume down": "音量下",
-    mute: "静音",
-    提高音量: "音量上",
-    降低音量: "音量下",
-    "play/pause": "播放/暂停",
-    "play pause": "播放/暂停",
-    "next track": "下一曲",
-    "previous track": "上一曲",
-    "prev track": "上一曲",
-    上一曲目: "上一曲",
-    下一曲目: "下一曲",
-    播放暂停: "播放/暂停",
-  });
 
   const DEFAULT_RESET_LABEL_BY_BUTTON = Object.freeze({
     1: "左键",
@@ -1765,7 +1730,7 @@
     左键双击: [0x0b, 0x01, 0x01, 0x00],
     向上滚动: [0x01, 0x01, 0x09, 0x00],
     向下滚动: [0x01, 0x01, 0x0a, 0x00],
-    禁用按键: [0x01, 0x01, 0x00, 0x00],
+    禁止按键: [0x01, 0x01, 0x00, 0x00],
     DPI循环: [0x06, 0x01, 0x06, 0x00],
   });
 
@@ -1781,8 +1746,8 @@
 
   const REP4_MEDIA_ACTION_BY_LABEL = Object.freeze({
     // Captured media write path uses [0a, 02, 00, consumer_hid].
-    音量上: [0x0a, 0x02, 0x00, 0xe9],
-    音量下: [0x0a, 0x02, 0x00, 0xea],
+    音量加: [0x0a, 0x02, 0x00, 0xe9],
+    音量减: [0x0a, 0x02, 0x00, 0xea],
     静音: [0x0a, 0x02, 0x00, 0xe2],
     上一曲: [0x0a, 0x02, 0x00, 0xb6],
     // Inferred from standard consumer HID set; verify with capture if needed.
@@ -1804,8 +1769,7 @@
   function normalizeActionLabel(label) {
     const raw = String(label || "").trim();
     if (!raw) return "";
-    const aliased = KEYMAP_LABEL_ALIASES[raw.toLowerCase()];
-    return aliased || raw;
+    return raw;
   }
 
   function resolveRep4ActionFromLabel(label) {
@@ -2297,7 +2261,8 @@
       }
     }
 
-    // 统一会话引导入口：open -> 首读 -> 超时/重试 -> 缓存回退，并保证至少一次 _emitConfig。
+    // Unified session bootstrap entry: open -> initial read -> timeout/retry -> cache fallback,
+    // while guaranteeing at least one _emitConfig() call.
     async bootstrapSession(opts = {}) {
       const options = isObject(opts) ? opts : {};
       const {
@@ -2310,7 +2275,8 @@
         readTimeoutMs = 1200,
         useCacheFallback = true,
       } = options;
-      // 单读策略：首读在 open() 内完成，readRetry/readRetryDelayMs/readTimeoutMs 当前保留为接口兼容字段。
+      // Single-read strategy: the initial read is completed inside open().
+      // readRetry/readRetryDelayMs/readTimeoutMs are currently kept for interface compatibility.
       void readRetry;
       void readRetryDelayMs;
       void readTimeoutMs;
@@ -2489,7 +2455,8 @@
           try {
             await this._driver.runSequence(commands);
           } catch (err) {
-            // 写失败时在协议层执行一次回读纠偏，确保 UI 缓存与设备真实状态重新对齐。
+            // On write failure, run a protocol-level readback reconciliation once
+            // so the UI cache realigns with the device's actual state.
             try {
               const updates = await this._readDeviceStateSnapshot({ strictButtonMappingRead: false });
               if (updates && Object.keys(updates).length) {
@@ -2557,7 +2524,7 @@
       const base = TRANSFORMERS.normalizeDpiStages(this._cfg?.dpiStages, this._cfg?.dpiStages);
       const next = base.slice(0, count);
       while (next.length < count) {
-        // 新增挡位统一预设为 800，避免 UI 先显示为相邻挡位值。
+        // Initialize newly added stages to 800 uniformly to avoid showing inherited adjacent-stage values first.
         next.push({ x: 800, y: 800 });
       }
 
@@ -2909,19 +2876,19 @@
           }
         }
 
-        const modeForDistance = TRANSFORMERS.normalizeSmartTrackingMode(
-          updates.smartTrackingMode ?? this._cfg?.smartTrackingMode ?? "symmetric"
-        );
-        if (modeForDistance === "asymmetric") {
-          const distRes = await this._safeQuery(ProtocolCodec.commands.getSmartTrackingAsymmetricDistances(txTracking));
-          if (distRes?.arguments) {
-            const dist = TRANSFORMERS.normalizeSmartTrackingDistances(
-              clampU8(distRes.arguments[2] ?? 0) + 1,
-              clampU8(distRes.arguments[3] ?? 0) + 1
-            );
-            updates.smartTrackingLiftDistance = dist.lift;
-            updates.smartTrackingLandingDistance = dist.landing;
-          }
+        // Keep asymmetric pair fresh regardless of current mode to avoid stale defaults
+        // after config refreshes that happen while device is in symmetric mode.
+        const distRes = await this._safeQuery(ProtocolCodec.commands.getSmartTrackingAsymmetricDistances(txTracking));
+        if (distRes?.arguments) {
+          // 0x0b/0x85 response layout from captures:
+          // args[0]=0x00, args[1]=0x04, args[2]=selector/fixed flag,
+          // args[3]=lift-1, args[4]=landing-1.
+          const dist = TRANSFORMERS.normalizeSmartTrackingDistances(
+            clampU8(distRes.arguments[3] ?? 0) + 1,
+            clampU8(distRes.arguments[4] ?? 0) + 1
+          );
+          updates.smartTrackingLiftDistance = dist.lift;
+          updates.smartTrackingLandingDistance = dist.landing;
         }
       }
 

@@ -1,14 +1,14 @@
 <!doctype html>
 <!--
-  鼠标配置工具主页面
-  功能模块：
-  - 起始页：设备连接界面（Optical Slice 动画效果）
-  - 主应用层：设备配置界面
-    * 按键映射：自定义鼠标按键功能
-    * DPI设置：配置DPI档位和范围
-    * 基础性能：性能模式和回报率设置
-    * 高级参数：传感器参数、高级功能开关
-    * 测试工具：双击检测、轮询率检测、灵敏度匹配、角度校准
+  Mouse configuration tool main page
+  Feature modules:
+  - Landing page: device connection interface (Optical Slice animation)
+  - Main app layer: device configuration interface
+    * Key mapping: custom mouse button actions
+    * DPI settings: configure DPI stages and ranges
+    * Basic performance: performance mode and polling-rate settings
+    * Advanced parameters: sensor parameters and advanced feature switches
+    * Test tools: double-click test, polling-rate test, sensitivity matching, and angle calibration
 -->
 <html lang="zh-CN">
 <head>
@@ -16,39 +16,116 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Click Sync</title>
   <meta name="color-scheme" content="light" />
-  <!-- 字体预连接优化 -->
+  <meta name="app-asset-version" content="2026.03.06.1" />
+  <!-- Font preconnect optimization -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <!-- 引入字体：Inter、Noto Sans SC、Space Grotesk -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;900&family=Noto+Sans+SC:wght@900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
-  <!-- 样式表 -->
+  <!-- Import fonts: Inter, Noto Sans SC, Space Grotesk -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;900&family=Noto+Sans+SC:wght@900&family=Space+Grotesk:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <!-- Stylesheets -->
   <link rel="stylesheet" href="./assets/css/style.css" />
   <link rel="stylesheet" href="./assets/css/theme.css" />
-  <!-- 扩展字体权重（用于更多UI元素） -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&family=Noto+Sans+SC:wght@400;500;700;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <!-- Extended font weights (for more UI elements) -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&family=Noto+Sans+SC:wght@400;500;700;900&family=Space+Grotesk:wght@400;500;700;900&display=swap" rel="stylesheet">
 </head>
 
 <body>
-  <!-- ==================== PointerLock 目标区域 ==================== -->
-  <!-- 用于测试工具的指针锁定功能，避免影响主页面交互 -->
-  <!-- lockTarget: 灵敏度匹配工具使用 -->
+  <!-- ==================== System Override Layer ==================== -->
+  <div id="overrideLayer" class="override-layer" aria-hidden="true">
+    <div class="override-tools" role="group" aria-label="override controls">
+      <button class="override-tool-btn" id="overrideLangBtn" type="button" aria-label="切换语言">
+        <span id="overrideLangBtnLabel">ENGLISH</span>
+      </button>
+      <button class="override-tool-btn" id="overrideThemeBtn" type="button" aria-label="切换深色模式">
+        <span id="overrideThemeBtnLabel">深色</span>
+      </button>
+    </div>
+
+    <div class="monolith-stage">
+      <div class="column-left">
+        <div class="giant-title">CRITICAL</div>
+        <div class="giant-title highlight">WARNING</div>
+        <div class="giant-title">OVERRIDE</div>
+        <div class="desc-text" id="overrideDescText">
+          本工具仅支持桌面版 Chrome / Edge（Chromium 内核） 浏览器，否则 WebHID API 无法工作。
+        </div>
+      </div>
+
+      <div class="column-right">
+        <div class="shutter-card">
+          <div class="shutter-code">#01</div>
+          <div class="shutter-content">
+            <h3 id="overrideRule1Title">首次连接必须手动授权</h3>
+            <p id="overrideRule1Desc">点击“连接”按钮后，请在浏览器弹出的设备选择窗口中手动选中您的鼠标并点击“连接”，网页才能获得通信权限。已授权的设备下次可自动连接。</p>
+          </div>
+        </div>
+
+        <div class="shutter-card">
+          <div class="shutter-code">#02</div>
+          <div class="shutter-content">
+            <h3 id="overrideRule2Title">支持设备列表</h3>
+            <p id="overrideRule2Desc" class="override-rule2-desc">
+              <span class="rule-power-intro">
+                <span class="rule-power-label">目前支持的品牌型号包括：</span>
+                <span class="rule-power-list">
+                  <span class="rule-power-item">雷蛇（ 毒蝰 V3 Pro。请退出雷云驱动使用 ）、</span>
+                  <span class="rule-power-item">罗技（ GPW3/4 ）、</span>
+                  <span class="rule-power-item">雷柏（ 二代 54L15 的 3950 系列鼠标 ）、</span>
+                  <span class="rule-power-item">ATK（ 54L15 的 3950 系列鼠标 ）、</span>
+                  <span class="rule-power-item">Ninjutso（ Sora V3 ）、</span>
+                  <span class="rule-power-item">Chaos</span>
+                </span>
+              </span>
+              <span class="rule-power-tail">以上品牌的型号均为测试可用型号，其他型号请自行尝试。</span>
+            </p>
+          </div>
+        </div>
+
+        <div class="shutter-card">
+          <div class="shutter-code">#03</div>
+          <div class="shutter-content">
+            <h3 id="overrideRule3Title">使用注意</h3>
+            <p id="overrideRule3Desc">在使用罗技鼠标时请打开板载内存模式，关闭GHUB软件；在使用雷蛇鼠标时请完全退出雷云驱动软件，不然无法生效。</p>
+          </div>
+        </div>
+
+        <div class="auth-shutter" id="overrideAuthShutter" role="button" tabindex="0" aria-label="滑动或点击确认并继续">
+          <div class="auth-bg-fill"></div>
+          <div class="auth-content">
+            <div>
+              <div class="auth-title" id="overrideAuthTitle">已阅读注意事项</div>
+              <div class="auth-sub" id="overrideAuthSub">滑动或点击确认后继续</div>
+            </div>
+            <div class="auth-side">
+              <div class="auth-status" id="overrideAuthStatus" data-locked="锁定" data-granted="已授权"></div>
+              <div class="crosshair" aria-hidden="true"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== PointerLock Target Area ==================== -->
+  <!-- Pointer-lock targets for test tools, isolated from main page interaction -->
+  <!-- lockTarget: used by sensitivity matching tool -->
   <div id="lockTarget" tabindex="-1" class="tt-lock-target" aria-hidden="true"></div>
-  <!-- rotLockTarget: 鼠标角度校准工具使用 -->
+  <!-- rotLockTarget: used by mouse angle calibration tool -->
   <div id="rotLockTarget" tabindex="-1" class="tt-lock-target" aria-hidden="true"></div>
-  <!-- ==================== 起始页覆盖层 ==================== -->
-  <!-- 功能：设备未连接或断开时显示的启动界面 -->
-  <!-- 交互：长按触发区域启动系统并连接HID设备 -->
+  <!-- ==================== Landing Overlay ==================== -->
+  <!-- Function: startup UI shown when device is disconnected -->
+  <!-- Interaction: long-press trigger starts system and connects HID device -->
   <div id="landing-layer" class="landing-layer" aria-hidden="false">
-    <!-- Optical Slice 动画效果：双层世界切换动画 -->
+    <!-- Optical Slice animation: dual-world transition effect -->
     
-    <!-- 图层1：轮廓世界（默认显示，低回报率主题） -->
+    <!-- Layer 1: outline world (default visible, low polling-rate theme) -->
     <div class="os-world" id="layer-outline" aria-hidden="true">
       <div class="os-grid">
         <div class="os-side-menu">
           <div>Keymap</div>
           <div>DPI</div>
-          <div>Basic</div>
-          <div>Advanced</div>
+          <div data-i18n-skip="true">Basic</div>
+          <div data-i18n-skip="true">Advanced</div>
         </div>
 
         <div class="os-hero">
@@ -65,18 +142,18 @@
       </div>
     </div>
 
-    <!-- 图层2：实体世界（通过遮罩显示，高回报率主题） -->
+    <!-- Layer 2: solid world (revealed by mask, high polling-rate theme) -->
     <div class="os-world" id="layer-solid" aria-hidden="true">
       <div class="os-grid">
-        <!-- 侧边菜单：与图层1相同 -->
+        <!-- Side menu: same as Layer 1 -->
         <div class="os-side-menu">
           <div>Keymap</div>
           <div>DPI</div>
-          <div>Basic</div>
-          <div>Advanced</div>
+          <div data-i18n-skip="true">Basic</div>
+          <div data-i18n-skip="true">Advanced</div>
         </div>
 
-        <!-- 主标题区域：品牌名称（不透明显示） -->
+        <!-- Main title area: brand name (opaque display) -->
         <div class="os-hero">
           <div class="os-stack">Gaius</div>
           <div class="os-stack">Cassius</div>
@@ -84,7 +161,7 @@
           <div class="os-main">NUITFANEE</div>
         </div>
 
-        <!-- 规格显示：高回报率档位 -->
+        <!-- Spec display: high polling-rate tiers -->
         <div class="os-specs">
           <div class="os-spec-big">8000 HZ</div>
           <div class="os-spec-list">2000 HZ<br>4000 HZ<br>ULTRA</div>
@@ -92,87 +169,87 @@
       </div>
     </div>
 
-    <!-- 提示文案：动态更新连接状态提示 -->
-    <!-- 注意：JavaScript 会通过 landingCaption 元素更新此文本 -->
+    <!-- Hint text: dynamically updated connection status -->
+    <!-- Note: JavaScript updates this text via landingCaption -->
     <div class="os-hint" id="landingCaption">Hold to Initiate System</div>
 
-    <!-- Optical Slice 光标效果：跟随鼠标的视觉反馈 -->
+    <!-- Optical Slice cursor effect: follow-mouse visual feedback -->
     <div class="os-cursor-ring" id="cursorRing" aria-hidden="true"></div>
     <div class="os-cursor-dot" id="cursorDot" aria-hidden="true"></div>
 
-    <!-- 系统就绪过场动画：连接成功后的全屏提示 -->
+    <!-- System-ready transition: full-screen prompt after successful connection -->
     <div class="flash-layer" aria-hidden="true">
-      <div class="flash-text">SYSTEM READY</div>
+      <div class="flash-text" id="landingReadyText">SYSTEM READY</div>
     </div>
 
-    <!-- 交互触发区：全屏可点击区域，点击触发 connectHid() 连接设备 -->
+    <!-- Interaction trigger area: full-screen clickable zone that calls connectHid() -->
     <div id="trigger-zone" role="button" tabindex="0" aria-label="连接设备"></div>
   </div>
 
-  <!-- ==================== 主应用层 ==================== -->
-  <!-- 功能：设备连接成功后显示的主要配置界面 -->
+  <!-- ==================== Main App Layer ==================== -->
+  <!-- Function: main configuration UI shown after device connection succeeds -->
   <div id="app-layer" class="app-layer" aria-hidden="true">
     <div class="grid-bg"></div>
 
     <div class="wrap">
-    <!-- ==================== 左侧导航侧边栏 ==================== -->
-    <!-- 功能：主功能模块导航菜单，支持展开/收缩 -->
+    <!-- ==================== Left Navigation Sidebar ==================== -->
+    <!-- Function: primary feature navigation menu with expand/collapse -->
     <div class="sidebar" id="navLinks">
-        <!-- GitHub 标志按钮 -->
+        <!-- GitHub icon button -->
         <a href="https://github.com/Nuitfanee/ClickSync" target="_blank" class="sidebar-github-btn" title="GitHub">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
             </svg>
         </a>
 
-        <!-- 原有的切换按钮 -->
+        <!-- Existing toggle button -->
         <button id="sidebarToggle" class="sidebar-toggle" aria-label="切换菜单">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="15 18 9 12 15 6"></polyline>
             </svg>
         </button>
 
-        <!-- 导航菜单项：每个菜单项包含图标和文字，通过 data-key 属性关联对应页面 -->
-        <!-- 菜单项1：按键设置 -->
+        <!-- Navigation items: each item has icon/text and maps pages by data-key -->
+        <!-- Item 1: key mapping -->
         <div class="nav-item active" data-key="keys" data-color="#000000">
-            <!-- 图标：鼠标/按键（矩形图标） -->
+            <!-- Icon: mouse/button (rectangular) -->
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="12" height="16" rx="2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12" y2="16"/></svg>
             <span class="nav-text">按键设置</span>
         </div>
-        <!-- 菜单项2：DPI设置 -->
+        <!-- Item 2: DPI settings -->
         <div class="nav-item" data-key="dpi" data-color="#000000">
-            <!-- 图标：菱形（DPI 视觉标识） -->
+            <!-- Icon: diamond (DPI visual marker) -->
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 4 20 12 12 20 4 12"/></svg>
             <span class="nav-text">DPI设置</span>
         </div>
-        <!-- 菜单项3：基础性能 -->
+        <!-- Item 3: basic performance -->
         <div class="nav-item" data-key="basic" data-color="#000000">
-            <!-- 图标：调节滑块（性能调节） -->
+            <!-- Icon: sliders (performance tuning) -->
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
             <span class="nav-text">基础性能</span>
         </div>
-        <!-- 菜单项4：高级参数 -->
+        <!-- Item 4: advanced parameters -->
         <div class="nav-item" data-key="advanced" data-color="#000000">
-            <!-- 图标：齿轮/设置（高级配置） -->
+            <!-- Icon: gear/settings (advanced config) -->
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             <span class="nav-text">高级参数</span>
         </div>
-        <!-- 菜单项5：测试工具 -->
+        <!-- Item 5: test tools -->
         <div class="nav-item" data-key="testtools" data-color="#000000">
-             <!-- 图标：工具/扳手（测试工具） -->
+             <!-- Icon: tools/wrench -->
              <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
             <span class="nav-text">测试工具</span>
         </div>
 
-        <!-- 侧边栏底部：设备状态小部件 -->
+        <!-- Sidebar footer: device status widget -->
         <div class="sidebar-tools">
             <button id="disconnectBtn" class="sidebar-disconnect-btn" type="button" disabled>断开连接</button>
         </div>
     </div>
 
-    <!-- ==================== 主内容区域 ==================== -->
+    <!-- ==================== Main Content Area ==================== -->
     <main class="stage">
-      <!-- 页面头部（预留，当前为空） -->
+      <!-- Page header (reserved, currently empty) -->
       <div class="stagehead" aria-label="Header">
         <div class="topToolbar" id="topToolbar">
           <div class="topSlotBar" id="topSlotBar" role="tablist" aria-label="配置槽位">
@@ -220,20 +297,20 @@
         </div>
       </div>
 
-      <!-- 页面主体：包含所有功能页面 -->
+      <!-- Page body: contains all feature pages -->
       <div class="stagebody" id="stageBody" aria-label="Content">
-      <!-- ==================== 功能页面区域 ==================== -->
-      <!-- 注意：页面通过 hash 路由切换，每个 section 对应一个功能模块 -->
+      <!-- ==================== Feature Page Area ==================== -->
+      <!-- Note: pages switch via hash routing, each section maps to one feature module -->
       
-      <!-- ========== 页面1：DPI设置 ========== -->
+      <!-- ========== Page 1: DPI Settings ========== -->
       <section class="page" id="dpi" aria-label="DPI">
         <div class="pagegrid dpigrid">
-          <!-- DPI 配置卡片：设置档位数量和DPI范围 -->
+          <!-- DPI config card: set stage count and DPI range -->
           <div class="card card-dpi-meta">
             <div class="stack">
-              <!-- 新版 DPI 控制面板 -->
+              <!-- New DPI control panel -->
               <div class="dpi-panel-redesign" aria-label="DPI configuration">
-                <!-- 模块 1: 挡位数量 (琴键式选择器) -->
+                <!-- Module 1: stage count (piano-style selector) -->
                 <div class="ndp-group group-levels">
                   <div class="ndp-label">LEVELS // DPI挡位总数</div>
                   <div class="ndp-seg-control" id="uiSlotControl">
@@ -246,7 +323,7 @@
                   </div>
                 </div>
 
-                <!-- 模块 2: 高级模式 (滑块开关) -->
+                <!-- Module 2: advanced mode (slider switch) -->
                 <div class="ndp-group group-mode">
                   <div class="ndp-label">AXIS //DPI高级模式</div>
                   <button type="button" class="ndp-switch" id="uiModeSwitch" data-state="false">
@@ -258,7 +335,7 @@
                   </button>
                 </div>
 
-                <!-- 模块 3: 范围限制 (数字读数 + 弹窗选择) -->
+                <!-- Module 3: range limits (numeric readout + popover picker) -->
                 <div class="ndp-group group-range">
                   <div class="ndp-label">RANGE // DPI可调值范围</div>
                   <div class="ndp-range-display">
@@ -275,7 +352,7 @@
                 </div>
               </div>
 
-              <!-- 隐藏的原生控件 (用于保持 app.js 逻辑兼容) -->
+              <!-- Hidden native controls (kept for app.js logic compatibility) -->
               <div style="display:none !important;" aria-hidden="true">
                 <select id="slotCountSelect">
                   <option value="1">1</option><option value="2">2</option><option value="3">3</option>
@@ -297,50 +374,50 @@
             </div>
           </div>
 
-          <!-- DPI 档位编辑卡片：显示和编辑各个DPI档位的具体数值 -->
+          <!-- DPI level editor card: display and edit exact values for each DPI level -->
           <div class="card card-dpi-editor">
             <div class="cardhead">
               <div class="title">DPI 档位<span class="dpiAdvancedTitleHint" id="dpiAdvancedTitleHint">独立设置X轴和Y轴的DPI值</span></div>
               <div class="sub">光学引擎抬起距离</div>
             </div>
 
-            <!-- DPI档位列表容器（由JavaScript动态生成） -->
+            <!-- DPI level list container (generated dynamically by JavaScript) -->
             <div class="stack dpiSlots" id="dpiList"></div>
           </div>
         </div>
 
       </section>
 
-      <!-- ========== 页面2：基础性能 ========== -->
+      <!-- ========== Page 2: Basic Performance ========== -->
       <section class="page" id="basic" aria-label="基础性能">
         <div class="basicMonolith" id="basicMonolith" aria-label="性能模式与回报率">
-          <!-- 动态连线层：显示性能模式与回报率之间的连接动画（SVG路径） -->
+          <!-- Dynamic connection layer: animated links between performance mode and polling rate (SVG paths) -->
           <svg id="basicSynapseLayer" aria-hidden="true">
             <path class="basicConnectionPath" d="M0,0" />
           </svg>
 
           <div class="basicStage">
-            <!-- 左侧列：性能模式选择 -->
+            <!-- Left column: performance mode selection -->
             <div class="basicColumn basicColumnLeft" id="basicModeColumn" aria-label="性能模式">
-              <!-- 性能模式选项：低功耗模式 -->
+              <!-- Performance mode option: low-power mode -->
               <div class="basicItem active" role="button" tabindex="0" data-perf="low" data-mode="eco">
                 Low Power <div class="basicAnchor"></div>
               </div>
-              <!-- 性能模式选项：标准模式 -->
+              <!-- Performance mode option: standard mode -->
               <div class="basicItem" role="button" tabindex="0" data-perf="hp" data-mode="std">
                 STANDARD <div class="basicAnchor"></div>
               </div>
-              <!-- 性能模式选项：竞技模式 -->
+              <!-- Performance mode option: competitive mode -->
               <div class="basicItem" role="button" tabindex="0" data-perf="sport" data-mode="comp">
                 COMPETITIVE <div class="basicAnchor"></div>
               </div>
-              <!-- 性能模式选项：超频模式 -->
+              <!-- Performance mode option: overclock mode -->
               <div class="basicItem" role="button" tabindex="0" data-perf="oc" data-mode="oc">
                 OVERCLOCK <div class="basicAnchor"></div>
               </div>
             </div>
 
-            <!-- 右侧列：回报率（轮询率）选择 -->
+            <!-- Right column: report rate (polling rate) selection -->
             <div class="basicColumn basicColumnRight" id="basicHzColumn" aria-label="回报率">
               <div class="basicItem" role="button" tabindex="0" data-hz="125">
                 <div class="basicAnchor"></div> 125 Hz
@@ -366,15 +443,15 @@
             </div>
           </div>
 
-          <!-- 底部状态栏：显示当前选择的回报率和性能模式状态 -->
+          <!-- Bottom status bar: shows the currently selected polling rate and performance mode -->
           <div class="basicFooter" aria-label="状态栏">
             <div class="basicTicker" id="basicHzTicker">8000 HZ</div>
             <div id="basicStatusText">POWER PRESERVATION</div>
           </div>
 
-          <!-- Rapoo 设备专属开关：仅在 Rapoo 设备上显示 -->
+          <!-- Rapoo-only toggles: shown only on Rapoo devices -->
           <div class="basicRapooSwitches" id="basicRapooSwitches" aria-label="Rapoo extra settings">
-            <!-- 开关1：无线策略（智能调节 / 满格射频） -->
+            <!-- Toggle 1: wireless strategy (smart adjustment / full RF) -->
             <label class="basicMiniSwitch" for="wirelessStrategyToggle">
               <div class="miniMeta">
                 <div class="miniTitle">无线策略</div>
@@ -385,7 +462,7 @@
               <span class="miniTrack" aria-hidden="true"><span class="miniThumb"></span></span>
             </label>
 
-            <!-- 开关2：通信协议（高效 / 初始） -->
+            <!-- Toggle 2: communication protocol (efficient / initial) -->
             <label class="basicMiniSwitch" for="commProtocolToggle">
               <div class="miniMeta">
                 <div class="miniTitle">通信协议</div>
@@ -397,8 +474,8 @@
             </label>
           </div>
 
-          <!-- 隐藏的表单控件：保留用于向后兼容的数据写入逻辑 -->
-          <!-- 注意：这些控件被隐藏但保留，以确保现有JavaScript代码正常工作 -->
+          <!-- Hidden form controls: retained for backward-compatible data write paths -->
+          <!-- Note: these controls stay hidden but preserved so existing JavaScript keeps working -->
           <div class="basicHiddenControls" aria-hidden="true">
             <select class="input" id="pollingSelect" tabindex="-1">
               <option value="8000">8000</option>
@@ -428,9 +505,9 @@
       </section>
         
 
-      <!-- ========== 页面3：高级参数 ========== -->
+      <!-- ========== Page 3: Advanced Parameters ========== -->
       <section class="page" id="advanced" aria-label="高级参数">
-        <!-- 高级参数面板：采用分段快门 + 高端滑条 + Shutter List 设计风格 -->
+        <!-- Advanced panel: segmented shutter + premium slider + shutter-list visual style -->
         <!-- Advanced semantic contract for maintainers:
              - Query advanced controls by data-adv-region / data-adv-item / data-adv-control / data-std-key.
              - Do not add brand-prefixed ids/classes for behavior binding.
@@ -438,18 +515,18 @@
              - Add-new-device flow: update profiles features/ui first, then wire semantic controls in ui/app.
              - Keep control count and DOM hierarchy stable to avoid interaction regressions. -->
         <div class="advPanel" id="advancedPanel" aria-label="Advanced Panel">
-          <!-- 左列：电源配置 + 传感器调校 -->
+          <!-- Left column: power configuration + sensor tuning -->
           <div class="advColLeft" id="advancedDualLeft" data-adv-region="dual-left">
-            <!-- 配置块1：电源按键参数 -->
+            <!-- Block 1: power button parameters -->
             <div class="advBlock">
               <div class="advSectionHeader">01 // 电源按键参数</div>
 
-              <!-- 滑块组：休眠时间和防抖设置 -->
-              <!-- 注意：采用离散档位滑块，滑动时自动吸附到档位 -->
+              <!-- Slider group: sleep timeout and debounce settings -->
+              <!-- Note: discrete-step sliders automatically snap to each step -->
               <div class="advSliderStack" aria-label="Power Sliders">
-                <!-- 滑块1：休眠时间 -->
+                <!-- Slider 1: sleep timeout -->
                 <div class="slider-card" aria-label="Sleep Timeout" data-adv-item="sleepSeconds" data-adv-control="range" data-std-key="sleepSeconds">
-                  <!-- 卡片装饰角 -->
+                  <!-- Decorative card corners -->
                   <div class="card-corner corner-tl"></div><div class="card-corner corner-tr"></div>
                   <div class="card-corner corner-bl"></div><div class="card-corner corner-br"></div>
 
@@ -459,11 +536,11 @@
                       <span class="slider-sub">TIMESCALE // 机械式步进逻辑</span>
                     </div>
                     
-                    <!-- 可视化组件：3D 动力学鳍片组（7个档位对应7个鳍片） -->
+                    <!-- Visual component: 3D kinetic fin set (7 levels map to 7 fins) -->
                     <div class="kinetic-visual-group">
                         <div class="value-readout" id="sleep_disp" data-unit="">-</div>
                         <div class="fin-display" id="sleepFinDisplay">
-                            <!-- 7个鳍片，每个对应一个休眠时间档位 -->
+                            <!-- Seven fins, each representing one sleep-time level -->
                             <div class="fin"></div><div class="fin"></div><div class="fin"></div>
                             <div class="fin"></div><div class="fin"></div><div class="fin"></div>
                             <div class="fin"></div>
@@ -471,16 +548,16 @@
                     </div>
                   </div>
 
-                  <!-- 滑块控件 -->
+                  <!-- Slider control -->
                   <div class="range-wrap">
                     <div class="custom-track"></div>
                     <input type="range" id="sleepInput" min="0" max="6" step="1" value="0" data-adv-item="sleepSeconds" data-adv-control="range" data-std-key="sleepSeconds" />
                   </div>
                 </div>
 
-                <!-- 滑块2：防抖设置 -->
+                <!-- Slider 2: debounce setting -->
                 <div class="slider-card" aria-label="Debounce" data-adv-item="debounceMs" data-adv-control="range" data-std-key="debounceMs">
-                  <!-- 卡片装饰角 -->
+                  <!-- Decorative card corners -->
                   <div class="card-corner corner-tl"></div><div class="card-corner corner-tr"></div>
                   <div class="card-corner corner-bl"></div><div class="card-corner corner-br"></div>
 
@@ -490,25 +567,25 @@
                       <span class="slider-sub">低数值极速响应，高数值过滤双击</span>
                     </div>
                     
-                    <!-- 可视化组件：宽幅信号稳定器（仪表盘风格） -->
+                    <!-- Visual component: wide signal stabilizer (dashboard style) -->
                     <div class="debounce-visual-group wide-mode">
-                        <!-- 数值显示（左侧，符合仪表盘习惯） -->
+                        <!-- Value readout (left side, consistent with dashboard conventions) -->
                         <div class="value-readout" id="debounce_disp" data-unit="ms">1</div>
                         <div class="debounce-visual-wide">
-                            <!-- 背景刻度线（5个刻度点） -->
+                            <!-- Background tick marks (5 ticks) -->
                             <div class="debounce-scale">
                                 <i></i><i></i><i></i><i></i><i></i>
                             </div>
-                            <!-- 稳定条（核心可视化元素） -->
+                            <!-- Stabilizer bar (core visual element) -->
                             <div class="debounce-bar-wide" id="debounceBar">
-                                <!-- 内部纹理效果 -->
+                                <!-- Internal texture effect -->
                                 <div class="bar-texture"></div>
                             </div>
                         </div>
                     </div>
                   </div>
 
-                  <!-- 滑块控件 -->
+                  <!-- Slider control -->
                   <div class="range-wrap">
                     <div class="custom-track"></div>
                     <input type="range" id="debounceInput" min="0" max="4" step="1" value="0" data-adv-item="debounceMs" data-adv-control="range" data-std-key="debounceMs" />
@@ -516,7 +593,7 @@
                 </div>
               </div>
 
-              <!-- 隐藏的表单控件：保留用于向后兼容的数据写入逻辑 -->
+              <!-- Hidden form controls: retained for backward-compatible data write paths -->
               <div class="advHiddenControls" aria-hidden="true">
                 <select class="input" id="sleepSelect" tabindex="-1" data-adv-item="sleepSeconds" data-adv-control="select" data-std-key="sleepSeconds">
                   <option value="10">10</option>
@@ -534,14 +611,14 @@
               </div>
             </div>
 
-            <!-- 配置块2：传感器参数调校 -->
+            <!-- Block 2: sensor parameter tuning -->
             <div class="advBlock">
               <div class="advSectionHeader">02 // 传感器参数</div>
 
               <div class="advSliderStack">
-                <!-- 滑块1：传感器角度校准 -->
+                <!-- Slider 1: sensor angle calibration -->
                 <div class="slider-card" aria-label="Sensor Angle" data-adv-item="sensorAngle" data-adv-control="range" data-std-key="sensorAngle">
-                  <!-- 卡片装饰角 -->
+                  <!-- Decorative card corners -->
                   <div class="card-corner corner-tl"></div><div class="card-corner corner-tr"></div>
                   <div class="card-corner corner-bl"></div><div class="card-corner corner-br"></div>
 
@@ -551,21 +628,21 @@
                       <span class="slider-sub">设置传感器的水平校准</span>
                     </div>
                     
-                    <!-- 可视化组件：水平仪风格（模拟水平仪界面） -->
+                    <!-- Visual component: spirit-level style (simulated level interface) -->
                     <div class="horizon-group">
-                        <!-- 角度数值显示（左侧） -->
+                        <!-- Angle value readout (left side) -->
                         <div class="value-readout" id="angle_disp" data-unit="°">0</div>
                         <div class="horizon-visual">
-                            <!-- 水平线（动态旋转） -->
+                            <!-- Horizon line (dynamically rotated) -->
                             <div class="horizon-line" id="horizonLine"></div>
-                            <!-- 静态参考线：十字准星（水平和垂直参考线） -->
+                            <!-- Static reference lines: crosshair (horizontal + vertical guides) -->
                             <div class="horizon-ref-x"></div>
                             <div class="horizon-ref-y"></div>
                         </div>
                     </div>
                   </div>
 
-                  <!-- 滑块控件（带中心标记） -->
+                  <!-- Slider control (with center marker) -->
                   <div class="range-wrap">
                     <div class="custom-track"></div>
                     <div class="center-mark"></div>
@@ -573,9 +650,9 @@
                   </div>
                 </div>
 
-                <!-- 滑块2：传感器手感值 -->
+                <!-- Slider 2: sensor feel value -->
                 <div class="slider-card" aria-label="Sensor Feel" data-adv-item="surfaceFeel" data-adv-control="range" data-std-key="surfaceFeel">
-                  <!-- 卡片装饰角 -->
+                  <!-- Decorative card corners -->
                   <div class="card-corner corner-tl"></div><div class="card-corner corner-tr"></div>
                   <div class="card-corner corner-bl"></div><div class="card-corner corner-br"></div>
 
@@ -585,22 +662,22 @@
                       <span class="slider-sub">0为关闭, 数值越大越滑</span>
                     </div>
                     
-                    <!-- 可视化组件：高度/悬浮感（模拟悬浮效果） -->
+                    <!-- Visual component: height/hover feel (simulated hover effect) -->
                     <div class="height-visual-group">
-                        <!-- 百分比数值显示（左侧） -->
+                        <!-- Percentage readout (left side) -->
                         <div class="value-readout" id="feel_disp" data-unit="%">0</div>
                         <div class="height-visual">
-                            <!-- 垂直参考虚线 -->
+                            <!-- Vertical dashed reference line -->
                             <div class="height-guide"></div>
-                            <!-- 地面基准线 -->
+                            <!-- Ground baseline -->
                             <div class="height-surface"></div>
-                            <!-- 悬浮滑块（高度随数值变化） -->
+                            <!-- Floating block (height changes with the value) -->
                             <div class="height-block" id="heightBlock"></div>
                         </div>
                     </div>
                   </div>
 
-                  <!-- 滑块控件 -->
+                  <!-- Slider control -->
                   <div class="range-wrap">
                     <div class="custom-track"></div>
                     <input type="range" id="feelInput" min="0" max="60" value="0" data-adv-item="surfaceFeel" data-adv-control="range" data-std-key="surfaceFeel" />
@@ -610,13 +687,13 @@
             </div>
           </div>
 
-          <!-- 右列：高级性能参数（开关列表） -->
+          <!-- Right column: advanced performance parameters (toggle list) -->
           <div class="advColRight" id="advancedDualRight" data-adv-region="dual-right">
             <div class="advSectionHeader">03 // 高级性能参数</div>
 
-            <!-- 快门式开关列表：采用分段快门设计风格 -->
+            <!-- Shutter-style toggle list: segmented shutter design -->
             <div class="shutter-list" aria-label="Advanced toggles">
-              <!-- 开关1：移动同步 (Motion Sync) - 位标识：bit3 -->
+              <!-- Toggle 1: Motion Sync - bit marker: bit3 -->
               <label class="advShutterItem" data-adv-item="motionSync" data-adv-control="toggle" data-std-key="motionSync">
                 <input type="checkbox" class="raw-input" id="bit3" />
                 <div class="shutter-row">
@@ -632,7 +709,7 @@
                 </div>
               </label>
 
-              <!-- 开关2：直线修正 (Angle Snap) - 位标识：bit1 -->
+              <!-- Toggle 2: Angle Snap - bit marker: bit1 -->
               <label class="advShutterItem" data-adv-item="linearCorrection" data-adv-control="toggle" data-std-key="linearCorrection">
                 <input type="checkbox" class="raw-input" id="bit1" />
                 <div class="shutter-row">
@@ -648,7 +725,7 @@
                 </div>
               </label>
 
-              <!-- 开关3：纹波修正 (Ripple Fix) - 位标识：bit2 -->
+              <!-- Toggle 3: Ripple Fix - bit marker: bit2 -->
               <label class="advShutterItem" data-adv-item="rippleControl" data-adv-control="toggle" data-std-key="rippleControl">
                 <input type="checkbox" class="raw-input" id="bit2" />
                 <div class="shutter-row">
@@ -664,8 +741,8 @@
                 </div>
               </label>
 
-              <!-- 开关4：按键扫描率 / 辅助压枪 - 位标识：bit6 -->
-              <!-- 注意：Chaos 设备使用 checkbox 结构 -->
+              <!-- Toggle 4: key scan rate / recoil assist - bit marker: bit6 -->
+              <!-- Note: Chaos devices use a checkbox structure -->
               <label class="advShutterItem" data-adv-item="secondarySurfaceToggle" data-adv-control="toggle" data-std-key="surfaceModeSecondary">
                 <input type="checkbox" class="raw-input" id="bit6" />
                 <div class="shutter-row">
@@ -680,12 +757,12 @@
                   </div>
                 </div>
               </label>
-              <!-- 注意：Rapoo 设备使用循环按钮结构（点击切换档位） -->
+              <!-- Note: Rapoo devices use a cycle-button structure (click to switch levels) -->
               <div class="advShutterItem adv-cycle-item" id="keyScanningRateCycle" data-adv-item="keyScanningRate" data-adv-control="cycle" data-std-key="keyScanningRate" style="display: none;">
                 <div class="shutter-row">
-                  <!-- 背景层：保持当前档位颜色 -->
+                  <!-- Background layer: keeps the current level color -->
                   <div class="shutter-bg-base"></div>
-                  <!-- 滑入层：点击时改变颜色并滑入，覆盖旧颜色（动画效果） -->
+                  <!-- Slide-in layer: changes color and slides in on click to cover the old color -->
                   <div class="shutter-bg-next"></div>
                   <div class="border-deco"></div>
                   <div class="content-layer">
@@ -694,14 +771,14 @@
                       <span class="label-title">按键扫描率</span>
                       <span class="label-desc">点击循环切换：1k / 2k / 4k / 8k 采样率.</span>
                     </div>
-                    <!-- 当前档位显示 -->
+                    <!-- Current level indicator -->
                     <div class="status-indicator">
                       <span class="status-text cycle-text">1k</span>
                       <div class="crosshair"></div>
                     </div>
                   </div>
                 </div>
-                <!-- 隐藏的 select 元素：用于数据绑定和写入逻辑 -->
+                <!-- Hidden select element: used for data binding and write logic -->
                 <div class="adv-cycle-select-wrap" aria-hidden="true" style="display: none;">
                   <select class="input adv-cycle-select" id="keyScanningRateSelectAdv" data-adv-item="keyScanningRate" data-adv-control="select" data-std-key="keyScanningRate" aria-label="按键扫描率">
                     <option value="1000">1k</option>
@@ -712,7 +789,7 @@
                 </div>
               </div>
 
-              <!-- 开关5：LOD 静默高度 - 位标识：bitLOD -->
+              <!-- Toggle 5: LOD silent height - bit marker: bitLOD -->
               <label class="advShutterItem" data-adv-item="surfaceModePrimary" data-adv-control="toggle" data-std-key="surfaceModePrimary">
                 <input type="checkbox" class="raw-input" id="bitLOD" />
                 <div class="shutter-row">
@@ -728,7 +805,7 @@
                 </div>
               </label>
 
-              <!-- 开关6：LED 指示灯 - ID: ledToggle -->
+              <!-- Toggle 6: LED indicator - ID: ledToggle -->
               <label class="advShutterItem" data-adv-item="primaryLedFeature" data-adv-control="toggle" data-std-key="primaryLedFeature">
                 <input type="checkbox" class="raw-input" id="ledToggle" />
                 <div class="shutter-row">
@@ -744,10 +821,10 @@
                 </div>
               </label>
 
-              <!-- ATK 设备专属功能：DPI 灯效（循环切换） -->
+              <!-- ATK-only feature: DPI lighting effect (cycle switch) -->
               <div class="advShutterItem adv-cycle-item" id="dpiLightEffectCycle" data-adv-item="dpiLightEffect" data-adv-control="cycle" data-std-key="dpiLightEffect" style="display: none;">
                 <div class="shutter-row">
-                  <!-- 背景层：用于颜色切换动画 -->
+                  <!-- Background layer: used for color transition animation -->
                   <div class="shutter-bg-base"></div>
                   <div class="shutter-bg-next"></div>
                   <div class="border-deco"></div>
@@ -765,7 +842,7 @@
                 </div>
               </div>
 
-              <!-- ATK 设备专属功能：接收器灯效（循环切换） -->
+              <!-- ATK-only feature: receiver lighting effect (cycle switch) -->
               <div class="advShutterItem adv-cycle-item" id="receiverLightEffectCycle" data-adv-item="receiverLightEffect" data-adv-control="cycle" data-std-key="receiverLightEffect" style="display: none;">
                 <div class="shutter-row">
                   <div class="shutter-bg-base"></div>
@@ -785,7 +862,7 @@
                 </div>
               </div>
 
-              <!-- ATK 设备专属功能：超远距离模式 - ID: longRangeModeToggle -->
+              <!-- ATK-only feature: long-range mode - ID: longRangeModeToggle -->
               <label class="advShutterItem" id="longRangeModeItem" data-adv-item="longRangeMode" data-adv-control="toggle" data-std-key="longRangeMode" style="display: none;">
                 <input type="checkbox" class="raw-input" id="longRangeModeToggle" />
                 <div class="shutter-row">
@@ -802,7 +879,7 @@
               </label>
             </div>
 
-            <!-- ModeByte 显示：显示所有开关状态的十六进制值 -->
+            <!-- ModeByte display: shows the hex value of all toggle states -->
             <div class="advModeByteRow" aria-label="ModeByte">
               <span class="advModeByteLabel">MODEBYTE</span>
               <span class="advModeByteValue" id="modeByteText">0x--</span>
@@ -1140,13 +1217,13 @@
       </section>
         
 
-      <!-- ========== 页面4：测试工具 ========== -->
+      <!-- ========== Page 4: Test Tools ========== -->
       <section class="page" id="testtools" aria-label="测试工具">
         <div class="pagegrid testtoolsgrid">
           <div class="card testtoolsCard">
-            <!-- 测试工具内部导航标签页（不影响左侧主菜单） -->
+            <!-- Internal test-tool tabs (independent from the left main menu) -->
             <div class="ttTabs" role="tablist" aria-label="测试工具导航">
-              <!-- 标签页背景和滑条动画 -->
+              <!-- Tab background and glider animation -->
               <div class="ttTabs-bg">
                 <div class="ttGlider"></div>
                 <div class="ttGliderSecondary"></div>
@@ -1157,13 +1234,13 @@
               <button class="btn ttTab" id="navMatch" type="button">灵敏度匹配</button>
             </div>
 
-            <!-- 测试工具页面容器 -->
+            <!-- Test-tool page container -->
             <div class="ttPages" id="ttPages">
-              <!-- ========== 测试工具1：双击检测 ========== -->
+              <!-- ========== Test Tool 1: Double-Click Detection ========== -->
               <div id="pageMain" class="page active" aria-label="双击检测">
                 <div class="ttMainStack">
                   <div class="ttBtnGrid" id="btnContainer" aria-label="Mouse buttons">
-                    <!-- 左键 -->
+                    <!-- Left button -->
                     <div class="mouse-btn left" tabindex="0" role="button" aria-label="左键统计">
                       <div class="btn-title">左键</div>
                       <div class="ttHero">
@@ -1192,7 +1269,7 @@
                       <div class="ttMini">最小: <span class="du-min">--</span></div>
                     </div>
 
-                    <!-- 中键 -->
+                    <!-- Middle button -->
                     <div class="mouse-btn middle" tabindex="0" role="button" aria-label="中键统计">
                       <div class="btn-title">中键</div>
                       <div class="ttHero">
@@ -1221,7 +1298,7 @@
                       <div class="ttMini">最小: <span class="du-min">--</span></div>
                     </div>
 
-                    <!-- 右键 -->
+                    <!-- Right button -->
                     <div class="mouse-btn right" tabindex="0" role="button" aria-label="右键统计">
                       <div class="btn-title">右键</div>
                       <div class="ttHero">
@@ -1250,7 +1327,7 @@
                       <div class="ttMini">最小: <span class="du-min">--</span></div>
                     </div>
 
-                    <!-- 后退 -->
+                    <!-- Back button -->
                     <div class="mouse-btn back" tabindex="0" role="button" aria-label="后退键统计">
                       <div class="btn-title">后退</div>
                       <div class="ttHero">
@@ -1279,7 +1356,7 @@
                       <div class="ttMini">最小: <span class="du-min">--</span></div>
                     </div>
 
-                    <!-- 前进 -->
+                    <!-- Forward button -->
                     <div class="mouse-btn fwd" tabindex="0" role="button" aria-label="前进键统计">
                       <div class="btn-title">前进</div>
                       <div class="ttHero">
@@ -1309,7 +1386,7 @@
                     </div>
                   </div>
 
-                  <!-- 双击阈值设置 -->
+                  <!-- Double-click threshold settings -->
                   <div class="card ttThresholdCard">
                     <div class="ttThresholdRow">
                       <div class="ttThresholdText">
@@ -1325,7 +1402,7 @@
                     </div>
                   </div>
 
-                  <!-- 下方：滚轮 + 自定义键位 -->
+                  <!-- Bottom area: wheel + custom key -->
                   <div class="ttBottomGrid">
                     <div class="card ttScrollCard" aria-label="滚轮统计">
                       <div class="cardhead">
@@ -1411,7 +1488,7 @@
                 </div>
               </div>
 
-              <!-- ========== 02 / 轮询率检测 ========== -->
+              <!-- ========== 02 / Polling Rate Test ========== -->
               <div id="pagePoll" class="page" aria-label="轮询率检测">
                 <div class="ttTwoCol">
                   <div class="card ttPollLeft">
@@ -1473,7 +1550,7 @@
                 </div>
               </div>
 
-              <!-- ========== 03 / 灵敏度匹配 ========== -->
+              <!-- ========== 03 / Sensitivity Matching ========== -->
               <div id="pageMatch" class="page" aria-label="灵敏度匹配">
                 <div class="ttTwoCol">
                   <div class="card ttMatchLeft">
@@ -1483,7 +1560,7 @@
                       </div>
                     </div>
 
-                    <!-- 使用方法卡片 -->
+                    <!-- Usage instructions card -->
                     <div class="ttMatchCard ttMatchInfoCard">
                       <div class="card-label">使用方法</div>
                       <div class="ttMatchSteps">
@@ -1495,7 +1572,7 @@
                       </div>
                     </div>
 
-                    <!-- 控制区卡片 -->
+                    <!-- Control area card -->
                     <div class="ttMatchCard ttMatchControlCard">
                       <div class="ttMatchInputRow">
                         <div class="input-group">
@@ -1518,7 +1595,7 @@
 
                     <div class="ttMatchDivider"></div>
 
-                    <!-- 结果展示区 -->
+                    <!-- Results display area -->
                     <div class="ttMatchResultArea">
                       <div class="result-row">
                         <div class="result-head">
@@ -1558,7 +1635,7 @@
                 </div>
               </div>
 
-              <!-- ========== 04 / 鼠标角度校准 ========== -->
+              <!-- ========== 04 / Mouse Angle Calibration ========== -->
               <div id="pageRot" class="page" aria-label="鼠标角度校准">
                 <div class="ttTwoCol">
                   <div class="card ttRotLeft">
@@ -1568,7 +1645,7 @@
                       </div>
                     </div>
 
-                    <!-- 使用方法卡片 -->
+                    <!-- Usage instructions card -->
                     <div class="ttMatchCard ttMatchInfoCard">
                       <div class="card-label">使用方法</div>
                       <div class="ttMatchSteps">
@@ -1585,7 +1662,7 @@
                       <button id="rotWriteAngleBtn" class="btn btn-measure" type="button">写入推荐角度</button>
                     </div>
 
-                    <!-- 结果展示卡片 -->
+                    <!-- Results card -->
                     <div class="ttMatchCard ttRotControlCard">
                       <div class="ttRotResultGroup">
                         <div class="result-main">
@@ -1622,7 +1699,7 @@
       </section>
 
 
-      <!-- ========== 页面5：按键映射 ========== -->
+      <!-- ========== Page 5: Key Mapping ========== -->
       <section class="page active" id="keys" aria-label="Keys">
         <div class="pagegrid singlegrid">
           <div class="card kmCard">
@@ -1631,45 +1708,45 @@
               <div class="sub">  </div>
             </div>
 
-            <!-- 按键映射画布区域 -->
+            <!-- Key-mapping canvas area -->
             <div class="kmStage" id="kmStage">
               <div class="kmCanvas" id="kmCanvas" aria-label="Mouse map">
-                <!-- 鼠标示意图 -->
+                <!-- Mouse illustration -->
                 <img class="kmImg" src="./assets/images/default.png" alt="mouse" />
 
-                <!-- 按键映射点：每个按键在鼠标图上的位置和功能 -->
-                <!-- 按键1：左键（位置：左侧，坐标 42%, 24%） -->
-                <div class="kmPoint bubble-left" data-btn="1" style="--x:35; --y:20;">
+                <!-- Key mapping points: each button's location and function on the mouse image -->
+                <!-- Key 1: left button (left side, coordinates 42%, 24%) -->
+                <div class="kmPoint bubble-left" data-btn="1" style="--x:33; --y:20;">
                   <button class="kmDotBtn" type="button" data-btn="1" aria-label="按键1"></button>
                   <div class="kmBubble"><div class="kmBubbleKey">按键1</div><span class="kmBubbleText" id="kmLabel1">左键</span></div>
                 </div>
 
-                <!-- 按键2：右键（位置：右侧，坐标 62%, 38%） -->
-                <div class="kmPoint bubble-right" data-btn="2" style="--x:65; --y:38;">
+                <!-- Key 2: right button (right side, coordinates 62%, 38%) -->
+                <div class="kmPoint bubble-right" data-btn="2" style="--x:67; --y:38;">
                   <button class="kmDotBtn" type="button" data-btn="2" aria-label="按键2"></button>
                   <div class="kmBubble"><div class="kmBubbleKey">按键2</div><span class="kmBubbleText" id="kmLabel2">右键</span></div>
                 </div>
 
-                <!-- 按键3：中键/滚轮按下（位置：右侧，坐标 51%, 26%） -->
-                <div class="kmPoint bubble-right" data-btn="3" style="--x:51; --y:24;">
+                <!-- Key 3: middle/wheel click (right side, coordinates 51%, 26%) -->
+                <div class="kmPoint bubble-right" data-btn="3" style="--x:50; --y:24;">
                   <button class="kmDotBtn" type="button" data-btn="3" aria-label="按键3"></button>
                   <div class="kmBubble"><div class="kmBubbleKey">按键3</div><span class="kmBubbleText" id="kmLabel3">中键</span></div>
                 </div>
 
-                <!-- 按键4：侧键-前进（位置：左侧，坐标 32%, 42%） -->
-                <div class="kmPoint bubble-left" data-btn="4" style="--x:24; --y:38;">
+                <!-- Key 4: side-forward button (left side, coordinates 32%, 42%) -->
+                <div class="kmPoint bubble-left" data-btn="4" style="--x:22; --y:40;">
                   <button class="kmDotBtn" type="button" data-btn="4" aria-label="按键4"></button>
                   <div class="kmBubble"><div class="kmBubbleKey">按键4</div><span class="kmBubbleText" id="kmLabel4">前进</span></div>
                 </div>
 
-                <!-- 按键5：侧键-后退（位置：左侧，坐标 32%, 54%） -->
-                <div class="kmPoint bubble-left" data-btn="5" style="--x:26; --y:50;">
+                <!-- Key 5: side-back button (left side, coordinates 32%, 54%) -->
+                <div class="kmPoint bubble-left" data-btn="5" style="--x:23; --y:52;">
                   <button class="kmDotBtn" type="button" data-btn="5" aria-label="按键5"></button>
                   <div class="kmBubble"><div class="kmBubbleKey">按键5</div><span class="kmBubbleText" id="kmLabel5">后退</span></div>
                 </div>
 
-                <!-- 按键6：DPI切换键（位置：右侧，坐标 52%, 70%） -->
-                <div class="kmPoint bubble-right" data-btn="6" style="--x:52; --y:70;">
+                <!-- Key 6: DPI switch button (right side, coordinates 52%, 70%) -->
+                <div class="kmPoint bubble-right" data-btn="6" style="--x:52; --y:80;">
                   <button class="kmDotBtn" type="button" data-btn="6" aria-label="按键6"></button>
                   <div class="kmBubble"><div class="kmBubbleKey">按键6</div><span class="kmBubbleText" id="kmLabel6">DPI循环</span></div>
                 </div>
@@ -1678,7 +1755,7 @@
           </div>
         </div>
 
-        <!-- 右侧弹出抽屉：按键映射选择列表 -->
+        <!-- Right slide-out drawer: key-mapping selection list -->
         <aside class="kmDrawer" id="kmDrawer" aria-hidden="true">
           <div class="kmDrawerHead">
             <div class="kmDrawerTitle" id="kmDrawerTitle">选择映射</div>
@@ -1689,21 +1766,21 @@
             </button>
           </div>
 
-          <!-- 映射类型标签页（如：基础功能、宏、快捷键等） -->
+          <!-- Mapping type tabs (for example: basic functions, macros, shortcuts) -->
           <div class="kmTabs" id="kmTabs" role="tablist" aria-label="Keymap tabs"></div>
 
           <div class="kmDrawerBody">
-            <!-- 搜索框：快速查找映射功能 -->
+            <!-- Search box: quickly find mapping functions -->
             <div class="field">
               <div class="label">搜索</div>
               <input class="input" id="kmSearch" placeholder="输入关键字..." />
             </div>
-            <!-- 映射列表：显示可选择的按键功能（由JavaScript动态生成） -->
+            <!-- Mapping list: shows selectable button functions (generated dynamically by JavaScript) -->
             <div class="kmList" id="kmList" role="list"></div>
           </div>
         </aside>
 
-        <!-- 抽屉背景遮罩：点击关闭抽屉 -->
+        <!-- Drawer backdrop: click to close the drawer -->
         <div class="kmBackdrop" id="kmBackdrop" aria-hidden="true"></div>
       </section>
       </div>
@@ -1711,27 +1788,33 @@
   </div>
   </div>
 
-  <!-- ==================== JavaScript 脚本引用 ==================== -->
-  <!-- 注意：脚本加载顺序很重要，请勿随意调整 -->
-  <!-- 设备运行时：HID设备连接和通信核心 -->
-  <script src="./src/core/device_runtime.js"></script>
-  <!-- 重构工具：通用工具函数和辅助方法 -->
-  <script src="./src/refactor/refactor.core.js"></script>
-  <script src="./src/refactor/refactor.profiles.js"></script>
-  <script src="./src/refactor/refactor.ui.js"></script>
-  <!-- 主应用逻辑：页面路由、UI交互、数据绑定 -->
-  <script src="./src/core/app.js"></script>
-  <!-- 鼠标测试主功能：按键映射、DPI、性能等核心功能 -->
-  <script src="./src/tools/mouse-main.js"></script>
-  <!-- 导航和匹配工具：灵敏度匹配功能 -->
-  <script src="./src/tools/nav-match.js"></script>
-  <!-- 角度校准工具：鼠标角度校准功能 -->
-  <script src="./src/tools/rotation-calibration.js"></script>
+  <!-- ==================== JavaScript Script References ==================== -->
+  <!-- Note: script load order is critical; do not reorder casually -->
+  <script>
+    window.__APP_ASSET_VERSION__ = "2026.03.06.1";
+    try { document.documentElement.dataset.assetVersion = window.__APP_ASSET_VERSION__; } catch (_) {}
+    try { console.info(`[Assets] JS version ${window.__APP_ASSET_VERSION__}`); } catch (_) {}
+  </script>
+  <!-- Device runtime: core HID connection and communication -->
+  <script src="./src/core/device_runtime.js?v=2026.03.06.1"></script>
+  <script src="./src/core/i18n.literals.js?v=2026.03.06.1"></script>
+  <!-- Refactor utilities: shared utility functions and helpers -->
+  <script src="./src/refactor/refactor.core.js?v=2026.03.06.1"></script>
+  <script src="./src/refactor/refactor.profiles.js?v=2026.03.06.1"></script>
+  <script src="./src/refactor/refactor.ui.js?v=2026.03.06.1"></script>
+  <!-- Main application logic: routing, UI interactions, and data binding -->
+  <script src="./src/core/app.js?v=2026.03.06.1"></script>
+  <!-- Main mouse test features: key mapping, DPI, performance, and more -->
+  <script src="./src/tools/mouse-main.js?v=2026.03.06.1"></script>
+  <!-- Navigation and matching tools: sensitivity matching feature -->
+  <script src="./src/tools/nav-match.js?v=2026.03.06.1"></script>
+  <!-- Angle calibration tool: mouse angle calibration feature -->
+  <script src="./src/tools/rotation-calibration.js?v=2026.03.06.1"></script>
 
   <script>
   /**
-   * UI Bridge: 将新的设计控件与原有的 app.js 逻辑挂钩
-   * 目的：在不修改 app.js 核心逻辑的前提下，重绘 DPI 控制面板
+   * UI Bridge: hook new design controls into the existing app.js logic.
+   * Purpose: redraw the DPI control panel without changing app.js core logic.
    */
   (function () {
     if (window.__dpiUiBridgeInited) return;
@@ -1790,7 +1873,7 @@
     }
 
     // ----------------------------------------------------
-    // Logic 1: Slot Count (挡位数量) - 同步与交互
+    // Logic 1: Slot count (level count) - sync and interaction
     // ----------------------------------------------------
     let lastSlotUiValue = null;
     let slotAnimTimer = null;
@@ -1845,7 +1928,7 @@
     });
 
     // ----------------------------------------------------
-    // Logic 2: Advanced Mode (高级模式) - 同步与交互
+    // Logic 2: Advanced mode - sync and interaction
     // ----------------------------------------------------
     function syncModeUI() {
       const isOn = refs.oldMode.getAttribute("aria-pressed") === "true";
@@ -1872,7 +1955,7 @@
     });
 
     // ----------------------------------------------------
-    // Logic 3: Range Picker (范围选择) - 弹窗逻辑
+    // Logic 3: Range picker - popover logic
     // ----------------------------------------------------
     let pickerEl = null;
     let pickerSource = null;
@@ -1970,7 +2053,7 @@
     refs.newMaxBtn.addEventListener("click", () => openPicker(refs.newMaxBtn, refs.oldMax));
 
     // ----------------------------------------------------
-    // 初始化运行
+    // Initial startup
     // ----------------------------------------------------
     function syncAll() {
       syncSlotUI();
@@ -1984,17 +2067,17 @@
   })();
   </script>
 
-  <!-- ==================== SVG 滤镜定义 ==================== -->
-  <!-- 液体流动效果滤镜（Gooey Effect）：用于测试工具等UI元素的特殊视觉效果 -->
-  <!-- 注意：此SVG元素被隐藏，仅用于定义滤镜，供CSS引用 -->
+  <!-- ==================== SVG Filter Definitions ==================== -->
+  <!-- Gooey effect filter: special visual effect for test-tool UI elements -->
+  <!-- Note: this SVG element is hidden and only defines filters for CSS references -->
   <svg style="visibility: hidden; position: absolute;" width="0" height="0" xmlns="http://www.w3.org/2000/svg" version="1.1">
     <defs>
       <filter id="ttGooey">
-        <!-- 高斯模糊：创建柔和的边缘效果 -->
+        <!-- Gaussian blur: creates a soft edge effect -->
         <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur" />
-        <!-- 颜色矩阵：增强对比度，创建液体流动的粘合效果 -->
+        <!-- Color matrix: boosts contrast to create the gooey blend effect -->
         <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -9" result="goo" />
-        <!-- 合成：将原始图形与处理后的效果合成 -->
+        <!-- Composite: combines the original graphic with the processed effect -->
         <feComposite in="SourceGraphic" in2="goo" operator="atop" />
       </filter>
     </defs>

@@ -1491,19 +1491,19 @@
     for (let i = 0; i < digits.length; i++) {
       add(digits[i], "keyboard", 0x02, (0x00 << 8) | (0x1e + i));
     }
-    add("回车", "keyboard", 0x02, (0x00 << 8) | 0x28);
-    add("ESC", "keyboard", 0x02, (0x00 << 8) | 0x29);
+    add("Enter", "keyboard", 0x02, (0x00 << 8) | 0x28);
+    add("Esc", "keyboard", 0x02, (0x00 << 8) | 0x29);
     add("Tab", "keyboard", 0x02, (0x00 << 8) | 0x2b);
-    add("空格", "keyboard", 0x02, (0x00 << 8) | 0x2c);
+    add("Space", "keyboard", 0x02, (0x00 << 8) | 0x2c);
 
-    add("剪切", "keyboard", 0x02, (0x01 << 8) | 0x1b);
-    add("撤销", "keyboard", 0x02, (0x01 << 8) | 0x1d);
-    add("重做", "keyboard", 0x02, (0x01 << 8) | 0x1c);
-    add("全选", "keyboard", 0x02, (0x01 << 8) | 0x04);
-    add("保存", "keyboard", 0x02, (0x01 << 8) | 0x16);
-    add("打开", "keyboard", 0x02, (0x01 << 8) | 0x12);
-    add("新建", "keyboard", 0x02, (0x01 << 8) | 0x11);
-    add("切换窗口", "system", 0x02, (0x04 << 8) | 0x2b);
+    add("剪切 Ctrl + X", "keyboard", 0x02, (0x01 << 8) | 0x1b);
+    add("撤销 Ctrl + Z", "keyboard", 0x02, (0x01 << 8) | 0x1d);
+    add("重做 Ctrl + Y", "keyboard", 0x02, (0x01 << 8) | 0x1c);
+    add("全选 Ctrl + A", "keyboard", 0x02, (0x01 << 8) | 0x04);
+    add("保存 Ctrl + S", "keyboard", 0x02, (0x01 << 8) | 0x16);
+    add("打开 Ctrl + O", "keyboard", 0x02, (0x01 << 8) | 0x12);
+    add("新建 Ctrl + N", "keyboard", 0x02, (0x01 << 8) | 0x11);
+    add("切换窗口 Alt + Tab", "system", 0x02, (0x04 << 8) | 0x2b);
 
     add("Backspace", "keyboard", 0x02, (0x00 << 8) | 0x2a);
     add("Delete", "keyboard", 0x02, (0x00 << 8) | 0x4c);
@@ -1523,12 +1523,12 @@
     }
 
 
-    add("显示桌面", "system", 0x02, (0x08 << 8) | 0x07);
-    add("锁定电脑", "system", 0x02, (0x08 << 8) | 0x0f);
-    add("打开资源管理器", "system", 0x02, (0x08 << 8) | 0x08);
-    add("运行", "system", 0x02, (0x08 << 8) | 0x15);
-    add("搜索", "system", 0x02, (0x08 << 8) | 0x16);
-    add("任务管理器", "system", 0x02, (0x03 << 8) | 0x29);
+    add("显示桌面 Win + D", "system", 0x02, (0x08 << 8) | 0x07);
+    add("锁定电脑 Win + L", "system", 0x02, (0x08 << 8) | 0x0f);
+    add("文件资源管理器 Win + E", "system", 0x02, (0x08 << 8) | 0x08);
+    add("运行 Win + R", "system", 0x02, (0x08 << 8) | 0x15);
+    add("系统搜索", "system", 0x02, (0x08 << 8) | 0x16);
+    add("任务管理器 Ctrl + Shift + Esc", "system", 0x02, (0x03 << 8) | 0x29);
     add("截图", "system", 0x02, (0x0a << 8) | 0x16);
 
     return Object.freeze(actions);
@@ -1677,7 +1677,8 @@
       await this._initializeSecurityGate();
     }
 
-    // 统一会话引导入口：open -> 首读 -> 超时/重试 -> 缓存回退，并保证至少一次 _emitConfig。
+    // Unified session bootstrap entry: open -> initial read -> timeout/retry -> cache fallback,
+    // while guaranteeing at least one _emitConfig() call.
     async bootstrapSession(opts = {}) {
       const options = isObject(opts) ? opts : {};
       const {
@@ -1690,7 +1691,8 @@
         readTimeoutMs = 1200,
         useCacheFallback = true,
       } = options;
-      // 统一接口兼容字段：当前协议暂未直接消费 readTimeoutMs，读取超时由协议内部 transport/driver 机制控制。
+      // Interface-compatibility field: the current protocol does not consume readTimeoutMs directly.
+      // Read timeout behavior is controlled by internal transport/driver mechanisms.
       void readTimeoutMs;
 
       if (device) this.device = device;
@@ -2292,7 +2294,8 @@
         try {
           await this._driver.runSequence(commands);
         } catch (err) {
-          // 写失败时在协议层执行一次回读纠偏，确保 UI 缓存与设备真实状态重新对齐。
+          // On write failure, run a protocol-level readback reconciliation once
+          // so the UI cache realigns with the device's actual state.
           try {
             const snapshot = await this._readDeviceConfigSnapshot();
             this._cfg = Object.assign({}, this._cfg || this._makeDefaultCfg(), snapshot);

@@ -989,13 +989,13 @@ function encodeAtkDpiPairWord(x, y, dpiMin, dpiMax) {
     // 2. 主键盘 A-Z
     for (let i = 0; i < 26; i++) add(String.fromCharCode(65 + i), "keyboard", 0x00, 0x04 + i);
     
-    // 3. 主键盘数字区 (1-0) -> 标签 !1 ... )0
-    const mainNums = [["!1",0x1E], ["@2",0x1F], ["#3",0x20], ["$4",0x21], ["%5",0x22], ["^6",0x23], ["&7",0x24], ["*8",0x25], ["(9",0x26], [")0",0x27]];
+    // 3. 主键盘数字区 (1-0)
+    const mainNums = [["1",0x1E], ["2",0x1F], ["3",0x20], ["4",0x21], ["5",0x22], ["6",0x23], ["7",0x24], ["8",0x25], ["9",0x26], ["0",0x27]];
     mainNums.forEach(([l, c]) => add(l, "keyboard", 0x00, c));
     
     // 4. 功能键 & 控制键
     const ctrls = [
-      ["Enter",0x28], ["Escape",0x29], ["Backspace",0x2A], ["Tab",0x2B], ["Space",0x2C],
+      ["Enter",0x28], ["Esc",0x29], ["Backspace",0x2A], ["Tab",0x2B], ["Space",0x2C],
       ["- _",0x2D], ["= +",0x2E], ["[ {",0x2F], ["] }",0x30], ["\\ |",0x31],
       ["; :",0x33], ["' \"",0x34], ["` ~",0x35], [", <",0x36], [". >",0x37], ["/ ?",0x38],
       ["Caps Lock",0x39], ["Print Screen",0x46], ["Scroll Lock",0x47], ["Pause",0x48],
@@ -1006,11 +1006,11 @@ function encodeAtkDpiPairWord(x, y, dpiMin, dpiMax) {
     ];
     ctrls.forEach(([l, c]) => add(l, "keyboard", 0x00, c));
 
-    // 5. 小键盘数字区 -> 统一使用 "Num 0~9" 前缀，避免与主键盘数字区命名混淆
+    // 5. 小键盘数字区
     const keypad = [
-      ["Num Lock",0x53], ["Num /",0x54], ["Num *",0x55], ["Num -",0x56], ["Num +",0x57], ["Num Enter",0x58],
-      ["Num 1",0x59], ["Num 2",0x5A], ["Num 3",0x5B], ["Num 4",0x5C], ["Num 5",0x5D],
-      ["Num 6",0x5E], ["Num 7",0x5F], ["Num 8",0x60], ["Num 9",0x61], ["Num 0",0x62], ["Num .",0x63]
+      ["Num Lock",0x53], ["Numpad /",0x54], ["Numpad *",0x55], ["Numpad -",0x56], ["Numpad +",0x57], ["Numpad Enter",0x58],
+      ["Numpad 1",0x59], ["Numpad 2",0x5A], ["Numpad 3",0x5B], ["Numpad 4",0x5C], ["Numpad 5",0x5D],
+      ["Numpad 6",0x5E], ["Numpad 7",0x5F], ["Numpad 8",0x60], ["Numpad 9",0x61], ["Numpad 0",0x62], ["Numpad .",0x63]
     ];
     keypad.forEach(([l, c]) => add(l, "keyboard", 0x00, c));
 
@@ -1025,13 +1025,13 @@ function encodeAtkDpiPairWord(x, y, dpiMin, dpiMax) {
     add("Right Win", "modifier", 0x00, 0x80);
 
     // 7. 多媒体 (Type: system)
-    add("音量+", "system", 0x00, 0xE9);
-    add("音量-", "system", 0x00, 0xEA);
+    add("音量加", "system", 0x00, 0xE9);
+    add("音量减", "system", 0x00, 0xEA);
     add("静音", "system", 0x00, 0xE2);
     add("播放/暂停", "system", 0x00, 0xCD);
     add("上一曲", "system", 0x00, 0xB6);
     add("下一曲", "system", 0x00, 0xB5);
-    add("停止", "system", 0x00, 0xB7);
+    add("停止播放", "system", 0x00, 0xB7);
     add("计算器", "system", 0x00, 0x192);
     add("我的电脑", "system", 0x00, 0x194);
     add("浏览器", "system", 0x00, 0x196);
@@ -1039,25 +1039,11 @@ function encodeAtkDpiPairWord(x, y, dpiMin, dpiMax) {
     
     // 【新增】根据最新抓包补全的系统按键
     add("主页", "system", 0x00, 0x0223);
-    add("亮度+", "system", 0x00, 0x006F);
-    add("亮度-", "system", 0x00, 0x0070);
+    add("屏幕亮度增加", "system", 0x00, 0x006F);
+    add("屏幕亮度减少", "system", 0x00, 0x0070);
 
     return Object.freeze(actions);
   })();
-
-  // 兼容旧版标签（纯数字）到新版 Num 前缀标签
-  const KEYMAP_LABEL_ALIASES = Object.freeze({
-    "0": "Num 0",
-    "1": "Num 1",
-    "2": "Num 2",
-    "3": "Num 3",
-    "4": "Num 4",
-    "5": "Num 5",
-    "6": "Num 6",
-    "7": "Num 7",
-    "8": "Num 8",
-    "9": "Num 9",
-  });
 
   // ============================================================
   // 8) CommandPlanner
@@ -1653,8 +1639,7 @@ try {
         throw new ProtocolError(`invalid button index: ${btnIndex}`, "BAD_PARAM", { btnIndex });
       }
 
-      const normalizedLabel = KEYMAP_LABEL_ALIASES[label] || label;
-      const action = KEYMAP_ACTIONS[normalizedLabel];
+      const action = KEYMAP_ACTIONS[label];
       if (!action) {
         throw new ProtocolError(`unknown key action label: ${label}`, "BAD_PARAM", { label });
       }

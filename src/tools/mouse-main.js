@@ -15,7 +15,8 @@
     const container = document.getElementById('btnContainer');
     const btnPanelOrder = ['left', 'middle', 'right', 'fwd', 'back'];
 
-    // 仅调整双击检测页卡片展示顺序；不改动按钮编号映射（e.button -> 统计对象）。
+    // Only adjust card display order in the double-click page.
+    // Keep button ID mapping unchanged (e.button -> stats object).
     function applyBtnPanelOrder() {
       if (!container) return;
       const orderedPanels = btnPanelOrder
@@ -36,7 +37,8 @@
       rowEl.appendChild(avgEl);
     }
 
-    // 在“最小”同一行补充“平均”显示位，避免改动大量静态 HTML。
+    // Add an "average" slot on the same row as "minimum"
+    // to avoid large static HTML changes.
     function ensureAvgDelayMetrics() {
       if (!container) return;
       const cards = container.querySelectorAll('.mouse-btn');
@@ -67,16 +69,19 @@
     }
 
 
-    // 按键延迟计算：使用统一的高精度时间轴（自动对齐 e.timeStamp 与 performance.now），
-    // 并引入"鲁棒估计"（中位数滤波）与"离群值剔除"，让数值更贴近真实手感/开关抖动。
+    // Button-latency calculation uses a unified high-precision timeline
+    // (auto-aligned between e.timeStamp and performance.now), plus robust
+    // estimation (median filtering) and outlier trimming.
     function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
-    // 统一使用 performance.now() 作为按钮延迟计时基准（单调递增，高精度）
-    // event.timeStamp 在不同浏览器/系统下基准可能不同，容易导致 delta 异常
+    // Use performance.now() as the latency timing baseline
+    // (monotonic and high precision).
+    // event.timeStamp baselines vary by browser/system and can yield unstable deltas.
 let __lastNow = 0;
 function now() {
   const t = performance.now();
-  // 极少数情况下可能出现轻微回退（例如实现差异/跨线程），做单调保护避免负延迟
+  // In rare cases timestamps can move backward slightly
+  // (implementation differences / cross-thread timing). Keep monotonic protection.
   if (t < __lastNow) return __lastNow;
   __lastNow = t;
   return t;
@@ -92,20 +97,20 @@ function now() {
 
     function fmtMs(v) {
       if (!Number.isFinite(v)) return '--';
-      // 小于 10ms 显示 2 位小数，更利于观察开关抖动/极短间隔
+      // Show 2 decimals for values under 10ms to better observe switch jitter and very short intervals.
       if (v < 10) return v.toFixed(2) + ' ms';
       return v.toFixed(1) + ' ms';
     }
 
     const btns = btnDefs.map(b => {
-      // 现在按钮卡片在 HTML 中静态写好：这里直接按 class 取对应元素
+      // Button cards are now static in HTML; resolve them directly by class.
       const div = container.querySelector(`.mouse-btn.${b.key}`);
       if(!div){
         console.warn('[mouse-main] Missing static button card:', b.key);
         return null;
       }
 
-      // 可选：确保标题一致（HTML 已写好也没问题）
+      // Optional: keep titles synchronized (even if HTML already has them).
       const titleEl = div.querySelector('.btn-title');
       if(titleEl) titleEl.textContent = tr(b.zh, b.en);
 
@@ -163,7 +168,8 @@ function now() {
       }
     })();
 
-    // 阻止滚轮在 number input 上改变值（避免"非直接输入"误改）
+    // Prevent wheel from changing number input values
+    // (avoid unintended non-direct edits).
     thresholdInput.addEventListener('wheel', (e) => {
       if (document.activeElement === thresholdInput) e.preventDefault();
     }, { passive: false });
@@ -190,10 +196,12 @@ function now() {
 
     function pulseValue(el, isMin) {
       if (!el) return;
-      // 只做“闪一下”的强调，不要改变最终常态颜色（浅色主题下白色会看不见，像“消失”）
+      // Only flash briefly for emphasis; do not change the final resting color.
+      // In light themes, hard white may look invisible.
       el.style.color = isMin ? 'var(--accent-blue)' : 'white';
       setTimeout(() => {
-        // 清除 inline 样式，让其回到 CSS 默认颜色（如 .ttMini 的 var(--muted)）
+        // Clear inline style to return to CSS default color
+        // (for example .ttMini var(--muted)).
         el.style.color = '';
       }, 240);
     }
@@ -217,7 +225,7 @@ function now() {
       const btn = btns[e.button];
       if (!btn) return;
 
-      // 只对统计区域按键阻止默认，减少副作用
+      // Prevent default only for stats-area key actions to reduce side effects.
       e.preventDefault();
 
       btn.el.classList.add('active');
@@ -225,25 +233,27 @@ function now() {
 
       const nowT = now();
 
-      // 防抖：同一按下周期内的重复 mousedown 忽略（避免覆盖 downStartT 导致按-抬延迟异常）
+      // Debounce: ignore repeated mousedown events in the same press cycle
+      // to avoid overwriting downStartT and skewing down-up latency.
       if (btn.stats.isDown) return;
       btn.stats.isDown = true;
       btn.stats.downStartT = nowT;
 
-      // Down-Down（连续按下间隔）
+      // Down-Down (interval between consecutive press-down events)
       if (!btn.first && Number.isFinite(btn.stats.lastDownT)) {
         const rawDD = nowT - btn.stats.lastDownT;
         const ddShow = Math.min(rawDD, 999);
 
-        // 离群值剔除：极小值多半是时间戳量化/异常，极大值对“最小”没有意义
+        // Outlier handling: very small values are often timestamp quantization/noise;
+        // very large values do not help minimum-delay tracking.
         if (rawDD > 0.2 && rawDD < 3000) {
-          // 窗口用于鲁棒估计（中位数滤波）
+          // Sliding window for robust estimation (median filter).
           btn.stats.ddWin.push(rawDD);
           if (btn.stats.ddWin.length > 9) btn.stats.ddWin.shift();
 
           const ddEst = robustMedian(btn.stats.ddWin);
 
-          // 当前值显示 raw（与“最小”同源，避免出现“当前显示 73 但最小更新到 52”这类困惑）
+          // Display current as raw to keep it aligned with minimum-source behavior.
           btn.ui.ddCurr.textContent = fmtMs(ddShow);
           btn.ui.ddCurr.title = tr('平滑(中位数): ','Smoothed (median): ') + fmtMs(ddEst);
 
@@ -259,12 +269,13 @@ function now() {
             btn.ui.ddAvg.textContent = fmtMs(Math.min(btn.stats.sumDD / btn.stats.countDD, 999));
           }
         } else {
-          // 即使不纳入统计，也显示当前（便于你看到异常情况）
+          // Even when excluded from statistics, still show current value for visibility.
           btn.ui.ddCurr.textContent = fmtMs(ddShow);
           btn.ui.ddCurr.title = '';
         }
 
-        // Double Click 检测：用 rawDD（不经过滤波），更敏感地捕捉“误双击/抖动”
+        // Double-click detection uses rawDD (no filtering)
+        // for more sensitive false-double/jitter capture.
         if (rawDD > 0 && rawDD < threshold) {
           btn.stats.dbl++;
           btn.ui.dbl.textContent = btn.stats.dbl;
@@ -305,7 +316,7 @@ function now() {
 
           const duEst = robustMedian(btn.stats.duWin);
 
-          // 当前值显示 raw（与“最小”同源，避免出现“当前显示 73 但最小更新到 52”这类困惑）
+          // Display current as raw to stay consistent with minimum tracking.
           btn.ui.duCurr.textContent = fmtMs(rawDU);
           btn.ui.duCurr.title = tr('平滑(中位数): ','Smoothed (median): ') + fmtMs(duEst);
 
@@ -326,7 +337,7 @@ function now() {
         }
       }
 
-      // 结束一次按键周期：复位状态（防止丢失 mouseup 后卡死）
+      // End one press cycle: reset state to avoid stuck state if mouseup is missed.
       btn.stats.isDown = false;
       btn.stats.downStartT = NaN;
 
@@ -337,7 +348,8 @@ function now() {
     window.addEventListener('contextmenu', (e) => e.preventDefault());
 
 
-    // 防止"按下后未收到 mouseup"（切换窗口/丢焦点/弹出菜单等）导致状态卡死
+    // Prevent stuck state when mouseup is not received
+    // (window switch, blur, context menu, etc.).
     function resetButtonDownStates() {
       if(!isTestToolsActive()) return;
       for (const b of btns) {
@@ -353,13 +365,13 @@ function now() {
 
 
     // --- Scroll Events ---
-    // 1) 删除左右滚：只统计上下滚
+    // 1) Remove left/right wheel stats: track only vertical wheel.
     const sUI = {
       up:   { val: 0, el: document.getElementById('sUp'),   icon: document.getElementById('wrapUp').querySelector('.scroll-arrow') },
       down: { val: 0, el: document.getElementById('sDown'), icon: document.getElementById('wrapDown').querySelector('.scroll-arrow') },
     };
 
-// 清零统计（双击检测页）
+// Reset statistics (double-click test page)
 const resetClicksBtn = document.getElementById('resetClicks');
 if (resetClicksBtn){
   resetClicksBtn.addEventListener('click', ()=>{
@@ -397,7 +409,7 @@ if (resetClicksBtn){
   });
 }
 
-    // --- Custom Key Test（键盘任意键：按下/抬起/间隔/按住） ---
+    // --- Custom Key Test (any keyboard key: down/up/interval/hold) ---
     const pageMainEl = document.getElementById('pageMain');
 const kPickBtn = document.getElementById('pickKeyBtn');
     const kResetBtn = document.getElementById('resetKeyBtn');
@@ -433,7 +445,8 @@ const kPickBtn = document.getElementById('pickKeyBtn');
       duWin: [],
     };
 
-// 自定义键位检测：独立双击阈值（仅影响此面板）
+// Custom-key detection: independent double-click threshold
+// (affects this panel only).
 function readKeyThreshold(){
   const v = parseFloat(kUI.thrInput && kUI.thrInput.value);
   if (Number.isFinite(v) && v > 1 && v < 1000) {
@@ -474,8 +487,8 @@ function readKeyThreshold(){
     function updateKeyState(text, isDown){
       if(!kState) return;
       kState.textContent = text;
-      // 由 CSS 控制“下沉/阴影”效果；这里仅切换状态 class。
-      // 同时清理旧的内联样式，避免覆盖 CSS。
+      // Let CSS control pressed/shadow visuals; only toggle state class here.
+      // Also clear old inline styles to avoid overriding CSS.
       kState.style.borderColor = '';
       kState.style.background = '';
       kState.style.color = '';
@@ -643,7 +656,7 @@ function readKeyThreshold(){
     }
     if (kResetBtn){
       kResetBtn.addEventListener('click', ()=>{
-        // 重置：不仅清零统计，也要“释放/清空”当前已录入的按键
+        // Reset: clear statistics and release/clear the currently picked key.
         selectedKey = '';
         selectedCode = '';
         kPickMode = false;
@@ -654,7 +667,7 @@ function readKeyThreshold(){
 
 
 if (kUI.thrInput){
-  // 初始化 + 监听
+  // Initialize and bind listeners
   readKeyThreshold();
   kUI.thrInput.addEventListener('input', readKeyThreshold);
   kUI.thrInput.addEventListener('blur', readKeyThreshold);
@@ -695,7 +708,7 @@ if (kUI.thrInput){
       if (dy > 0) flashIcon(sUI.down);
     }, { passive: false });
 
-    // --- Polling Rate（更准确：基于 coalesced events 的 timeStamp 序列） ---
+    // --- Polling Rate (higher accuracy via coalesced-event timestamp sequence) ---
     const rateBox = document.getElementById('rateBox');
     const stopPollBtn = document.getElementById('stopPoll');
     const hzDisp = document.getElementById('hzDisplay');
@@ -714,10 +727,10 @@ if (kUI.thrInput){
     let endRequested = false; // 点击“结束”触发：退出锁定后清空数据
     let peakRate = 0;
 
-    // 测轮询率专注模式：开启时屏蔽其他统计/滚轮等功能
+    // Polling-rate focus mode: block other stats/wheel features while active.
     let pollingOnly = false;
 
-    // 在窗口内保存“原始输入回报”的时间戳序列（来自 coalesced events）
+    // Keep raw input-report timestamps inside the window (from coalesced events).
     const tsRing = [];
     let lastUiUpdate = 0;
 
@@ -725,12 +738,14 @@ if (kUI.thrInput){
     let lastUsedCoalesced = true;
     let lastIngestAt = 0;
 
-    // 窗口越长越稳，越短越灵敏；这里 1.2s 在 8k 下也能很快稳定
+    // Longer windows are steadier, shorter windows are more responsive.
+    // Current setting converges quickly even at 8k.
     const WINDOW_MS = 250;
     const MIN_SPAN_MS = 180;
     const UI_UPDATE_MS = 80;
 
-    // 常见 USB 轮询档位：用于“轻微吸附”，避免 4k 显示 4.1k 这类小幅超出
+    // Common USB polling tiers used for slight snapping
+    // to avoid tiny over-shoot readings like 4.1k for 4k.
     const COMMON_RATES = [125, 250, 500, 1000, 2000, 4000, 8000];
     const SNAP_TOL = 0.015; // 6%
     const MULTI_DEVICE_WARN_THRESHOLD = 8500;
@@ -756,7 +771,7 @@ if (kUI.thrInput){
 
     function normTimeStamp(ts) {
       if (!Number.isFinite(ts)) return NaN;
-      // 部分环境 timeStamp 可能接近 epoch(ms)，做一次转换
+      // In some environments timeStamp may be near epoch-ms; convert once.
       if (ts > 1e12 && Number.isFinite(performance.timeOrigin)) return ts - performance.timeOrigin;
       return ts;
     }
@@ -764,7 +779,8 @@ if (kUI.thrInput){
     function pushStamp(t) {
       if (!Number.isFinite(t)) return;
       const last = tsRing.length ? tsRing[tsRing.length - 1] : -Infinity;
-      // 规范要求 coalesced timeStamp 单调递增；但某些实现可能出现轻微回退，直接钳到 last，避免 span 变小导致“虚高”
+      // Spec expects monotonic coalesced timestamps, but some implementations
+      // may regress slightly. Clamp to last to avoid shortened span and inflated rate.
       tsRing.push(t < last ? last : t);
     }
 
@@ -784,7 +800,8 @@ if (kUI.thrInput){
       }
 
       if (!usedCoalesced) {
-        // fallback：没有 coalescedEvents 时只能用 parent event 的 timeStamp（高回报率会被明显低估）
+        // Fallback: without coalescedEvents, only parent-event timestamp is available
+        // (high polling rates can be notably underestimated).
         pushStamp(normTimeStamp(e.timeStamp));
       }
 
@@ -792,14 +809,16 @@ if (kUI.thrInput){
       if (tsRing.length >= 2) {
         const newest = tsRing[tsRing.length - 1];
         const cutoff = newest - WINDOW_MS;
-        // 保留至少 2 个点，且尽量让首点靠近 cutoff（避免 span 过大导致响应慢）
+        // Keep at least two points and keep first point near cutoff
+        // to avoid oversized span and slow response.
         while (tsRing.length > 2 && tsRing[1] < cutoff) tsRing.shift();
       }
 
       return usedCoalesced;
     }
     function pruneByNow(now) {
-      // 如果长时间没有新事件，用“当前时间”驱动窗口前移，使数值能自然衰减到 0
+      // If no new events arrive for a while, advance the window with "now"
+      // so the rate naturally decays to 0.
       const cutoff = now - WINDOW_MS;
       if (tsRing.length && tsRing[tsRing.length - 1] < cutoff) {
         tsRing.length = 0;
@@ -818,7 +837,7 @@ if (kUI.thrInput){
         hzDisp.textContent = '0';
         hzDisp.style.color = '';
         updateExtraStats(0);
-        // 不更新峰值
+        // Do not update peak.
         return;
       }
 
@@ -846,13 +865,14 @@ if (kUI.thrInput){
 
       const reports = tsRing.length - 1;
       const rate = reports * 1000 / span;
-      // 极端保护：避免 NaN / Infinity 或异常虚高
+      // Extreme guard: block NaN/Infinity and implausible spikes.
       if (!Number.isFinite(rate) || rate <= 0) return null;
       return Math.min(rate, 20000);
     }
 
     function snapRate(rate) {
-      // 轻微吸附：只在“非常接近档位”时吸附，避免把真实 6k 误判成 8k
+      // Mild snapping only when very close to a known tier,
+      // to avoid misclassifying real 6k as 8k.
       let best = COMMON_RATES[0];
       let bestRel = Infinity;
       for (const r of COMMON_RATES) {
@@ -869,23 +889,54 @@ const TIER_BOUNDS = [1500, 3000, 6000]; // midpoints between tiers
 const TIER_HYS = 0.10;      // hysteresis band around bounds (prevents flicker)
 const TIER_HOLD_MS = 220;   // minimum hold time before switching again
 
-// 灰度色阶：轮询率越高越深，从浅灰到纯黑
-const TIER_RGB = {
-  1000: [180, 180, 180], // 浅灰
-  2000: [120, 120, 120], // 中灰
-  4000: [60, 60, 60],    // 深灰
-  8000: [0, 0, 0],       // 纯黑
+// Light theme: higher polling rates use deeper gray (light -> black).
+const LIGHT_TIER_RGB = {
+  1000: [180, 180, 180],
+  2000: [120, 120, 120],
+  4000: [60, 60, 60],
+  8000: [0, 0, 0],
 };
+
+// Dark theme: reverse to brighter tones (gray -> white) for visibility.
+const DARK_TIER_RGB = {
+  1000: [150, 150, 150],
+  2000: [188, 188, 188],
+  4000: [224, 224, 224],
+  8000: [255, 255, 255],
+};
+
+function isDarkTheme() {
+  return !!(document.body && document.body.classList.contains('dark'));
+}
+
+function currentTierRgbMap() {
+  return isDarkTheme() ? DARK_TIER_RGB : LIGHT_TIER_RGB;
+}
+
+function tierRgbFor(level) {
+  const map = currentTierRgbMap();
+  return (map[level] || map[1000]).slice();
+}
 
 let tierState = 1000;
 let tierHoldUntil = 0;
 
 // Smooth color transition (lag) to avoid flashing
-let tierRgbCur = TIER_RGB[1000].slice();
-let tierRgbTgt = TIER_RGB[1000].slice();
+let tierRgbCur = tierRgbFor(1000);
+let tierRgbTgt = tierRgbFor(1000);
+let tierThemeDark = isDarkTheme();
 
 function rgba(rgb, a){
   return `rgba(${rgb[0].toFixed(0)},${rgb[1].toFixed(0)},${rgb[2].toFixed(0)},${a})`;
+}
+
+function syncTierTheme() {
+  const dark = isDarkTheme();
+  if (dark === tierThemeDark) return;
+  tierThemeDark = dark;
+  const nextRgb = tierRgbFor(tierState);
+  tierRgbCur = nextRgb.slice();
+  tierRgbTgt = nextRgb.slice();
 }
 
 function tierFor(rate){
@@ -922,7 +973,7 @@ function updateTierHys(rate, now){
   if (next !== tierState){
     tierState = next;
     tierHoldUntil = now + TIER_HOLD_MS;
-    tierRgbTgt = TIER_RGB[tierState].slice();
+    tierRgbTgt = tierRgbFor(tierState);
     pollRing && (pollRing.dataset.tier = String(tierState));
   }
 
@@ -939,10 +990,11 @@ function tickTierColor(dt){
 
 function softColor(alpha = 0.90){ return rgba(tierRgbCur, alpha); }
 
-function tierColor(_tier){ return softColor(0.88); }
-function tierTrack(_tier){ return softColor(0.14); }
+function tierColor(_tier){ return softColor(isDarkTheme() ? 0.94 : 0.88); }
+function tierTrack(_tier){ return softColor(isDarkTheme() ? 0.22 : 0.14); }
 
 function applyColor(rate) {
+  syncTierTheme();
   // Update tier state with hysteresis (visual color is smoothed in tickRing)
   updateTierHys(rate, performance.now());
   hzDisp.style.color = softColor(0.92);
@@ -959,7 +1011,7 @@ let ringSmoothRate = 0;
 let ringLastT = performance.now();
 let ringNeedsDraw = true;
 let histSampleAt = 0;
-const HIST_SAMPLE_MS = 16; // ~60fps 曲线采样，观感更丝滑
+const HIST_SAMPLE_MS = 16; // ~60fps curve sampling for smoother visuals
 
 function resizeCanvasToCSS(canvas, ctx, maxDpr=2){
   if(!canvas || !ctx) return {w:0,h:0,dpr:1};
@@ -974,6 +1026,7 @@ function resizeCanvasToCSS(canvas, ctx, maxDpr=2){
 
 function drawRing(){
   if(!ringCtx || !ringCanvas) return;
+  syncTierTheme();
   const {w,h,dpr} = resizeCanvasToCSS(ringCanvas, ringCtx, 2);
   const cx = w*0.5, cy = h*0.5;
   const rOuter = Math.min(w,h)*0.5;
@@ -1000,6 +1053,7 @@ function drawRing(){
 
   // glow under arc
   if(pct > 0.001){
+    const dark = isDarkTheme();
     ringCtx.save();
     ringCtx.shadowBlur = 18*dpr;
     ringCtx.shadowColor = softColor(0.26);
@@ -1018,8 +1072,8 @@ function drawRing(){
     // tiny highlight tip
     ringCtx.save();
     ringCtx.shadowBlur = 10*dpr;
-    ringCtx.shadowColor = 'rgba(255,255,255,0.35)';
-    ringCtx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ringCtx.shadowColor = dark ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.35)';
+    ringCtx.strokeStyle = dark ? 'rgba(255,255,255,0.34)' : 'rgba(255,255,255,0.22)';
     ringCtx.lineWidth = lw*0.55;
     ringCtx.beginPath();
     ringCtx.arc(cx, cy, radius, Math.max(start, end-0.16), end);
@@ -1039,6 +1093,7 @@ function tickRing(now){
   if(pagePollEl && !pagePollEl.classList.contains('active')){ requestAnimationFrame(tickRing); return; }
   const dt = Math.min(0.05, Math.max(0.001, (now - ringLastT) / 1000));
   ringLastT = now;
+  syncTierTheme();
   // Tier hysteresis + smooth color (use smoothed rate to avoid flashing)
   updateTierHys(ringSmoothRate, now);
   tickTierColor(dt);
@@ -1098,8 +1153,26 @@ function pushHist(v, now){
   while(hist.length && hist[0].t < cutoff) hist.shift();
 }
 
+function chartPalette() {
+  if (isDarkTheme()) {
+    return {
+      grid: 'rgba(255,255,255,0.14)',
+      labels: 'rgba(255,255,255,0.72)',
+      curve: 'rgba(255,255,255,0.9)',
+      point: 'rgba(255,255,255,0.96)',
+    };
+  }
+  return {
+    grid: 'rgba(0,0,0,0.08)',
+    labels: 'rgba(0,0,0,0.55)',
+    curve: 'rgba(0,0,0,0.85)',
+    point: 'rgba(0,0,0,0.92)',
+  };
+}
+
 function drawChart(now){
   if(!hzCtx || !hzChart) return;
+  const palette = chartPalette();
 
   const cssW = hzChart.clientWidth || 800;
   const cssH = hzChart.clientHeight || 320;
@@ -1110,7 +1183,7 @@ function drawChart(now){
     hzChart.width = w; hzChart.height = h;
   }
 
-  // 动态坐标轴：按峰值落在 1k/2k/4k/8k 档位（上限 8k）
+  // Dynamic Y-axis: pick 1k/2k/4k/8k by peak range (capped at 8k).
   function axisMaxFor(peak){
     if(!Number.isFinite(peak) || peak <= 0) return 1000;
     if(peak <= 1200) return 1000;
@@ -1133,9 +1206,9 @@ function drawChart(now){
   hzCtx.lineCap = 'round';
   hzCtx.imageSmoothingEnabled = true;
 
-  // 背景网格（横向按刻度画线）
+  // Background grid (horizontal tick lines)
   hzCtx.save();
-  hzCtx.strokeStyle = 'rgba(0,0,0,0.08)';
+  hzCtx.strokeStyle = palette.grid;
   hzCtx.lineWidth = Math.max(1, Math.floor(1*dpr));
   const gridTicks = [0, 1000, 2000, 4000, 8000].filter(v => v <= axisMax);
   for(const val of gridTicks){
@@ -1146,7 +1219,7 @@ function drawChart(now){
     hzCtx.lineTo(padL + pw, y);
     hzCtx.stroke();
   }
-  // 纵向网格（6 格）
+  // Vertical grid (6 segments)
   for(let i=0;i<=6;i++){
     const x = padL + (pw * (i/6));
     hzCtx.beginPath();
@@ -1155,9 +1228,9 @@ function drawChart(now){
     hzCtx.stroke();
   }
 
-  // Y 轴刻度文字（固定刻度：1000, 2000, 4000, 8000）
+  // Y-axis labels (fixed ticks: 1000, 2000, 4000, 8000)
   const fmt = (v)=> (v>=1000 ? (v/1000)+'k' : String(v));
-  hzCtx.fillStyle = 'rgba(0,0,0,0.55)';
+  hzCtx.fillStyle = palette.labels;
   hzCtx.font = `${Math.round(11*dpr)}px var(--font-stack)`;
   hzCtx.textAlign = 'right';
   hzCtx.textBaseline = 'middle';
@@ -1171,17 +1244,17 @@ function drawChart(now){
 
   if(hist.length < 2) return;
 
-  // 时间窗口
+  // Time window
   const t1 = now;
   const t0 = t1 - HIST_MS;
 
-  // 曲线（纯黑色，使用贝塞尔曲线平滑）
+  // Curve (pure black, smoothed with Bezier)
   hzCtx.save();
-  hzCtx.strokeStyle = 'rgba(0,0,0,0.85)';
+  hzCtx.strokeStyle = palette.curve;
   hzCtx.lineWidth = Math.max(2*dpr, 2.2*dpr);
   hzCtx.beginPath();
 
-  // 先计算所有可见点的坐标
+  // Compute all visible point coordinates first.
   const pts = [];
   for(const p of hist){
     if(p.t < t0) continue;
@@ -1191,18 +1264,18 @@ function drawChart(now){
     pts.push({x, y});
   }
 
-  // 使用二次贝塞尔曲线平滑连接各点
+  // Use quadratic Bezier curves to smooth links between points.
   if(pts.length >= 2){
     hzCtx.moveTo(pts[0].x, pts[0].y);
     for(let i = 0; i < pts.length - 1; i++){
       const p0 = pts[i];
       const p1 = pts[i + 1];
-      // 控制点取两点中点，终点也取中点，使曲线平滑过渡
+      // Use midpoint control/endpoints for smooth transitions.
       const midX = (p0.x + p1.x) / 2;
       const midY = (p0.y + p1.y) / 2;
       hzCtx.quadraticCurveTo(p0.x, p0.y, midX, midY);
     }
-    // 最后一段连接到终点
+    // Final segment connects to the end point.
     const lastPt = pts[pts.length - 1];
     hzCtx.lineTo(lastPt.x, lastPt.y);
     hzCtx.stroke();
@@ -1210,7 +1283,7 @@ function drawChart(now){
     hzCtx.moveTo(pts[0].x, pts[0].y);
   }
 
-  // 最新点（纯黑色）
+  // Latest point (pure black)
   const last = hist[hist.length-1];
   if(last){
     const x = padL + ((last.t - t0) / HIST_MS) * pw;
@@ -1218,7 +1291,7 @@ function drawChart(now){
     const y = padT + (1 - yy) * ph;
     hzCtx.beginPath();
     hzCtx.arc(x, y, Math.max(2.5*dpr, 3.0*dpr), 0, Math.PI*2);
-    hzCtx.fillStyle = 'rgba(0,0,0,0.92)';
+    hzCtx.fillStyle = palette.point;
     hzCtx.fill();
   }
   hzCtx.restore();
@@ -1244,18 +1317,19 @@ lastUsedCoalesced = true;
 lastIngestAt = performance.now();
 resetMultiDeviceWarning();
 
-// 即使鼠标不动，也要周期性刷新 UI，使轮询率能回到 0
+// Refresh UI periodically even with no movement
+// so polling rate can decay back to 0.
 if (uiTimer) clearInterval(uiTimer);
 uiTimer = setInterval(() => {
   if (!locked) return;
   tryUpdateUi(performance.now());
 }, UI_UPDATE_MS);
 
-// 初始显示 0 Hz（未移动即 0）
+// Initial display is 0 Hz (no movement => 0).
 hzDisp.textContent = '0';
 hzDisp.style.color = '';
 
-      // pointerrawupdate（更原始）优先，其次 pointermove，最后 mousemove
+      // Prefer pointerrawupdate (more raw), then pointermove, then mousemove.
       if ('onpointerrawupdate' in document) {
         document.addEventListener('pointerrawupdate', pollHandler, { passive: true });
       } else if ('PointerEvent' in window) {
@@ -1275,12 +1349,13 @@ hzDisp.style.color = '';
     }
 
 
-    // --- Focus block: 轮询率专注模式（右键结束；其余功能不响应） ---
+    // --- Focus block: polling-rate focus mode
+    // Right click ends test; all other interactions are blocked.
     function blockIfPollingOnly(e){
       if(!isTestToolsActive()) return;
       if (!pollingOnly) return;
 
-      // 右键：结束测试（退出 PointerLock）
+      // Right click: end test (exit PointerLock).
       if (e.type === 'mousedown' && e.button === 2) {
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -1288,13 +1363,14 @@ hzDisp.style.color = '';
         return;
       }
 
-      // 其他输入：全部吞掉，避免触发主面板的按键统计/滚轮统计等
+      // Swallow all other inputs to avoid triggering main-panel
+      // button/wheel statistics while focused.
       e.preventDefault();
       e.stopImmediatePropagation();
     }
 
     function attachFocusBlock(){
-      // capture 阶段拦截，确保 window 级监听也拿不到事件
+      // Intercept in capture phase so window-level listeners also miss these events.
       document.addEventListener('mousedown', blockIfPollingOnly, true);
       document.addEventListener('mouseup', blockIfPollingOnly, true);
       document.addEventListener('wheel', blockIfPollingOnly, true);
@@ -1315,7 +1391,8 @@ hzDisp.style.color = '';
       const lockEl = rateBox;
       if (!lockEl) return;
       if (!locked) {
-        // unadjustedMovement 在部分浏览器可减少额外处理，但不是必须
+        // unadjustedMovement can reduce extra processing on some browsers,
+        // but is optional.
         try { lockEl.requestPointerLock({ unadjustedMovement: true }); }
         catch (_) { lockEl.requestPointerLock(); }
       } else {
@@ -1325,7 +1402,7 @@ hzDisp.style.color = '';
 
 
     function hardResetPollingUI(){
-      // 清空所有数据并恢复初始 UI（用于“结束”按钮）
+      // Clear all data and restore initial UI state (used by "Stop" button).
       tsRing.length = 0;
       hist.length = 0;
       peakRate = 0;
@@ -1339,7 +1416,7 @@ hzDisp.style.color = '';
       ringSmoothRate = 0;
       ringNeedsDraw = true;
       lastUiUpdate = 0;
-      // 重新绘制空环/空图
+      // Redraw empty ring/chart.
       drawRing();
       drawChart(performance.now());
       hzHint.classList.remove('polling','paused');
@@ -1347,7 +1424,7 @@ hzDisp.style.color = '';
       resetMultiDeviceWarning();
     }
 
-    // “结束”按钮：点击即退出锁定，并重置本次数据
+    // "Stop" button: exit lock and reset current-session data.
     if(stopPollBtn){
       stopPollBtn.addEventListener('click', ()=>{
         if(locked){
@@ -1377,14 +1454,14 @@ if (locked) {
         attachPolling();
       } else {
         rateBox.classList.remove('locked');
-        // 暂停：保留当前读数与本次峰值（不清空显示）
+        // Pause: keep current reading and current peak (do not clear display).
         const endedByButton = !!endRequested;
         if(endedByButton) endRequested = false;
 
         if(!endedByButton){
           hzHint.classList.remove('polling'); hzHint.classList.add('paused');
           hzHint.innerHTML = tr('已暂停（保留暂停时刻读数与峰值）。点击“开始测试”继续；点击“结束”清空', 'Paused (keeps the reading & peak). Click “Start” to continue; click “Stop” to clear.');
-          // 冻结 UI：先把环/曲线停在最后一帧
+          // Freeze UI by keeping ring/chart on the last frame.
           ringTargetRate = ringTargetRate; ringNeedsDraw = true;
         }
 
@@ -1392,7 +1469,8 @@ if (locked) {
         detachFocusBlock();
         pollingOnly = false;
 
-        // 点击“结束”则清空数据并回到初始态（不展示暂停文案）
+        // If ended by "Stop", clear data and return to initial state
+        // without showing paused text.
         if(endedByButton){
           hardResetPollingUI();
         }

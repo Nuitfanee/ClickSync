@@ -27,7 +27,7 @@
  */
 
 // ============================================================
-// 1) 常量与设备注册表（硬件指纹）
+// 1) Constants and device registry (hardware fingerprints)
 // ============================================================
 (() => {
   "use strict";
@@ -35,6 +35,14 @@
   const STORAGE_KEY = "device.selected";
   const LAST_HID_KEY = "mouse.lastHid";
   const VALID = new Set(["chaos", "rapoo", "atk", "ninjutso", "logitech", "razer"]);
+  const PROTOCOL_SCRIPT_BY_DEVICE = Object.freeze({
+    chaos: "./src/protocols/protocol_api_chaos.js",
+    rapoo: "./src/protocols/protocol_api_rapoo.js",
+    atk: "./src/protocols/protocol_api_atk.js",
+    ninjutso: "./src/protocols/protocol_api_ninjutso.js",
+    logitech: "./src/protocols/protocol_api_logitech.js",
+    razer: "./src/protocols/protocol_api_razer.js",
+  });
   const ATK_VENDOR_IDS = new Set([0x373b, 0x3710]);
   const NINJUTSO_VENDOR_ID = 0x093a;
   const NINJUTSO_PRODUCT_ID = 0xeb02;
@@ -87,10 +95,22 @@
     );
   }
 
+  function _hasRazerPrimaryMouseCollection(d) {
+    // For Razer, prefer the primary mouse collection to avoid selecting
+    // sibling interfaces that may fail feature-report handshake.
+    if (!Array.isArray(d?.collections) || !d.collections.length) return true;
+    return d.collections.some((c) => {
+      const page = Number(c?.usagePage);
+      const usage = Number(c?.usage);
+      return page === 0x0001 && usage === 0x0002;
+    });
+  }
+
   function _isRazerDevice(d) {
     return (
       Number(d?.vendorId) === RAZER_VENDOR_ID &&
-      RAZER_SUPPORTED_PIDS.has(Number(d?.productId))
+      RAZER_SUPPORTED_PIDS.has(Number(d?.productId)) &&
+      _hasRazerPrimaryMouseCollection(d)
     );
   }
 
@@ -119,9 +139,9 @@
   }
 
   /**
-   * DEVICE_REGISTRY 定义硬件指纹以识别设备类型
-   * 目的：在不依UI 的前提下完成设备类型识别
-   * 通过 vendor/product id usage page/usage 签名完成判定
+   * DEVICE_REGISTRY defines hardware fingerprints for device-type identification.
+   * Purpose: identify device type without UI participation.
+   * Matching is based on vendor/product ID and usagePage/usage signatures.
    */
   const DEVICE_REGISTRY = [
     {
@@ -184,14 +204,14 @@
   ];
 
   // ============================================================
-  // 2) 选择与持久化
+  // 2) Selection and persistence
   // ============================================================
   /**
-   * 规范化设ID
-   * 目的：统一入口并消除别名，避免状态漂移
+   * Normalize device ID.
+   * Purpose: unify entrypoint and eliminate aliases to prevent state drift.
    *
-   * @param {string} id - 设备标识
-   * @returns {string} 规范化后的设备标识
+   * @param {string} id - Device identifier.
+   * @returns {string} Normalized device identifier.
    */
   const normalizeDeviceId = (id) => {
     const x = String(id || "").toLowerCase();
@@ -199,10 +219,10 @@
   };
 
   /**
-   * 获取当前选择的设备
-   * 目的：统一读取入口，保UI Runtime 一致
+   * Get currently selected device.
+   * Purpose: keep a single read entrypoint and consistent UI/Runtime state.
    *
-   * @returns {string} 设备标识
+   * @returns {string} Device identifier.
    */
   function getSelectedDevice() {
     const v = (localStorage.getItem(STORAGE_KEY) || "chaos").toLowerCase();
@@ -210,13 +230,13 @@
   }
 
   /**
-   * 设置当前选择的设备，并按需触发刷新
-   * 目的：切换设备时刷新 UI 与协议绑定，确保状态一致
+   * Set current selected device and trigger reload if needed.
+   * Purpose: refresh UI/protocol binding on device switch to keep state consistent.
    *
-   * @param {string} device - 设备标识
+   * @param {string} device - Device identifier.
    * @param {Object} [opts]
-   * @param {boolean} [opts.reload=true] - 是否刷新页面
-   * @returns {void} 无返回值
+   * @param {boolean} [opts.reload=true] - Whether to reload the page.
+   * @returns {void} No return value.
    */
   function setSelectedDevice(device, { reload = true } = {}) {
     const next = normalizeDeviceId(device);
@@ -229,11 +249,11 @@
   }
 
   /**
-   * 保存最近一次连接的 HID 设备信息
-   * 目的：为自动连接提供优先匹配依据，减少重复授权
+   * Save metadata for the most recently connected HID device.
+   * Purpose: provide preferred matching input for auto-connect and reduce repeated permission prompts.
    *
-   * @param {HIDDevice} dev - HID 设备实例
-   * @returns {void} 无返回值
+   * @param {HIDDevice} dev - HID device instance.
+   * @returns {void} No return value.
    */
   function saveLastHidDevice(dev) {
     if (!dev) return;
@@ -251,10 +271,10 @@
   }
 
   /**
-   * 读取上一次连接的 HID 设备信息
-   * 目的：基于历史选择提升自动连接命中率
+   * Load the last connected HID device info.
+   * Purpose: improve auto-connect hit rate using historical selection.
    *
-   * @returns {Object|null} 设备摘要信息
+   * @returns {Object|null} Device summary info.
    */
   function loadLastHidDevice() {
     try {
@@ -265,25 +285,39 @@
   }
 
   // ============================================================
-  // 3) 低层辅助（脚本加载）
+  // 3) Low-level helpers (script loading)
   // ============================================================
   /**
-   * 判断协议脚本是否已存在
-   * 目的：避免重复注入脚本导致副作用
+   * Check whether protocol script already exists.
+   * Purpose: avoid side effects from duplicate script injection.
    *
-   * @param {string} src - 脚本路径
-   * @returns {boolean} 是否已存在
+   * @param {string} src - Script path.
+   * @returns {boolean} Whether it already exists.
    */
   function _scriptExists(src) {
-    return Array.from(document.scripts).some((s) => (s.src || "").includes(src));
+    try {
+      const target = new URL(src, document.baseURI);
+      const targetVersion = target.searchParams.get("v") || "";
+      return Array.from(document.scripts).some((s) => {
+        if (!s?.src) return false;
+        const existing = new URL(s.src, document.baseURI);
+        return (
+          existing.origin === target.origin
+          && existing.pathname === target.pathname
+          && (existing.searchParams.get("v") || "") === targetVersion
+        );
+      });
+    } catch (_) {
+      return Array.from(document.scripts).some((s) => (s.src || "").includes(src));
+    }
   }
 
   /**
-   * 动态加载协议脚本
-   * 目的：按需加载降低首屏负担并隔离协议差异
+   * Dynamically load protocol script.
+   * Purpose: load on demand to reduce initial page cost and isolate protocol differences.
    *
-   * @param {string} src - 脚本路径
-   * @returns {Promise<void>} 加载完成 Promise
+   * @param {string} src - Script path.
+   * @returns {Promise<void>} Promise resolved when loading completes.
    */
   function _loadScript(src) {
     return new Promise((resolve, reject) => {
@@ -297,8 +331,45 @@
     });
   }
 
+  const __protocolApiCache = new Map();
+  let __protocolReadyPromise = null;
+  let __protocolReadyDevice = "";
+
+  function _getAssetVersion() {
+    return String(window.__APP_ASSET_VERSION__ || "").trim();
+  }
+
+  function _withAssetVersion(src) {
+    const version = _getAssetVersion();
+    if (!version) return src;
+    try {
+      const url = new URL(src, document.baseURI);
+      url.searchParams.set("v", version);
+      return url.toString();
+    } catch (_) {
+      const sep = src.includes("?") ? "&" : "?";
+      return `${src}${sep}v=${encodeURIComponent(version)}`;
+    }
+  }
+
+  function _withRuntimeSwitch(src) {
+    try {
+      const url = new URL(src, document.baseURI);
+      url.searchParams.set("__runtime_switch", String(Date.now()));
+      return url.toString();
+    } catch (_) {
+      const sep = src.includes("?") ? "&" : "?";
+      return `${src}${sep}__runtime_switch=${Date.now()}`;
+    }
+  }
+
+  function _getProtocolScriptSrc(device) {
+    const normalized = normalizeDeviceId(device);
+    return _withAssetVersion(PROTOCOL_SCRIPT_BY_DEVICE[normalized] || PROTOCOL_SCRIPT_BY_DEVICE.chaos);
+  }
+
   // ============================================================
-  // 4) 硬编码过滤候选设备（不使用评分排序）
+  // 4) Hardcoded candidate filtering (no score-based sorting)
   // ============================================================
   function _filterDevicesByType(devices, type) {
     const list = Array.isArray(devices) ? devices : [];
@@ -324,14 +395,15 @@
   }
 
   /**
-   * 收集并过滤候选设备列表
-   * 目的：完全使用硬编码过滤规则剔除非目标设备，不做通用评分排序
+   * Collect and filter candidate device list.
+   * Purpose: remove non-target devices strictly via hardcoded filters,
+   * without generic score-based ranking.
    *
-   * @param {HIDDevice|null} primary - 主设备候选
-   * @param {string|null} preferType - 偏好类型
+   * @param {HIDDevice|null} primary - Primary device candidate.
+   * @param {string|null} preferType - Preferred type.
    * @param {Object} [opts]
-   * @param {boolean} [opts.pinPrimary=false] - 是否固定主设备优先
-   * @returns {Promise<HIDDevice[]>} 过滤后的设备列表
+   * @param {boolean} [opts.pinPrimary=false] - Whether to pin primary device first.
+   * @returns {Promise<HIDDevice[]>} Filtered device list.
    */
   async function _collectCandidatesByFilter(primary, preferType, { pinPrimary = false } = {}) {
     const uniq = [];
@@ -365,13 +437,13 @@
 
 
   // ============================================================
-  // 5) 连接策略
+  // 5) Connection strategy
   // ============================================================
   /**
-   * 触发用户授权选择设备
-   * 目的：符合浏览器权限模型，保证由用户手势触发
+   * Trigger user-authorized device selection.
+   * Purpose: satisfy browser permission model with user-gesture initiation.
    *
-   * @returns {Promise<HIDDevice|null>} 选择的设备或 null
+   * @returns {Promise<HIDDevice|null>} Selected device or null.
    */
   // Browser permission entrypoint for manual HID selection.
   // Maintainers: keep filter source centralized in DEVICE_REGISTRY.
@@ -426,11 +498,11 @@
   }
 
   /**
-   * 识别设备类型
-   * 目的：将设备与适配协议关联，避UI 参与判断
+   * Identify device type.
+   * Purpose: bind device to adapter protocol without UI-side branching.
    *
-   * @param {HIDDevice} device - HID 设备
-   * @returns {string|null} 设备类型
+   * @param {HIDDevice} device - HID device.
+   * @returns {string|null} Device type.
    */
   function identifyDeviceType(device) {
     if (!device) return null;
@@ -442,13 +514,14 @@
 
 
   /**
-   * 自动连接候选选择
-   * 目的：仅基于硬编码过滤规则选择候选，并优先复用已HID 句柄
-   *（navigator.hid.getDevices）以避免重复权限弹窗
+   * Auto-connect candidate selection.
+   * Purpose: pick candidates only via hardcoded filtering rules and
+   * prioritize reusing existing HID handles (navigator.hid.getDevices)
+   * to avoid repeated permission prompts.
    *
    * @param {Object} [args]
-   * @param {string|null} [args.preferredType] - 偏好设备类型
-   * @returns {Promise<Object>} 设备与候选列表
+   * @param {string|null} [args.preferredType] - Preferred device type.
+   * @returns {Promise<Object>} Device and candidate list.
    */
   // Auto-connect probe using navigator.hid.getDevices() only (no permission prompt).
   async function autoConnect({ preferredType = null } = {}) {
@@ -465,15 +538,15 @@
 
 
   /**
-   * 连接流程（手自动，带候选回退）
-   * 目的：统一连接入口，避免设备分支渗透到 UI
+   * Connection flow (manual/auto with candidate fallback).
+   * Purpose: provide a unified connection entrypoint and keep device branches out of UI.
    *
-   * @param {boolean|Object} mode - true 触发弹窗，Object 直接指定设备
+   * @param {boolean|Object} mode - true to trigger chooser dialog; Object to use a specific device directly.
    * @param {Object} [opts]
-   * @param {Object|null} [opts.primaryDevice] - 主设备候选
-   * @param {string|null} [opts.preferredType] - 偏好设备类型
-   * @param {boolean} [opts.pinPrimary] - 是否固定主设备优先
-   * @returns {Promise<Object>} 连接结果与候选列表
+   * @param {Object|null} [opts.primaryDevice] - Primary device candidate.
+   * @param {string|null} [opts.preferredType] - Preferred device type.
+   * @param {boolean} [opts.pinPrimary] - Whether to keep primary candidate first.
+   * @returns {Promise<Object>} Connection result and candidate list.
    */
   // Build connection plan for app.js handshake stage.
   // This function only selects and orders candidates; it does not open transport.
@@ -514,58 +587,77 @@
 
 
   // ============================================================
-  // 6) 协议加载（按设备动态注入）
+  // 6) Protocol loading (dynamic by selected device)
   // ============================================================
   /**
-   * 确保所选设备的协议 API 已加载
-   * 目的：按需加载保持 Runtime 轻量，并避免 UI 过早绑定协议脚本
+   * Ensure selected-device protocol API is loaded.
+   * Purpose: keep runtime lightweight with on-demand loading
+   * and prevent premature UI binding to protocol scripts.
    *
-   * @returns {Promise<{device: string, ProtocolApi: Object}>} 设备与协议对象
+   * @returns {Promise<{device: string, ProtocolApi: Object}>} Device and protocol object.
    */
   // Load protocol_api_* script for current selected device.
   // New device protocol onboarding must add mapping here.
-  async function ensureProtocolLoaded() {
-    const device = getSelectedDevice();
-    const src = (device === "rapoo")
-      ? "./src/protocols/protocol_api_rapoo.js"
-      : (device === "atk")
-        ? "./src/protocols/protocol_api_atk.js"
-        : (device === "ninjutso")
-          ? "./src/protocols/protocol_api_ninjutso.js"
-        : (device === "logitech")
-          ? "./src/protocols/protocol_api_logitech.js"
-        : (device === "razer")
-          ? "./src/protocols/protocol_api_razer.js"
-          : "./src/protocols/protocol_api_chaos.js";
-
-    if (!window.ProtocolApi) {
-      await _loadScript(src);
+  async function ensureProtocolLoaded(deviceId = null) {
+    const device = normalizeDeviceId(deviceId || getSelectedDevice());
+    const cachedProtocolApi = __protocolApiCache.get(device);
+    if (cachedProtocolApi?.MouseMouseHidApi) {
+      window.ProtocolApi = cachedProtocolApi;
+      window.__DEVICE_PROTOCOL_DEVICE__ = device;
+      return { device, ProtocolApi: cachedProtocolApi };
     }
 
-    if (!window.ProtocolApi) {
+    if (window.__DEVICE_PROTOCOL_DEVICE__ === device && window.ProtocolApi?.MouseMouseHidApi) {
+      __protocolApiCache.set(device, window.ProtocolApi);
+      return { device, ProtocolApi: window.ProtocolApi };
+    }
+
+    const src = _getProtocolScriptSrc(device);
+    const prevProtocolApi = window.ProtocolApi;
+    window.ProtocolApi = {};
+    try {
+      const loadSrc = _scriptExists(src) ? _withRuntimeSwitch(src) : src;
+      await _loadScript(loadSrc);
+    } catch (err) {
+      window.ProtocolApi = prevProtocolApi;
+      throw err;
+    }
+
+    if (!window.ProtocolApi?.MouseMouseHidApi) {
+      window.ProtocolApi = prevProtocolApi;
       throw new Error("ProtocolApi 未加载，期望 window.ProtocolApi 可用");
     }
+
+    __protocolApiCache.set(device, window.ProtocolApi);
+    window.__DEVICE_PROTOCOL_DEVICE__ = device;
 
     return { device, ProtocolApi: window.ProtocolApi };
   }
 
 
   /**
-   * 获取协议准备完成的单Promise
-   * 目的：避免重复加载脚本引发竞态或重复执行
+   * Get memoized protocol-readiness promise.
+   * Purpose: avoid race conditions or duplicate execution from repeated script loading.
    *
-   * @returns {Promise<{device: string, ProtocolApi: Object}>} 协议准备结果
+   * @returns {Promise<{device: string, ProtocolApi: Object}>} Protocol readiness result.
    */
   // Memoized readiness promise to prevent duplicate script injection races.
-  function whenProtocolReady() {
-    if (!this.__p) {
-      this.__p = ensureProtocolLoaded();
+  function whenProtocolReady(deviceId = null) {
+    const device = normalizeDeviceId(deviceId || getSelectedDevice());
+    if (!__protocolReadyPromise || __protocolReadyDevice !== device) {
+      __protocolReadyDevice = device;
+      __protocolReadyPromise = ensureProtocolLoaded(device).catch((err) => {
+        if (__protocolReadyDevice === device) {
+          __protocolReadyPromise = null;
+        }
+        throw err;
+      });
     }
-    return this.__p;
+    return __protocolReadyPromise;
   }
 
   // ============================================================
-  // 7) 对外 Runtime API
+  // 7) Public runtime API
   // ============================================================
   const DeviceRuntime = {
     getSelectedDevice,

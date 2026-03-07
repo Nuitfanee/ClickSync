@@ -21,8 +21,8 @@ body.device-atk{
    ============================= */
 
 /* Advanced panel remapping */
-body.device-atk #advancedPanel #bitLOD + .shutter-row .status-text::after{ content: "已关闭"; }
-body.device-atk #advancedPanel #bitLOD:checked + .shutter-row .status-text::after{ content: "已激活"; }
+body.device-atk #advancedPanel #bitLOD + .shutter-row .status-text::after{ content: var(--i18n-atk-lod-off, "Disabled"); }
+body.device-atk #advancedPanel #bitLOD:checked + .shutter-row .status-text::after{ content: var(--i18n-atk-lod-on, "Active"); }
 
 /* replace bit6 toggle with polling selector */
 body.device-atk #advancedPanel .rapoo-polling{

@@ -19,7 +19,7 @@
     "use strict";
 
     // =============================================================================
-    // 🔧 协议解析规则配置 (可以在这里添加新的规则)
+    // 🔧 Protocol parsing rule configuration (add new rules here)
     // =============================================================================
     const PARSER_RULES = [
         {
@@ -67,12 +67,12 @@
     ];
 
     // =============================================================================
-    // 核心工具库
+    // Core utilities
     // =============================================================================
     const HOOK_KEY = "__WEBHID_WORKBENCH__";
     const UW = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
 
-    // 防止重复注入
+    // Prevent duplicate injection
     if (UW[HOOK_KEY]?.installed) {
         console.log("WebHID Workbench 已运行");
         return;
@@ -81,7 +81,7 @@
     const utils = {
         now: () => {
             const t = new Date().toISOString().split('T')[1].replace('Z', '');
-            // 统一保证包含毫秒 (HH:MM:SS.mmm)
+            // Always include milliseconds (HH:MM:SS.mmm)
             return t.includes('.') ? t : (t + '.000');
         },
         nowISO: () => new Date().toISOString(),
@@ -89,14 +89,14 @@
 
         extractDeviceInfo: (dev) => {
             if (!dev) return null;
-            // WebHID HIDDevice 常用识别字段
+            // Common WebHID HIDDevice identification fields
             const vid = (typeof dev.vendorId === 'number') ? dev.vendorId : null;
             const pid = (typeof dev.productId === 'number') ? dev.productId : null;
             const info = {
                 vid,
                 pid,
                 productName: dev.productName || "",
-                // collections 里包含 usagePage/usage 以及不同方向 reportId
+                // collections include usagePage/usage and direction-specific report IDs
                 collections: Array.isArray(dev.collections) ? dev.collections.map(c => ({
                     usagePage: c.usagePage,
                     usage: c.usage,
@@ -163,21 +163,21 @@
     const { hex, toU8 } = utils;
 
     // =============================================================================
-    // 状态管理
+    // State management
     // =============================================================================
     const state = {
         enabled: true,
-        capturing: true, // 开始/暂停：是否记录报文到 log/buffer
-        log: [], // 全量报文日志 (不清空)
-        buffer: [], // 实时缓冲区 (从上一次快照至今)
-        snapshots: [], // 快照列表
-        baselineId: null, // 基准快照ID
+        capturing: true, // Start/pause: whether packets are recorded into log/buffer
+        log: [], // Full packet log (never cleared)
+        buffer: [], // Live buffer (since last snapshot)
+        snapshots: [], // Snapshot list
+        baselineId: null, // Baseline snapshot ID
         nextSnapshotId: 1,
-        lastSnapLogIndex: 0, // 上一次快照对应的 log 位置
+        lastSnapLogIndex: 0, // Log index of the previous snapshot
         openedDevices: new Set(),
-        deviceInfo: null, // 最近一次打开的设备信息 (vid/pid/usage/reportId)
+        deviceInfo: null, // Most recently opened device info (vid/pid/usage/reportId)
         ui: {
-            tab: 'capture', // capture (仅保留捕获功能)
+            tab: 'capture', // capture (capture-only tab retained)
             isMinimized: false
         },
         replay: {
@@ -191,7 +191,7 @@
     };
 
     // =============================================================================
-    // 逻辑控制器
+    // Logic controllers
     // =============================================================================
     const Decoder = {
         parse: (reportId, dataBytes) => {
@@ -208,7 +208,7 @@
 
     const SnapshotManager = {
         capture: (note = "") => {
-            // 每次快照只捕获“本次与上次快照之间”的报文段（delta window）
+            // Each snapshot captures only packets between the current and previous snapshot (delta window)
             const from = state.lastSnapLogIndex;
             const to = state.log.length;
             const packets = state.log.slice(from, to);
@@ -229,13 +229,13 @@
             };
             state.snapshots.push(snapshot);
             state.lastSnapLogIndex = to;
-            state.buffer = []; // 清空“本段”缓冲区
-            if (state.baselineId === null) state.baselineId = snapId; // 默认第一个为基准
+            state.buffer = []; // Clear current segment buffer
+            if (state.baselineId === null) state.baselineId = snapId; // Use first snapshot as baseline by default
             UI.render();
         },
         clearBuffer: () => {
             state.buffer = [];
-            // 清空缓冲区意味着用户希望重新开始“区间”
+            // Clearing the buffer means the user wants to restart the current segment window
             state.lastSnapLogIndex = state.log.length;
             UI.render();
         },
@@ -249,23 +249,24 @@
             UI.render();
         },
                 exportJSON: () => {
-            // 导出格式：
-            // - device 仅保留 vid / pid
-            // - snapshots 保留编号/备注
-            // - packets 以“usagePage/usage + 方向 + ReportID + Hex” 的可读行输出
+            // Export format:
+            // - device keeps only vid/pid
+            // - snapshots keep ID/note
+            // - packets are exported as readable lines:
+            //   usagePage/usage + direction + ReportID + Hex
             const deviceRaw = state.deviceInfo
                 || (state.openedDevices.size ? utils.extractDeviceInfo(Array.from(state.openedDevices)[0]) : null)
                 || null;
 
             const device = deviceRaw ? { vid: deviceRaw.vid, pid: deviceRaw.pid } : null;
 
-            // 根据 reportId + 方向 从 collections 中反查 usagePage / usage
+            // Reverse lookup usagePage/usage from collections by reportId + direction
             const lookupUsage = (pkt) => {
                 if (!deviceRaw || !Array.isArray(deviceRaw.collections)) return null;
                 const rid = Number(pkt.reportId);
                 const kind = (pkt.dir === 'in') ? 'input'
                     : (pkt.dir === 'out') ? 'output'
-                    : 'feature'; // sendFeature/receiveFeature 也按 feature 处理
+                    : 'feature'; // treat sendFeature/receiveFeature as feature
                 for (const c of deviceRaw.collections) {
                     const ids = (c?.reportIds && Array.isArray(c.reportIds[kind])) ? c.reportIds[kind] : [];
                     if (ids.includes(rid)) return { usagePage: c.usagePage, usage: c.usage };
@@ -302,7 +303,7 @@
             UI.render();
         },
         replaySnapshot: async (id) => {
-            // 再次点击可停止复刻
+            // Click again to stop replay
             if (state.replay?.running) {
                 state.replay.cancel = true;
                 UI.render();
@@ -318,7 +319,7 @@
                 return;
             }
 
-            // 优先按快照里报文的 vid/pid 找到当前已打开设备
+            // Prefer matching currently opened device by snapshot packet vid/pid
             const wantVid = (outs.find(p => p.vid != null)?.vid ?? state.deviceInfo?.vid ?? null);
             const wantPid = (outs.find(p => p.pid != null)?.pid ?? state.deviceInfo?.pid ?? null);
 
@@ -340,7 +341,7 @@
             try {
                 if (!dev.opened) await dev.open();
             } catch (e) {
-                // 可能权限/设备状态问题；继续尝试发送，由底层抛错
+                // Might be permission/device-state issues; continue and let lower layer throw if needed
             }
 
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -365,7 +366,7 @@
                     const wait = Math.max(0, (p.tms || 0) - (last || 0));
                     if (wait > 0) await sleep(wait);
 
-                    // 按抓取时序重新发送
+                    // Re-send in captured timing order
                     await dev.sendReport(p.reportId, p.data);
 
                     state.replay.sent++;
@@ -400,7 +401,7 @@ deleteSnapshot: (id) => {
     };
 
     // =============================================================================
-    // UI 渲染 (修复版)
+    // UI rendering
     // =============================================================================
     const UI = {
         root: null,
@@ -408,7 +409,7 @@ deleteSnapshot: (id) => {
             if (document.getElementById('webhid-bench-root')) return;
             const div = document.createElement('div');
             div.id = "webhid-bench-root";
-            // 样式优化：修复布局问题
+            // Style tuning for layout robustness
             div.style.cssText = `
                 position: fixed; top: 20px; right: 20px; width: 480px; height: 85vh;
                 background: #1e1e1e; color: #ccc; z-index: 2147483647;
@@ -420,10 +421,10 @@ deleteSnapshot: (id) => {
             document.body.appendChild(div);
             UI.root = div;
 
-            // 简单的拖拽支持
+            // Basic drag support
             let isDragging = false, startY, startX, startTop, startLeft;
             div.addEventListener('mousedown', (e) => {
-                // 仅点击头部时拖拽
+                // Drag only when clicking the header
                 if (e.target.closest('.bench-header')) {
                     isDragging = true;
                     startY = e.clientY; startX = e.clientX;
@@ -435,7 +436,7 @@ deleteSnapshot: (id) => {
                 if(isDragging) {
                     div.style.top = (startTop + e.clientY - startY) + "px";
                     div.style.left = (startLeft + e.clientX - startX) + "px";
-                    div.style.right = 'auto'; // 清除 right 定位
+                    div.style.right = 'auto'; // Clear right positioning
                 }
             });
             window.addEventListener('mouseup', () => isDragging = false);
@@ -446,7 +447,7 @@ deleteSnapshot: (id) => {
         render: () => {
             if (!UI.root) return;
 
-            // 1. 生成 HTML 字符串
+            // 1. Build HTML string
             const headerHtml = `
                 <div class="bench-header" style="padding: 10px 15px; background: #2d2d2d; border-bottom: 1px solid #333; display:flex; justify-content:space-between; align-items:center; cursor: move; user-select:none;">
                     <span style="font-weight:bold; color: #61dafb; font-size:14px;">⚡ WebHID 工作台</span>
@@ -471,7 +472,7 @@ deleteSnapshot: (id) => {
 
             let contentHtml = `<div style="flex:1; overflow:hidden; display:flex; flex-direction:column; padding:0;">`;
 
-            // --- 标签页: 捕获 (Capture) ---
+            // --- Tab: Capture ---
 
                 contentHtml += `
                     <div style="padding:10px; border-bottom:1px solid #333; display:flex; gap:8px;">
@@ -482,7 +483,7 @@ deleteSnapshot: (id) => {
                         <button id="btn-clear" style="width:40px; background:#dc3545; color:white; border:none; border-radius:4px; cursor:pointer; font-size:16px;" title="清空缓冲区">🗑️</button>
                     </div>
 
-                    <!-- 快照列表区域 (固定高度) -->
+                    <!-- Snapshot list area (fixed height) -->
                     <div style="height: 180px; overflow-y: auto; padding: 10px; background: #222; border-bottom: 2px solid #333;">
                         <div style="font-size:11px; color:#666; margin-bottom:5px; text-transform:uppercase;">已保存的快照</div>
                         ${state.snapshots.length === 0 ? '<div style="text-align:center; color:#555; padding:20px;">暂无快照<br>请在操作后点击绿色按钮捕获</div>' : ''}
@@ -512,7 +513,7 @@ deleteSnapshot: (id) => {
                         }).join('')}
                     </div>
 
-                    <!-- 实时缓冲区 (自动填充剩余空间) -->
+                    <!-- Live buffer (fills remaining space) -->
                     <div style="flex:1; display:flex; flex-direction:column; min-height:0; background: #111;">
                         <div style="padding: 5px 10px; background:#1e1e1e; color:#888; font-size:11px; border-bottom:1px solid #333; display:flex; justify-content:space-between;">
                             <span>实时缓冲区 (显示最近 50 条)</span>
@@ -547,19 +548,18 @@ deleteSnapshot: (id) => {
                     </div>
                 `;
 
-            // (已移除：对比与发送模块)
 
             contentHtml += `</div>`; // end content flex
 
-            // 2. 将 HTML 写入容器
+            // 2. Write HTML into container
             UI.root.innerHTML = headerHtml + contentHtml;
 
-            // 3. 绑定事件 (使用 addEventListener，解决 Userscript 环境下 onclick 无效的问题)
+            // 3. Bind events with addEventListener (onclick can fail in userscript contexts)
             const bind = (id, fn) => { const el = document.getElementById(id); if(el) el.addEventListener('click', fn); };
 
             bind('bench-toggle', () => { state.ui.isMinimized = !state.ui.isMinimized; UI.render(); });
 
-            // 捕获页按钮
+            // Capture-tab buttons
             bind('btn-start', SnapshotManager.start);
             bind('btn-pause', SnapshotManager.pause);
             bind('btn-snap', () => {
@@ -569,7 +569,7 @@ deleteSnapshot: (id) => {
             bind('btn-clear', SnapshotManager.clearBuffer);
             bind('btn-export', SnapshotManager.exportJSON);
 
-            // 快照列表中的动态按钮
+            // Dynamic buttons in snapshot list
             document.querySelectorAll('.act-btn').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
                     const action = e.target.getAttribute('data-action');
@@ -595,7 +595,7 @@ deleteSnapshot: (id) => {
     };
 
     // =============================================================================
-    // WebHID Hook 注入
+    // WebHID hook injection
     // =============================================================================
     function installHooks() {
         const hookProto = (cls, method, wrapperFactory) => {
@@ -617,7 +617,7 @@ deleteSnapshot: (id) => {
             };
             state.log.push(pkt);
             state.buffer.push(pkt);
-            // 限制 UI 刷新频率，避免卡顿
+            // Limit UI refresh rate to reduce stutter
             if (state.ui.tab === 'capture' && !document.hidden) requestAnimationFrame(UI.render);
             return orig.apply(this, arguments);
         };
@@ -640,7 +640,7 @@ deleteSnapshot: (id) => {
         };
 
 
-        // Feature IN: receiveFeatureReport (同步到实时缓冲区)
+        // Feature IN: receiveFeatureReport (sync into live buffer)
         const featureInputHook = (orig) => async function (reportId) {
             const res = await orig.apply(this, arguments); // res: DataView
             if (!state.capturing) return res;
@@ -656,7 +656,7 @@ deleteSnapshot: (id) => {
                 };
                 state.log.push(pkt);
                 state.buffer.push(pkt);
-                // 限制 UI 刷新频率，避免卡顿
+                // Limit UI refresh rate to reduce stutter
                 if (state.ui.tab === 'capture' && !document.hidden) requestAnimationFrame(UI.render);
             } catch (e) {
                 console.warn('receiveFeatureReport hook parse failed:', e);
@@ -670,7 +670,7 @@ deleteSnapshot: (id) => {
 
         hookProto('HIDDevice', 'open', (orig) => async function() {
             state.openedDevices.add(this);
-            // 记录设备协议信息（用于导出）
+            // Record device protocol info (used for export)
             try { state.deviceInfo = utils.extractDeviceInfo(this); } catch (e) {}
             return orig.apply(this, arguments);
         });
@@ -692,7 +692,7 @@ deleteSnapshot: (id) => {
                         };
                         state.log.push(pkt);
                         state.buffer.push(pkt);
-                        // 收到数据时如果处于捕获页，则刷新 UI (加一点防抖)
+                        // Refresh UI on incoming data when capture tab is active (with light debounce)
                         if (state.ui.tab === 'capture' && Math.random() > 0.6) requestAnimationFrame(UI.render);
                         listener(e);
                     };
@@ -701,7 +701,7 @@ deleteSnapshot: (id) => {
                 return origAddEL.apply(this, arguments);
             };
 
-            // 兼容 oninputreport 属性赋值
+            // Compatibility support for oninputreport property assignment
             Object.defineProperty(window.HIDDevice.prototype, 'oninputreport', {
                 set: function(fn) {
                     this.addEventListener('inputreport', fn);
@@ -711,7 +711,7 @@ deleteSnapshot: (id) => {
     }
 
     // =============================================================================
-    // 启动
+    // Startup
     // =============================================================================
 
     installHooks();

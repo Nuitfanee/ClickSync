@@ -28,27 +28,27 @@
  */
 
 // ============================================================
-// 1) 启动与适配器解析（无设备逻辑
+// 1) Startup and adapter resolution (no device logic)
 // ============================================================
 /**
- * 应用启动入口（IIFE）
- * 目的：避免泄露全局变量，并确保启动顺序在模块加载时立即执行
+ * Application startup entry point (IIFE).
+ * Purpose: avoid leaking globals and ensure startup order runs immediately on module load.
  *
- * @returns {Promise<void>} 启动完成Promise
+ * @returns {Promise<void>} Promise resolved after startup completes.
  */
 (async () => {
   /**
-   * 查询单个 DOM 元素
-   * 目的：集DOM 查询入口，避免重复调querySelector
-   * @param {any} sel - 参数 sel
-   * @returns {any} 返回结果
+   * Query a single DOM element.
+   * Purpose: centralize DOM queries and avoid duplicated querySelector calls.
+   * @param {any} sel - Selector.
+   * @returns {any} Selected element.
    */
   const $ = (sel) => document.querySelector(sel);
   /**
-   * 查询 DOM 元素列表
-   * 目的：集DOM 列表查询入口，减少分散查询
-   * @param {any} sel - 参数 sel
-   * @returns {any} 返回结果
+   * Query a list of DOM elements.
+   * Purpose: centralize DOM list queries and reduce scattered lookups.
+   * @param {any} sel - Selector.
+   * @returns {any} Matched element list.
    */
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -186,15 +186,103 @@
   let __activeHandshakeSeq = 0;
 
 
-  /**
-   * 兜底翻译函数
-   * 目的：在多语言模块未就绪时提供最小可用文本，避免 UI 空白
-   *
-   * @param {string} zh - 中文文本
-   * @param {string} en - 英文文本
-   * @returns {string} 兜底文本（默认中文）
-   */
-  window.tr = window.tr || ((zh, en) => zh);
+  const LANG_KEY = "mouse_console_lang";
+
+  function normalizeUiLang(rawLang) {
+    return String(rawLang || "").trim().toLowerCase() === "zh" ? "zh" : "en";
+  }
+
+  function readStoredUiLang() {
+    try {
+      return normalizeUiLang(localStorage.getItem(LANG_KEY));
+    } catch (_) {
+      return "en";
+    }
+  }
+
+  function persistUiLang(lang) {
+    try {
+      localStorage.setItem(LANG_KEY, normalizeUiLang(lang));
+    } catch (_) {}
+  }
+
+  function buildLiteralMaps() {
+    const zhToEn = new Map();
+    const enToZh = new Map();
+    const src = []
+      .concat(Array.isArray(window.UI_LITERAL_PAIRS) ? window.UI_LITERAL_PAIRS : [])
+      .concat(Array.isArray(window.REFACTOR_LITERAL_PAIRS) ? window.REFACTOR_LITERAL_PAIRS : []);
+    for (const it of src) {
+      if (!Array.isArray(it) || it.length < 2) continue;
+      const zh = String(it[0] ?? "").trim();
+      const en = String(it[1] ?? "").trim();
+      if (!zh || !en) continue;
+      if (!zhToEn.has(zh)) zhToEn.set(zh, en);
+      if (!enToZh.has(en)) enToZh.set(en, zh);
+    }
+    return { zhToEn, enToZh };
+  }
+
+  const __literalMaps = buildLiteralMaps();
+  let __uiLang = readStoredUiLang();
+  let __applyUiLangRuntime = null;
+
+  function translateUnknownPattern(text, targetLang) {
+    const raw = String(text ?? "");
+    if (targetLang === "en") {
+      const m = raw.match(/^未知\((.+)\)$/);
+      if (m) return `Unknown(${m[1]})`;
+      return raw;
+    }
+    const m = raw.match(/^Unknown\((.+)\)$/);
+    if (m) return `未知(${m[1]})`;
+    return raw;
+  }
+
+  function translateLiteralText(text, targetLang = __uiLang) {
+    const raw = String(text ?? "");
+    if (!raw) return raw;
+    const lead = (raw.match(/^\s*/) || [""])[0];
+    const trail = (raw.match(/\s*$/) || [""])[0];
+    const core = raw.slice(lead.length, raw.length - trail.length);
+    const map = targetLang === "en" ? __literalMaps.zhToEn : __literalMaps.enToZh;
+    if (map.has(core)) return lead + map.get(core) + trail;
+    const dyn = translateUnknownPattern(core, targetLang);
+    return lead + dyn + trail;
+  }
+
+  function translateActionLabelText(text, targetLang = __uiLang) {
+    return translateLiteralText(String(text ?? ""), targetLang);
+  }
+
+  function toDisplayActionLabel(label) {
+    return translateActionLabelText(String(label || ""), __uiLang);
+  }
+
+  window.tr = function tr(zh, en) {
+    const zhText = zh == null ? "" : String(zh);
+    const enText = en == null ? zhText : String(en);
+    return __uiLang === "en" ? enText : zhText;
+  };
+
+  window.getUiLang = () => __uiLang;
+  window.setUiLang = function setUiLang(nextLang, opts = {}) {
+    const {
+      persist = true,
+      broadcast = true,
+      translate = true,
+    } = opts || {};
+    const lang = normalizeUiLang(nextLang);
+    if (__uiLang === lang && !translate) return __uiLang;
+    __uiLang = lang;
+    if (persist) persistUiLang(lang);
+    if (typeof __applyUiLangRuntime === "function") {
+      __applyUiLangRuntime(lang, { broadcast, translate });
+    } else if (broadcast) {
+      window.dispatchEvent(new CustomEvent("uilangchange", { detail: { lang } }));
+    }
+    return __uiLang;
+  };
 
 
   // Device bootstrap contract:
@@ -203,9 +291,9 @@
   //   not by adding device-specific branches in app.js.
   // - app.js only consumes adapter features/ui metadata and standard keys.
   const DeviceRuntime = window.DeviceRuntime;
-  const DEVICE_ID = DeviceRuntime.getSelectedDevice();
-  const adapter = window.DeviceAdapters.getAdapter(DEVICE_ID);
-  const adapterFeatures = adapter?.features || {};
+  let DEVICE_ID = DeviceRuntime.getSelectedDevice();
+  let adapter = window.DeviceAdapters.getAdapter(DEVICE_ID);
+  let adapterFeatures = adapter?.features || {};
   // Single-source runtime helpers for advanced controls:
   // - Resolve source region from adapter.ui.advancedSourceRegionByStdKey.
   // - Query source controls by stdKey (select/range) only.
@@ -262,38 +350,40 @@
     return toggleEl;
   }
   /**
-   * 检查能力开关
-   * 目的：用于判断能力开关状态，避免分散判断
-   * @param {any} key - 参数 key
-   * @returns {any} 返回结果
+   * Check whether a feature flag is enabled.
+   * Purpose: provide a single capability check path instead of scattered checks.
+   * @param {any} key - Feature key.
+   * @returns {any} Check result.
    */
   const hasFeature = (key) => !!adapterFeatures[key];
-  const hasDpiLightCycle = !!adapterFeatures.hasDpiLightCycle;
-  const hasReceiverLightCycle = !!adapterFeatures.hasReceiverLightCycle;
-  const hasStaticLedColorPanel = !!adapterFeatures.hasStaticLedColorPanel;
+  let hasDpiLightCycle = !!adapterFeatures.hasDpiLightCycle;
+  let hasReceiverLightCycle = !!adapterFeatures.hasReceiverLightCycle;
+  let hasStaticLedColorPanel = !!adapterFeatures.hasStaticLedColorPanel;
   const STATIC_LED_COLOR_PANEL_ID = "deviceStaticLedColorPanel";
   const STATIC_LED_COLOR_FALLBACK = "#11119A";
   let __staticLedColorValue = STATIC_LED_COLOR_FALLBACK;
 
 
-  const resolvedDeviceId = adapter?.id || DEVICE_ID;
-  if (document.body) {
-    document.body.dataset.device = resolvedDeviceId;
+  let resolvedDeviceId = adapter?.id || DEVICE_ID;
+  function __applyResolvedDeviceTheme(deviceId) {
+    if (!document.body) return;
+    document.body.dataset.device = deviceId;
     Array.from(document.body.classList)
       .filter((cls) => cls.startsWith("device-"))
       .forEach((cls) => document.body.classList.remove(cls));
-    document.body.classList.add(`device-${resolvedDeviceId}`);
+    document.body.classList.add(`device-${deviceId}`);
   }
+  __applyResolvedDeviceTheme(resolvedDeviceId);
 
   // ============================================================
-  // 2) 标准语义读取（由 refactor.js 下沉实现
+  // 2) Standard semantic readback (implemented in refactor.js)
   // ============================================================
   /**
-   * 读取标准 Key 的配置值
-   * 目的：屏蔽协议字段差异，保证 UI 读取一致性
-   * @param {any} cfg - 参数 cfg
-   * @param {any} key - 参数 key
-   * @returns {any} 返回结果
+   * Read a config value by standard key.
+   * Purpose: shield protocol field differences and keep UI readback consistent.
+   * @param {any} cfg - Device config.
+   * @param {any} key - Standard key.
+   * @returns {any} Read value.
    */
   const readStandardValue = (cfg, key) => {
     const reader = window.DeviceReader;
@@ -302,18 +392,322 @@
 
 
   // ============================================================
-  // 3) Landing 层与过渡编排（仅 UI
+  // 3) Landing layer and transition orchestration (UI only)
   // ============================================================
   const __landingLayer = document.getElementById("landing-layer");
   const __appLayer = document.getElementById("app-layer");
   const __landingCaption = document.getElementById("landingCaption") || __landingLayer?.querySelector(".center-caption");
   const __triggerZone = document.getElementById("trigger-zone");
+  const __overrideEls = {
+    layer: document.getElementById("overrideLayer"),
+    authShutter: document.getElementById("overrideAuthShutter"),
+    descText: document.getElementById("overrideDescText"),
+    rule1Title: document.getElementById("overrideRule1Title"),
+    rule1Desc: document.getElementById("overrideRule1Desc"),
+    rule2Title: document.getElementById("overrideRule2Title"),
+    rule2Desc: document.getElementById("overrideRule2Desc"),
+    rule3Title: document.getElementById("overrideRule3Title"),
+    rule3Desc: document.getElementById("overrideRule3Desc"),
+    authTitle: document.getElementById("overrideAuthTitle"),
+    authSub: document.getElementById("overrideAuthSub"),
+    authStatus: document.getElementById("overrideAuthStatus"),
+    langBtn: document.getElementById("overrideLangBtn"),
+    langBtnLabel: document.getElementById("overrideLangBtnLabel"),
+    themeBtn: document.getElementById("overrideThemeBtn"),
+    themeBtnLabel: document.getElementById("overrideThemeBtnLabel"),
+  };
+  const {
+    layer: __overrideLayer,
+    authShutter: __overrideAuthShutter,
+    descText: __overrideDescText,
+    rule1Title: __overrideRule1Title,
+    rule1Desc: __overrideRule1Desc,
+    rule2Title: __overrideRule2Title,
+    rule2Desc: __overrideRule2Desc,
+    rule3Title: __overrideRule3Title,
+    rule3Desc: __overrideRule3Desc,
+    authTitle: __overrideAuthTitle,
+    authSub: __overrideAuthSub,
+    authStatus: __overrideAuthStatus,
+    langBtn: __overrideLangBtn,
+    langBtnLabel: __overrideLangBtnLabel,
+    themeBtn: __overrideThemeBtn,
+    themeBtnLabel: __overrideThemeBtnLabel,
+  } = __overrideEls;
+
+  const OVERRIDE_ACK_KEY = "mouse_console_system_override_ack_v1";
+  const OVERRIDE_CLOSE_DELAY_MS = 800;
+  const OVERRIDE_SLIDE_THRESHOLD = 0.72;
+  const OVERRIDE_DRAG_MIN_PX = 8;
+  const OVERRIDE_RULE2_ITEM_KEYS = Object.freeze([
+    "rulePowerDescItem1",
+    "rulePowerDescItem2",
+    "rulePowerDescItem3",
+    "rulePowerDescItem4",
+    "rulePowerDescItem5",
+    "rulePowerDescItem6",
+  ]);
+
+  let __overrideProgress = 0;
+  let __overrideInFlightPromise = null;
+  let __overrideResolve = null;
+  let __overrideResolved = false;
+  let __overrideConfirmed = false;
+  let __overrideConfirmTimer = null;
+  let __overridePointerActive = false;
+  let __overridePointerId = null;
+  let __overridePointerStartX = 0;
+  let __overridePointerStartProgress = 0;
+  let __overridePointerMoved = false;
+  let __overrideSuppressClick = false;
+  const __overrideLiteralDict = (window.SYSTEM_OVERRIDE_I18N && typeof window.SYSTEM_OVERRIDE_I18N === "object")
+    ? window.SYSTEM_OVERRIDE_I18N
+    : {};
+
+  function __getOverrideLiteralPair(key, fallbackZh = "", fallbackEn = "") {
+    const pair = __overrideLiteralDict[key];
+    const zh = Array.isArray(pair) && pair[0] != null ? String(pair[0]) : String(fallbackZh ?? "");
+    const en = Array.isArray(pair) && pair[1] != null ? String(pair[1]) : String(fallbackEn ?? zh);
+    return [zh, en];
+  }
+
+  function __trOverride(key, fallbackZh = "", fallbackEn = "") {
+    const [zh, en] = __getOverrideLiteralPair(key, fallbackZh, fallbackEn);
+    return window.tr(zh, en);
+  }
+
+  function __readOverrideAck() {
+    try {
+      return localStorage.getItem(OVERRIDE_ACK_KEY) === "1";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function __persistOverrideAck() {
+    try {
+      localStorage.setItem(OVERRIDE_ACK_KEY, "1");
+    } catch (_) {}
+  }
+
+  function __setOverrideProgress(nextProgress) {
+    if (!__overrideLayer) return;
+    const normalized = Math.max(0, Math.min(1, Number(nextProgress) || 0));
+    __overrideProgress = normalized;
+    __overrideLayer.style.setProperty("--override-progress", normalized.toFixed(4));
+  }
+
+  function __renderOverrideRule2Desc() {
+    if (!__overrideRule2Desc) return;
+    const leadText = __trOverride("rulePowerDescLead");
+    const tailText = __trOverride("rulePowerDescTail");
+    const itemTexts = OVERRIDE_RULE2_ITEM_KEYS
+      .map((key) => __trOverride(key))
+      .filter((text) => String(text || "").trim().length > 0);
+
+    if (!leadText && !tailText && itemTexts.length === 0) {
+      __overrideRule2Desc.textContent = __trOverride("rulePowerDesc");
+      return;
+    }
+
+    __overrideRule2Desc.classList.add("override-rule2-desc");
+    __overrideRule2Desc.textContent = "";
+
+    const introEl = document.createElement("span");
+    introEl.className = "rule-power-intro";
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "rule-power-label";
+    labelEl.textContent = leadText;
+
+    const listEl = document.createElement("span");
+    listEl.className = "rule-power-list";
+    for (const itemText of itemTexts) {
+      const itemEl = document.createElement("span");
+      itemEl.className = "rule-power-item";
+      itemEl.textContent = itemText;
+      listEl.appendChild(itemEl);
+    }
+
+    introEl.append(labelEl, listEl);
+
+    const tailEl = document.createElement("span");
+    tailEl.className = "rule-power-tail";
+    tailEl.textContent = tailText;
+
+    __overrideRule2Desc.append(introEl, tailEl);
+  }
+
+  function applyOverrideI18n() {
+    if (!__overrideLayer) return;
+    if (__overrideDescText) __overrideDescText.textContent = __trOverride("descSafety");
+    if (__overrideRule1Title) __overrideRule1Title.textContent = __trOverride("ruleHotPlugTitle");
+    if (__overrideRule1Desc) __overrideRule1Desc.textContent = __trOverride("ruleHotPlugDesc");
+    if (__overrideRule2Title) __overrideRule2Title.textContent = __trOverride("rulePowerTitle");
+    __renderOverrideRule2Desc();
+    if (__overrideRule3Title) __overrideRule3Title.textContent = __trOverride("ruleMacroTitle");
+    if (__overrideRule3Desc) __overrideRule3Desc.textContent = __trOverride("ruleMacroDesc");
+    if (__overrideAuthTitle) __overrideAuthTitle.textContent = __trOverride("authTitle");
+    if (__overrideAuthSub) __overrideAuthSub.textContent = __trOverride("authSub");
+    if (__overrideAuthStatus) {
+      __overrideAuthStatus.dataset.locked = __trOverride("statusLocked");
+      __overrideAuthStatus.dataset.granted = __trOverride("statusGranted");
+    }
+    __overrideAuthShutter?.setAttribute("aria-label", __trOverride("confirmAria"));
+  }
+
+  function __deactivateOverrideLayer() {
+    if (!__overrideLayer) return;
+    __overrideLayer.classList.remove("is-active");
+    __overrideLayer.setAttribute("aria-hidden", "true");
+    __overrideAuthShutter?.classList.remove("is-dragging");
+  }
+
+  function __closeOverrideAndResolve() {
+    __deactivateOverrideLayer();
+    if (typeof __overrideResolve === "function") {
+      const done = __overrideResolve;
+      __overrideResolve = null;
+      __overrideInFlightPromise = null;
+      done(true);
+      return;
+    }
+    __overrideInFlightPromise = null;
+  }
+
+  function __confirmOverride() {
+    if (__overrideConfirmed) return;
+    __overrideConfirmed = true;
+    __overrideResolved = true;
+    __persistOverrideAck();
+    __overrideAuthShutter?.classList.add("is-confirmed");
+    __setOverrideProgress(1);
+
+    if (__overrideConfirmTimer) clearTimeout(__overrideConfirmTimer);
+    __overrideConfirmTimer = setTimeout(() => {
+      __overrideConfirmTimer = null;
+      __closeOverrideAndResolve();
+    }, OVERRIDE_CLOSE_DELAY_MS);
+  }
+
+  function __activateOverrideLayer() {
+    if (!__overrideLayer) return;
+    __overrideConfirmed = false;
+    __overridePointerActive = false;
+    __overridePointerId = null;
+    __overridePointerMoved = false;
+    __overrideSuppressClick = false;
+    __overrideAuthShutter?.classList.remove("is-confirmed", "is-dragging");
+    __setOverrideProgress(0);
+    applyOverrideI18n();
+    __overrideLayer.classList.add("is-active");
+    __overrideLayer.setAttribute("aria-hidden", "false");
+  }
+
+  function __onOverridePointerDown(event) {
+    if (!__overrideAuthShutter || !__overrideLayer || !__overrideLayer.classList.contains("is-active")) return;
+    if (__overrideConfirmed) return;
+    __overridePointerActive = true;
+    __overridePointerId = event.pointerId;
+    __overridePointerStartX = Number(event.clientX || 0);
+    __overridePointerStartProgress = __overrideProgress;
+    __overridePointerMoved = false;
+    __overrideSuppressClick = false;
+    __overrideAuthShutter.classList.add("is-dragging");
+    try { __overrideAuthShutter.setPointerCapture(event.pointerId); } catch (_) {}
+  }
+
+  function __onOverridePointerMove(event) {
+    if (!__overridePointerActive || event.pointerId !== __overridePointerId) return;
+    if (__overrideConfirmed || !__overrideAuthShutter) return;
+    const width = Math.max(1, __overrideAuthShutter.clientWidth || 1);
+    const delta = Number(event.clientX || 0) - __overridePointerStartX;
+    if (Math.abs(delta) >= OVERRIDE_DRAG_MIN_PX) __overridePointerMoved = true;
+    __setOverrideProgress(__overridePointerStartProgress + (delta / width));
+  }
+
+  function __endOverrideDrag(event, { cancelled = false } = {}) {
+    if (!__overridePointerActive || event.pointerId !== __overridePointerId) return;
+    __overridePointerActive = false;
+    __overridePointerId = null;
+    __overrideAuthShutter?.classList.remove("is-dragging");
+    try { __overrideAuthShutter?.releasePointerCapture(event.pointerId); } catch (_) {}
+
+    if (__overrideConfirmed) return;
+    if (cancelled) {
+      __setOverrideProgress(0);
+      return;
+    }
+
+    if (__overrideProgress >= OVERRIDE_SLIDE_THRESHOLD) {
+      __overrideSuppressClick = true;
+      __confirmOverride();
+      return;
+    }
+
+    if (__overridePointerMoved) {
+      __overrideSuppressClick = true;
+      __setOverrideProgress(0);
+      return;
+    }
+
+    __setOverrideProgress(0);
+  }
+
+  if (__overrideLayer) {
+    __overrideLayer.setAttribute("aria-hidden", "true");
+    __overrideResolved = __readOverrideAck();
+    applyOverrideI18n();
+    window.addEventListener("uilangchange", applyOverrideI18n);
+  }
+
+  if (__overrideAuthShutter) {
+    __overrideAuthShutter.addEventListener("pointerdown", __onOverridePointerDown);
+    __overrideAuthShutter.addEventListener("pointermove", __onOverridePointerMove);
+    __overrideAuthShutter.addEventListener("pointerup", (event) => __endOverrideDrag(event, { cancelled: false }));
+    __overrideAuthShutter.addEventListener("pointercancel", (event) => __endOverrideDrag(event, { cancelled: true }));
+    __overrideAuthShutter.addEventListener("lostpointercapture", (event) => __endOverrideDrag(event, { cancelled: true }));
+    __overrideAuthShutter.addEventListener("click", (event) => {
+      if (!__overrideLayer || !__overrideLayer.classList.contains("is-active")) return;
+      if (__overrideConfirmed) return;
+      if (__overrideSuppressClick) {
+        __overrideSuppressClick = false;
+        event.preventDefault();
+        return;
+      }
+      __confirmOverride();
+    });
+    __overrideAuthShutter.addEventListener("keydown", (event) => {
+      if (__overrideConfirmed) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      __confirmOverride();
+    });
+  }
+
+  window.showSystemOverrideWarning = async function showSystemOverrideWarning() {
+    if (!__overrideLayer || !__overrideAuthShutter) return true;
+
+    if (__overrideResolved || __readOverrideAck()) {
+      __overrideResolved = true;
+      __deactivateOverrideLayer();
+      return true;
+    }
+
+    if (__overrideInFlightPromise) return __overrideInFlightPromise;
+
+    __overrideInFlightPromise = new Promise((resolve) => {
+      __overrideResolve = resolve;
+      __activateOverrideLayer();
+    });
+    return __overrideInFlightPromise;
+  };
 
 
   /**
-   * 内部应用设备
-   * 目的：集中应用配置，确保入口一致
-   * @returns {any} 返回结果
+   * Apply the device variant internally.
+   * Purpose: centralize variant application and keep a single entry path.
+   * @returns {any} Apply result.
    */
   function __applyDeviceVariantOnce({ deviceName = "", cfg = null, keymapOnly = false } = {}) {
 
@@ -338,7 +732,7 @@
 
 
   // ============================================================
-  // 4) 能力驱动UI 循环控件（适配器门控）
+  // 4) Capability-driven UI cycle controls (adapter-gated)
   // ============================================================
   const POLLING_RATES = [1000, 2000, 4000, 8000];
   const RATE_COLORS = {
@@ -391,7 +785,7 @@
     cancelCycleAnim(container);
     if (nextLayer) nextLayer.className = 'shutter-bg-next ' + colorClass;
     if (baseLayer) baseLayer.className = 'shutter-bg-base ' + colorClass;
-    if (textEl) textEl.textContent = label;
+    if (textEl) textEl.textContent = toDisplayActionLabel(label);
     if (typeof syncForm === 'function') syncForm(value);
   }
 
@@ -426,7 +820,7 @@
       }
       activeState.onEnd = null;
       activeState.nextLayer = null;
-      textEl.textContent = label;
+      textEl.textContent = toDisplayActionLabel(label);
       baseLayer.className = 'shutter-bg-base ' + colorClass;
       container.classList.remove('is-animating');
     };
@@ -453,11 +847,11 @@
   }
 
   /**
-   * 更新轮询率
-   * 目的：在轮询率变化时同步 UI 与配置，避免显示与实际值偏离
-   * @param {any} rate - 参数 rate
-   * @param {any} animate - 参数 animate
-   * @returns {any} 返回结果
+   * Update polling rate cycle UI.
+   * Purpose: keep UI and config in sync when polling rate changes.
+   * @param {any} rate - Polling rate value.
+   * @param {any} animate - Whether to animate the transition.
+   * @returns {any} Update result.
    */
   function updatePollingCycleUI(rate, animate = true) {
     const container = getAdvancedCycleNode("keyScanningRate", { region: ADV_REGION_DUAL_RIGHT });
@@ -483,15 +877,18 @@
   }
 
   /**
-   * 初始化轮询率
-   * 目的：在轮询率变化时同步 UI 与配置，避免显示与实际值偏离
-   * @returns {any} 返回结果
+   * Initialize polling rate cycle behavior.
+   * Purpose: keep UI and config in sync when polling rate changes.
+   * @returns {any} Initialization result.
    */
   function initKeyScanningRateCycle() {
     const cycleBtn = getAdvancedCycleNode("keyScanningRate", { region: ADV_REGION_DUAL_RIGHT });
     if (!cycleBtn || !hasFeature("hasKeyScanRate")) return;
+    if (cycleBtn.dataset.keyscanCycleBound === "1") return;
+    cycleBtn.dataset.keyscanCycleBound = "1";
 
     cycleBtn.addEventListener('click', () => {
+      if (!hasFeature("hasKeyScanRate")) return;
       const selectEl = getAdvancedSelectControl("keyScanningRate", { region: ADV_REGION_DUAL_RIGHT });
       const datasetHz = Number(cycleBtn.dataset.value);
       const selectHz = Number(selectEl?.value);
@@ -517,26 +914,28 @@
   initKeyScanningRateCycle();
 
 
-  const DPI_LIGHT_EFFECT_OPTIONS = adapter?.ui?.lights?.dpi || [
+  const DEFAULT_DPI_LIGHT_EFFECT_OPTIONS = [
       { val: 0, label: "关闭", cls: "adv-cycle-mode-0" },
       { val: 1, label: "常亮", cls: "adv-cycle-mode-1" },
       { val: 2, label: "呼吸", cls: "adv-cycle-mode-2" }
   ];
-  const RECEIVER_LIGHT_EFFECT_OPTIONS = adapter?.ui?.lights?.receiver || [
+  const DEFAULT_RECEIVER_LIGHT_EFFECT_OPTIONS = [
       { val: 0, label: "关闭", cls: "adv-cycle-mode-0" },
       { val: 1, label: "回报率模式", cls: "adv-cycle-mode-1" },
       { val: 2, label: "电量梯度", cls: "adv-cycle-mode-2" },
       { val: 3, label: "低电压模式", cls: "adv-cycle-mode-3" }
   ];
+  let DPI_LIGHT_EFFECT_OPTIONS = adapter?.ui?.lights?.dpi || DEFAULT_DPI_LIGHT_EFFECT_OPTIONS;
+  let RECEIVER_LIGHT_EFFECT_OPTIONS = adapter?.ui?.lights?.receiver || DEFAULT_RECEIVER_LIGHT_EFFECT_OPTIONS;
 
   /**
-   * 更新atk、cycle
-   * 目的：在状态变化时同步 UI 或数据，避免不一致
-   * @param {any} id - 参数 id
-   * @param {any} value - 参数 value
-   * @param {any} options - 参数 options
-   * @param {any} animate - 参数 animate
-   * @returns {any} 返回结果
+   * Update a cycle control in the advanced panel.
+   * Purpose: synchronize UI/data when state changes to prevent inconsistencies.
+   * @param {any} id - Item key.
+   * @param {any} value - Current value.
+   * @param {any} options - Cycle options.
+   * @param {any} animate - Whether to animate the transition.
+   * @returns {any} Update result.
    */
   function updateAdvancedCycleUI(itemKey, value, options, animate = true) {
       const container = getAdvancedCycleNode(itemKey, { region: ADV_REGION_DUAL_RIGHT });
@@ -561,26 +960,39 @@
   }
 
   /**
-   * 初始化灯效
-   * 目的：集中初始化与事件绑定，避免重复绑定或顺序问题
-   * @returns {any} 返回结果
+   * Initialize advanced light-effect cycles.
+   * Purpose: centralize initialization and event binding to avoid duplicate binds or ordering issues.
+   * @returns {any} Initialization result.
    */
   function initAdvancedLightCycles() {
       if (!hasDpiLightCycle && !hasReceiverLightCycle) return;
       /**
-       * 处理bind、cycle逻辑
-       * 目的：统一处理bind、cycle相关流程，保证行为一致
-       * @param {any} id - 参数 id
-       * @param {any} key - 参数 key
-       * @param {any} options - 参数 options
-       * @returns {any} 返回结果
+       * Bind click behavior for a cycle control.
+       * Purpose: centralize cycle-binding flow and keep behavior consistent.
+       * @param {any} id - Item key.
+       * @param {any} key - Device patch key.
+       * @param {any} options - Cycle options.
+       * @returns {any} Bind result.
        */
-      const bindCycle = (itemKey, key, options) => {
+      const resolveCycleOptions = (key) => {
+        if (key === "dpiLightEffect") return DPI_LIGHT_EFFECT_OPTIONS;
+        if (key === "receiverLightEffect") return RECEIVER_LIGHT_EFFECT_OPTIONS;
+        return [];
+      };
+
+      const bindCycle = (itemKey, key) => {
           const btn = getAdvancedCycleNode(itemKey, { region: ADV_REGION_DUAL_RIGHT });
           if (!btn) return;
+          const bindFlag = `${key}CycleBound`;
+          if (btn.dataset[bindFlag] === "1") return;
+          btn.dataset[bindFlag] = "1";
 
           btn.addEventListener('click', () => {
+              if (key === "dpiLightEffect" && !hasDpiLightCycle) return;
+              if (key === "receiverLightEffect" && !hasReceiverLightCycle) return;
               if (btn.getAttribute("aria-disabled") === "true") return;
+              const options = resolveCycleOptions(key);
+              if (!Array.isArray(options) || !options.length) return;
               const datasetVal = Number(btn.dataset.value);
               const firstVal = Number(options[0]?.val);
               const cur = Number.isFinite(datasetVal)
@@ -601,10 +1013,10 @@
 
 
       if (hasDpiLightCycle) {
-        bindCycle("dpiLightEffect", "dpiLightEffect", DPI_LIGHT_EFFECT_OPTIONS);
+        bindCycle("dpiLightEffect", "dpiLightEffect");
       }
       if (hasReceiverLightCycle) {
-        bindCycle("receiverLightEffect", "receiverLightEffect", RECEIVER_LIGHT_EFFECT_OPTIONS);
+        bindCycle("receiverLightEffect", "receiverLightEffect");
       }
   }
 
@@ -620,28 +1032,28 @@
 
   let __manualConnectGuardUntil = 0;
   /**
-   * 内部处理arm、manual逻辑
-   * 目的：统一连接流程并处理并发保护，避免重复连接或状态错乱
-   * @param {any} ms - 参数 ms
-   * @returns {any} 返回结果
+   * Arm manual-connect guard.
+   * Purpose: protect connection flow from duplicate/concurrent connect attempts.
+   * @param {any} ms - Guard duration in milliseconds.
+   * @returns {any} Guard result.
    */
   const __armManualConnectGuard = (ms = 3000) => {
     const dur = Math.max(0, Number(ms) || 0);
     __manualConnectGuardUntil = Date.now() + dur;
   };
   /**
-   * 内部检查manual、connect
-   * 目的：用于判断manual、connect状态，避免分散判断
-   * @returns {any} 返回结果
+   * Check whether manual-connect guard is active.
+   * Purpose: centralize guard-state checks.
+   * @returns {any} Check result.
    */
   const __isManualConnectGuardOn = () => Date.now() < __manualConnectGuardUntil;
 
 
   /**
-   * 内部设置app、inert
-   * 目的：提供统一读写入口，降低耦合
-   * @param {any} inert - 参数 inert
-   * @returns {any} 返回结果
+   * Set app inert state.
+   * Purpose: provide a single read/write entry and reduce coupling.
+   * @param {any} inert - Inert flag.
+   * @returns {any} Set result.
    */
   function __setAppInert(inert) {
     if (!__appLayer) return;
@@ -650,21 +1062,26 @@
   }
 
   /**
-   * 内部设置Landing
-   * 目的：集中管Landing 状态切换与动画时序，避免交互状态冲突
-   * @param {any} text - 参数 text
-   * @returns {any} 返回结果
+   * Set landing caption text.
+   * Purpose: centralize landing state text updates and avoid conflicting transitions.
+   * @param {any} text - Caption text.
+   * @returns {any} Set result.
    */
   function __setLandingCaption(text) {
     if (!__landingCaption) return;
     __landingCaption.textContent = text;
   }
 
+  function __getLandingReadyText() {
+    const readyText = String(__landingLayer?.dataset?.readyText || "").trim();
+    return readyText || "SYSTEM READY";
+  }
+
 /**
- * 显示Landing
- * 目的：集中管Landing 状态切换与动画时序，避免交互状态冲突
- * @param {any} reason - 参数 reason
- * @returns {any} 返回结果
+ * Show landing layer.
+ * Purpose: centralize landing state transitions and animation sequencing.
+ * @param {any} reason - Display reason.
+ * @returns {any} Show result.
  */
 function showLanding(reason = "") {
     if (!__landingLayer) return;
@@ -692,10 +1109,10 @@ function showLanding(reason = "") {
 
 
 /**
- * 处理enter、app逻辑
- * 目的：统一处理enter、app相关流程，保证行为一致
- * @param {any} origin - 参数 origin
- * @returns {any} 返回结果
+ * Enter app view with liquid transition.
+ * Purpose: centralize enter-app flow and keep behavior consistent.
+ * @param {any} origin - Transition origin.
+ * @returns {any} Transition result.
  */
 function enterAppWithLiquidTransition(origin = null) {
     if (!__landingLayer) return;
@@ -712,15 +1129,15 @@ function enterAppWithLiquidTransition(origin = null) {
     document.body.classList.add("landing-system-ready", "landing-reveal");
     document.body.classList.remove("landing-precharge", "landing-charging", "landing-holding");
 
-    __setLandingCaption("SYSTEM READY");
+    __setLandingCaption(__getLandingReadyText());
 
 
     __setAppInert(true);
 
     /**
-     * 处理finish逻辑
-     * 目的：统一处理finish相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Finalize landing-to-app transition.
+     * Purpose: centralize finish flow and keep behavior consistent.
+     * @returns {any} Finalization result.
      */
     const finish = () => {
       if (!__landingLayer) return;
@@ -749,9 +1166,9 @@ function enterAppWithLiquidTransition(origin = null) {
     };
 
     /**
-     * 处理run、transition逻辑
-     * 目的：统一处理run、transition相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Run the staged transition timeline.
+     * Purpose: centralize transition flow and keep behavior consistent.
+     * @returns {any} Timeline result.
      */
     const runTransition = () => {
 
@@ -782,9 +1199,9 @@ function enterAppWithLiquidTransition(origin = null) {
 
 
   /**
-   * 初始Landing 画布引擎
-   * 目的：建Landing 交互渲染循环，确保过渡稳定
-   * @returns {any} 返回结果
+   * Initialize landing canvas engine.
+   * Purpose: build landing interaction/render loop for stable transitions.
+   * @returns {any} Initialization result.
    */
   function initLandingCanvasEngine() {
 
@@ -816,23 +1233,23 @@ function enterAppWithLiquidTransition(origin = null) {
 
 
     /**
-     * 内部处理wake、loop逻辑
-     * 目的：统一处理wake、loop相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Wake loop handler placeholder.
+     * Purpose: centralize wake-loop flow and keep behavior consistent.
+     * @returns {any} Handler result.
      */
     let __wakeLoop = () => {};
 
     /**
-     * 检查Landing
-     * 目的：用于判断Landing状态，避免分散判断
-     * @returns {any} 返回结果
+     * Check landing visibility.
+     * Purpose: centralize landing-state checks.
+     * @returns {any} Check result.
      */
     const isLandingVisible = () => __landingLayer.getAttribute("aria-hidden") !== "true";
 
     /**
-     * 启动hold
-     * 目的：统一处理hold相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Start hold interaction.
+     * Purpose: centralize hold flow and keep behavior consistent.
+     * @returns {any} Start result.
      */
     const startHold = () => {
       if (!isLandingVisible()) return;
@@ -846,9 +1263,9 @@ function enterAppWithLiquidTransition(origin = null) {
     };
 
     /**
-     * 处理end、hold逻辑
-     * 目的：统一处理end、hold相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * End hold interaction.
+     * Purpose: centralize hold-end flow and keep behavior consistent.
+     * @returns {any} End result.
      */
     const endHold = () => {
       if (autoWipe) return;
@@ -860,13 +1277,13 @@ function enterAppWithLiquidTransition(origin = null) {
 
 
     /**
-     * 处理自动流程逻辑
-     * 目的：统一处理自动流程相关流程，保证行为一致
-     * @param {any} cx - 参数 cx
-     * @param {any} cy - 参数 cy
-     * @param {any} onDone - 参数 onDone
-     * @param {any} opts - 参数 opts
-     * @returns {any} 返回结果
+     * Start automatic wipe flow.
+     * Purpose: centralize auto-flow handling and keep behavior consistent.
+     * @param {any} cx - Center X.
+     * @param {any} cy - Center Y.
+     * @param {any} onDone - Completion callback.
+     * @param {any} opts - Flow options.
+     * @returns {any} Start result.
      */
     const beginAutoWipe = (cx, cy, onDone, opts = {}) => {
       if (!isLandingVisible()) return false;
@@ -942,22 +1359,22 @@ function enterAppWithLiquidTransition(origin = null) {
     let __lastDotOp = "";
 
     /**
-     * 内部设置clip
-     * 目的：提供统一读写入口，降低耦合
-     * @param {any} v - 参数 v
-     * @returns {any} 返回结果
+     * Set clip-path cache-aware.
+     * Purpose: provide a single read/write entry and reduce coupling.
+     * @param {any} v - Clip value.
+     * @returns {any} Set result.
      */
     const __setClip = (v) => {
       if (v !== __lastClip) {
-        layerSolid.style.clipPath = v;
+        layerSolid.style.setProperty("clip-path", v, "important");
         __lastClip = v;
       }
     };
     /**
-     * 内部设置outline
-     * 目的：提供统一读写入口，降低耦合
-     * @param {any} v - 参数 v
-     * @returns {any} 返回结果
+     * Set outline transform cache-aware.
+     * Purpose: provide a single read/write entry and reduce coupling.
+     * @param {any} v - Transform value.
+     * @returns {any} Set result.
      */
     const __setOutlineT = (v) => {
       if (!layerOutline) return;
@@ -967,10 +1384,10 @@ function enterAppWithLiquidTransition(origin = null) {
       }
     };
     /**
-     * 内部设置光环
-     * 目的：提供统一读写入口，降低耦合
-     * @param {any} v - 参数 v
-     * @returns {any} 返回结果
+     * Set cursor ring transform cache-aware.
+     * Purpose: provide a single read/write entry and reduce coupling.
+     * @param {any} v - Transform value.
+     * @returns {any} Set result.
      */
     const __setRingT = (v) => {
       if (!cursorRing) return;
@@ -980,10 +1397,10 @@ function enterAppWithLiquidTransition(origin = null) {
       }
     };
     /**
-     * 内部设置指示点
-     * 目的：提供统一读写入口，降低耦合
-     * @param {any} v - 参数 v
-     * @returns {any} 返回结果
+     * Set cursor dot transform cache-aware.
+     * Purpose: provide a single read/write entry and reduce coupling.
+     * @param {any} v - Transform value.
+     * @returns {any} Set result.
      */
     const __setDotT = (v) => {
       if (!cursorDot) return;
@@ -993,10 +1410,10 @@ function enterAppWithLiquidTransition(origin = null) {
       }
     };
     /**
-     * 内部设置光环
-     * 目的：提供统一读写入口，降低耦合
-     * @param {any} v - 参数 v
-     * @returns {any} 返回结果
+     * Set cursor ring opacity cache-aware.
+     * Purpose: provide a single read/write entry and reduce coupling.
+     * @param {any} v - Opacity value.
+     * @returns {any} Set result.
      */
     const __setRingOpacity = (v) => {
       if (!cursorRing) return;
@@ -1006,10 +1423,10 @@ function enterAppWithLiquidTransition(origin = null) {
       }
     };
     /**
-     * 内部设置指示点
-     * 目的：提供统一读写入口，降低耦合
-     * @param {any} v - 参数 v
-     * @returns {any} 返回结果
+     * Set cursor dot opacity cache-aware.
+     * Purpose: provide a single read/write entry and reduce coupling.
+     * @param {any} v - Opacity value.
+     * @returns {any} Set result.
      */
     const __setDotOpacity = (v) => {
       if (!cursorDot) return;
@@ -1020,17 +1437,17 @@ function enterAppWithLiquidTransition(origin = null) {
     };
 
     /**
-     * 内部检查charging、or
-     * 目的：用于判断charging、or状态，避免分散判断
-     * @returns {any} 返回结果
+     * Check whether landing is charging or ready.
+     * Purpose: centralize state checks.
+     * @returns {any} Check result.
      */
     const __isChargingOrReady = () =>
       document.body.classList.contains("landing-charging") || document.body.classList.contains("landing-system-ready");
 
     /**
-     * 内部检查keep、running
-     * 目的：用于判断keep、running状态，避免分散判断
-     * @returns {any} 返回结果
+     * Check whether the render loop should continue.
+     * Purpose: centralize keep-running checks.
+     * @returns {any} Check result.
      */
     const __shouldKeepRunning = () => {
       if (__paused) return false;
@@ -1046,9 +1463,9 @@ function enterAppWithLiquidTransition(origin = null) {
     };
 
     /**
-     * 内部启动loop
-     * 目的：统一处理loop相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Start animation loop.
+     * Purpose: centralize loop-start flow and keep behavior consistent.
+     * @returns {any} Start result.
      */
     const __startLoop = () => {
       if (__paused) return;
@@ -1058,9 +1475,9 @@ function enterAppWithLiquidTransition(origin = null) {
     };
 
     /**
-     * 内部停止loop
-     * 目的：统一处理loop相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Stop animation loop.
+     * Purpose: centralize loop-stop flow and keep behavior consistent.
+     * @returns {any} Stop result.
      */
     const __stopLoop = () => {
       if (__rafId) cancelAnimationFrame(__rafId);
@@ -1071,9 +1488,9 @@ function enterAppWithLiquidTransition(origin = null) {
     __wakeLoop = __startLoop;
 
     /**
-     * 内部处理tick逻辑
-     * 目的：统一处理tick相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Per-frame tick handler.
+     * Purpose: centralize tick flow and keep behavior consistent.
+     * @returns {any} Tick result.
      */
     function __tick() {
       __rafId = 0;
@@ -1213,11 +1630,11 @@ function enterAppWithLiquidTransition(origin = null) {
 
 
   /**
-   * 内部处理Landing逻辑
-   * 目的：集中管Landing 状态切换与动画时序，避免交互状态冲突
-   * @param {any} origin - 参数 origin
-   * @param {any} opts - 参数 opts
-   * @returns {any} 返回结果
+   * Reverse landing layer back to initial state.
+   * Purpose: centralize landing state and animation sequencing to avoid conflicts.
+   * @param {any} origin - Transition origin.
+   * @param {any} opts - Transition options.
+   * @returns {any} Reverse result.
    */
   function __reverseLandingToInitial(origin = null, opts = {}) {
     if (!__landingLayer) return;
@@ -1266,9 +1683,9 @@ function enterAppWithLiquidTransition(origin = null) {
 
   if (__triggerZone && __landingLayer) {
     /**
-     * 处理begin、precharge逻辑
-     * 目的：统一处理begin、precharge相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Enter precharge state.
+     * Purpose: centralize precharge flow and keep behavior consistent.
+     * @returns {any} State update result.
      */
     const beginPrecharge = () => {
 
@@ -1279,9 +1696,9 @@ function enterAppWithLiquidTransition(origin = null) {
     };
 
     /**
-     * 处理begin、charging逻辑
-     * 目的：统一处理begin、charging相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Enter charging state.
+     * Purpose: centralize charging flow and keep behavior consistent.
+     * @returns {any} State update result.
      */
     const beginCharging = () => {
 
@@ -1335,10 +1752,10 @@ function enterAppWithLiquidTransition(origin = null) {
   let xSelectGlobalHooksInstalled = false;
 
   /**
-   * 关闭all
-   * 目的：统一选项构建与应用，避免选项与值不匹配
-   * @param {any} exceptWrap - 参数 exceptWrap
-   * @returns {any} 返回结果
+   * Close all custom selects.
+   * Purpose: centralize option lifecycle to avoid mismatched option/value states.
+   * @param {any} exceptWrap - Wrapper to keep open.
+   * @returns {any} Close result.
    */
   function closeAllXSelect(exceptWrap = null) {
     for (const inst of Array.from(xSelectOpen)) {
@@ -1348,19 +1765,19 @@ function enterAppWithLiquidTransition(origin = null) {
   }
 
   /**
-   * 处理reposition、open逻辑
-   * 目的：在尺寸或状态变化时重新计算布局，避免错位
-   * @returns {any} 返回结果
+   * Reposition opened custom selects.
+   * Purpose: recalculate layout on size/state changes to avoid misalignment.
+   * @returns {any} Reposition result.
    */
   function repositionOpenXSelect() {
     for (const inst of Array.from(xSelectOpen)) inst.position();
   }
 
   /**
-   * 处理create逻辑
-   * 目的：统一选项构建与应用，避免选项与值不匹配
-   * @param {any} selectEl - 参数 selectEl
-   * @returns {any} 返回结果
+   * Create a custom select wrapper.
+   * Purpose: centralize option construction/application to avoid option/value mismatches.
+   * @param {any} selectEl - Native select element.
+   * @returns {any} Creation result.
    */
   function createXSelect(selectEl) {
     if (!selectEl || xSelectMap.has(selectEl)) return;
@@ -1605,9 +2022,9 @@ function enterAppWithLiquidTransition(origin = null) {
   }
 
   /**
-   * 初始化selects
-   * 目的：集中初始化与事件绑定，避免重复绑定或顺序问题
-   * @returns {any} 返回结果
+   * Initialize custom select components.
+   * Purpose: centralize setup and event binding to avoid duplicate binds or ordering issues.
+   * @returns {any} Initialization result.
    */
   function initXSelects() {
     $$("select.input").forEach((sel) => createXSelect(sel));
@@ -1656,7 +2073,9 @@ function enterAppWithLiquidTransition(origin = null) {
 
   function renderTopDeviceMeta(connected, deviceName = "", batteryText = "") {
     if (topDeviceName) {
-      const name = connected ? (deviceName || "已连接设备") : "未连接设备";
+      const name = connected
+        ? (deviceName || window.tr("已连接设备", "Connected Device"))
+        : window.tr("未连接设备", "No Device Connected");
       topDeviceName.textContent = name;
       topDeviceName.title = name;
     }
@@ -1676,34 +2095,34 @@ function enterAppWithLiquidTransition(origin = null) {
 
 
   /**
-   * 安全请求电量
-   * 目的：在连接状态可用时触发请求，避免无效调用
-   * @param {any} reason - 参数 reason
-   * @returns {Promise<any>} 异步结果
+   * Safely request battery status.
+   * Purpose: request only when connection state is valid and avoid invalid calls.
+   * @param {any} reason - Request reason tag.
+   * @returns {Promise<any>} Async result.
    */
   async function requestBatterySafe(reason = "") {
     if (!isHidReady()) return;
     if (adapterFeatures.supportsBatteryRequest === false) return;
     try {
       await hidApi.requestBattery();
-      if (reason) log(`已刷新电量(${reason})`);
+      if (reason) log(window.tr(`已刷新电量(${reason})`, `Battery refreshed (${reason})`));
     } catch (e) {
 
-      logErr(e, "请求电量失败");
+      logErr(e, window.tr("请求电量失败", "Battery request failed"));
     }
   }
 
 
   /**
-   * 启动电量、自动流程
-   * 目的：统一电量读取与展示节奏，避免频繁请求或状态滞后
-   * @returns {any} 返回结果
+   * Start automatic battery polling.
+   * Purpose: centralize battery read/display cadence and avoid over-polling or stale status.
+   * @returns {any} Start result.
    */
   function startBatteryAutoRead() {
     if (batteryTimer) return;
     if (adapterFeatures.supportsBatteryRequest === false) return;
 
-    requestBatterySafe("首次");
+    requestBatterySafe(window.tr("首次", "First"));
 
     const intervalMs = Number.isFinite(Number(adapterFeatures.batteryPollMs))
       ? Number(adapterFeatures.batteryPollMs)
@@ -1714,9 +2133,9 @@ function enterAppWithLiquidTransition(origin = null) {
 
 
   /**
-   * 停止电量、自动流程
-   * 目的：统一电量读取与展示节奏，避免频繁请求或状态滞后
-   * @returns {any} 返回结果
+   * Stop automatic battery polling.
+   * Purpose: centralize battery read/display cadence and avoid over-polling or stale status.
+   * @returns {any} Stop result.
    */
   function stopBatteryAutoRead() {
     if (batteryTimer) clearInterval(batteryTimer);
@@ -1724,19 +2143,21 @@ function enterAppWithLiquidTransition(origin = null) {
   }
 
   /**
-   * 更新设备、状态
-   * 目的：在状态变化时同步 UI 或数据，避免不一致
-   * @param {any} connected - 参数 connected
-   * @param {any} deviceName - 参数 deviceName
-   * @param {any} battery - 参数 battery
-   * @param {any} firmware - 参数 firmware
-   * @returns {any} 返回结果
+   * Update device status display.
+   * Purpose: synchronize UI/data when status changes to avoid inconsistent states.
+   * @param {any} connected - Connection state.
+   * @param {any} deviceName - Device name.
+   * @param {any} battery - Battery text.
+   * @param {any} firmware - Firmware text.
+   * @returns {any} Update result.
    */
   function updateDeviceStatus(connected, deviceName = "", battery = "", firmware = "") {
     if (disconnectBtn) {
       disconnectBtn.disabled = !connected;
       disconnectBtn.setAttribute("aria-disabled", connected ? "false" : "true");
-      disconnectBtn.title = connected ? "断开当前设备连接" : "当前无设备连接";
+      disconnectBtn.title = connected
+        ? window.tr("断开当前设备连接", "Disconnect current device")
+        : window.tr("当前无设备连接", "No device connected");
     }
 
     if (connected) {
@@ -1744,20 +2165,20 @@ function enterAppWithLiquidTransition(origin = null) {
 
 
       let statusSuffix = "";
-      if (deviceName && deviceName.includes("有线")) {
-        statusSuffix = " 充电";
+      if (deviceName && (deviceName.includes("有线") || deviceName.toLowerCase().includes("wired"))) {
+        statusSuffix = ` ${window.tr("充电", "Charging")}`;
       } else if (battery) {
-        statusSuffix = ` 电量 ${battery}`;
+        statusSuffix = ` ${window.tr("电量", "Battery")} ${battery}`;
       }
       const nameText = (deviceName) + statusSuffix;
 
       if (widgetDeviceName) widgetDeviceName.textContent = nameText;
-      if (widgetDeviceMeta) widgetDeviceMeta.textContent = "点击断开";
+      if (widgetDeviceMeta) widgetDeviceMeta.textContent = window.tr("点击断开", "Click to Disconnect");
       renderTopDeviceMeta(true, deviceName || currentDeviceName || "", battery || currentBatteryText || "");
     } else {
       deviceStatusDot?.classList.remove("connected");
-      if (widgetDeviceName) widgetDeviceName.textContent = "未连接设备";
-      if (widgetDeviceMeta) widgetDeviceMeta.textContent = "点击连接";
+      if (widgetDeviceName) widgetDeviceName.textContent = window.tr("未连接设备", "No Device Connected");
+      if (widgetDeviceMeta) widgetDeviceMeta.textContent = window.tr("点击连接", "Click to Connect");
       renderTopDeviceMeta(false, "", "");
     }
 
@@ -1786,16 +2207,16 @@ function enterAppWithLiquidTransition(origin = null) {
   let opInFlight = false;
 
   /**
-   * 互斥执行任务
-   * 目的：串行化关键写入与读取，避免竞态
-   * @param {any} task - 参数 task
-   * @returns {any} 返回结果
+   * Execute task under mutex.
+   * Purpose: serialize critical writes/reads to avoid races.
+   * @param {any} task - Task function.
+   * @returns {any} Task result.
    */
   function withMutex(task) {
     /**
-     * 处理run逻辑
-     * 目的：统一处理run相关流程，保证行为一致
-     * @returns {Promise<any>} 异步结果
+     * Run wrapped task.
+     * Purpose: centralize run flow and keep behavior consistent.
+     * @returns {Promise<any>} Async result.
      */
     const run = async () => {
       opInFlight = true;
@@ -1808,27 +2229,27 @@ function enterAppWithLiquidTransition(origin = null) {
   }
 
   /**
-   * 检查HID
-   * 目的：用于判断HID状态，避免分散判断
-   * @returns {any} 返回结果
+   * Check HID opened state.
+   * Purpose: centralize HID state checks.
+   * @returns {any} Check result.
    */
   function isHidOpened() {
     return !!(hidApi && hidApi.device && hidApi.device.opened);
   }
 
   /**
-   * 检查HID
-   * 目的：用于判断HID状态，避免分散判断
-   * @returns {any} 返回结果
+   * Check HID readiness state.
+   * Purpose: centralize HID state checks.
+   * @returns {any} Check result.
    */
   function isHidReady() {
     return isHidOpened() && hidLinked;
   }
 /**
- * 锁定逻辑
- * 目的：串行化关键操作，避免并发竞争导致状态不一致
- * @param {any} el - 参数 el
- * @returns {any} 返回结果
+ * Lock an input element.
+ * Purpose: serialize critical UI operations and avoid concurrent state conflicts.
+ * @param {any} el - Target element.
+ * @returns {any} Lock result.
  */
 function lockEl(el) {
     if (!el) return;
@@ -1836,10 +2257,10 @@ function lockEl(el) {
     uiLocks.add(el.id);
   }
   /**
-   * 解锁逻辑
-   * 目的：统一处理逻辑相关流程，保证行为一致
-   * @param {any} el - 参数 el
-   * @returns {any} 返回结果
+   * Unlock an input element.
+   * Purpose: centralize unlock flow and keep behavior consistent.
+   * @param {any} el - Target element.
+   * @returns {any} Unlock result.
    */
   function unlockEl(el) {
     if (!el || !el.id) return;
@@ -1855,11 +2276,11 @@ function lockEl(el) {
   });
 
   /**
-   * 安全设置输入值
-   * 目的：避UI 回填时触发额外事件或锁冲突
-   * @param {any} el - 参数 el
-   * @param {any} value - 参数 value
-   * @returns {any} 返回结果
+   * Safely set input value.
+   * Purpose: avoid extra events or lock conflicts during UI backfill.
+   * @param {any} el - Target element.
+   * @param {any} value - Value to set.
+   * @returns {any} Set result.
    */
   function safeSetValue(el, value) {
     if (!el) return;
@@ -1869,11 +2290,11 @@ function lockEl(el) {
     if (el.tagName === "SELECT") xSelectMap.get(el)?.sync?.();
   }
   /**
-   * 安全设置勾选状态
-   * 目的：避UI 回填时触发额外事件或锁冲突
-   * @param {any} el - 参数 el
-   * @param {any} checked - 参数 checked
-   * @returns {any} 返回结果
+   * Safely set checkbox checked state.
+   * Purpose: avoid extra events or lock conflicts during UI backfill.
+   * @param {any} el - Target element.
+   * @param {any} checked - Checked flag.
+   * @returns {any} Set result.
    */
   function safeSetChecked(el, checked) {
     if (!el) return;
@@ -1882,12 +2303,12 @@ function lockEl(el) {
   }
 
   /**
-   * 按键维度执行防抖
-   * 目的：合并高频触发，降低写入抖动
-   * @param {any} key - 参数 key
-   * @param {any} ms - 参数 ms
-   * @param {any} fn - 参数 fn
-   * @returns {any} 返回结果
+   * Debounce execution by key.
+   * Purpose: merge high-frequency triggers and reduce write jitter.
+   * @param {any} key - Debounce key.
+   * @param {any} ms - Debounce window in ms.
+   * @param {any} fn - Callback.
+   * @returns {any} Debounce result.
    */
   function debounceKey(key, ms, fn) {
     if (writeDebouncers.has(key)) clearTimeout(writeDebouncers.get(key));
@@ -1900,15 +2321,50 @@ function lockEl(el) {
 
 
   const THEME_KEY = "mouse_console_theme";
+  let __currentTheme = "light";
+
+  function normalizeTheme(rawTheme) {
+    return String(rawTheme || "").trim().toLowerCase() === "dark" ? "dark" : "light";
+  }
+
+  function readStoredTheme() {
+    try {
+      return normalizeTheme(localStorage.getItem(THEME_KEY));
+    } catch (_) {
+      return "light";
+    }
+  }
+
+  function persistTheme(theme) {
+    try {
+      localStorage.setItem(THEME_KEY, normalizeTheme(theme));
+    } catch (_) {}
+  }
+
+  function syncThemeToggleUi(theme) {
+    const normalized = normalizeTheme(theme);
+    const dark = normalized === "dark";
+    const ariaLabel = dark
+      ? window.tr("切换浅色模式", "Switch to light mode")
+      : window.tr("切换深色模式", "Switch to dark mode");
+    const compactLabel = dark
+      ? __trOverride("themeLight")
+      : __trOverride("themeDark");
+    themeBtn?.setAttribute("aria-label", ariaLabel);
+    __overrideThemeBtn?.setAttribute("aria-label", ariaLabel);
+    if (__overrideThemeBtnLabel) __overrideThemeBtnLabel.textContent = compactLabel;
+  }
 
   /**
-   * 应用主题
-   * 目的：集中应用配置，确保入口一致
-   * @param {any} theme - 参数 theme
-   * @returns {any} 返回结果
+   * Apply theme state.
+   * Purpose: centralize theme application and keep a single entry point.
+   * @param {any} theme - Theme key.
+   * @returns {any} Apply result.
    */
   function applyTheme(theme) {
-    const dark = theme === "dark";
+    const normalized = normalizeTheme(theme);
+    __currentTheme = normalized;
+    const dark = normalized === "dark";
     document.body.classList.toggle("dark", dark);
 
     themePath?.setAttribute(
@@ -1917,66 +2373,201 @@ function lockEl(el) {
         ? "M12 2v2m0 16v2m10-10h-2M4 12H2m15.07 7.07-1.41-1.41M8.34 8.34 6.93 6.93m0 10.14 1.41-1.41m8.73-8.73 1.41-1.41M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"
         : "M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"
     );
-    themeBtn?.setAttribute("aria-label", dark ? "切换浅色模式" : "切换深色模式");
+    syncThemeToggleUi(normalized);
   }
 
 
-  applyTheme("light");
-  try { localStorage.setItem(THEME_KEY, "light"); } catch (_) {}
-  themeBtn?.setAttribute("aria-label", "暗色模式暂未开放");
+  function toggleTheme() {
+    const nextTheme = __currentTheme === "dark" ? "light" : "dark";
+    applyTheme(nextTheme);
+    persistTheme(nextTheme);
+  }
 
+  applyTheme(readStoredTheme());
+  themeBtn?.addEventListener("click", toggleTheme);
+  __overrideThemeBtn?.addEventListener("click", toggleTheme);
 
-  const LANG_KEY = "mouse_console_lang";
-  const FIXED_LANG = "zh";
+  const I18N_ATTRIBUTE_NAMES = Object.freeze(["aria-label", "title", "placeholder", "data-off", "data-on"]);
+  const RE_HAS_HAN = /[\u4e00-\u9fff]/;
+  const RE_HAS_LATIN = /[A-Za-z]/;
+  let __uiLangObserver = null;
+  let __uiLangApplying = false;
 
-  const dict = {
-    zh: {
-      heroTitle: "CRODRAK",
-      nav: { home: "连接", dpi: "DPI设置", basic: "基础性能", advanced: "高级参数", keys: "按键设置", logs: "运行日志" },
-      foot: "Built with HTML/CSS/JS",
-    },
-    en: {
-      heroTitle: "CRDRAKO",
-      nav: { home: "Connect", dpi: "DPI", basic: "Basic", advanced: "Advanced", keys: "Keys", logs: "Logs" },
-      foot: "Built with HTML/CSS/JS",
-    },
-  };
+  function cssContentLiteral(text) {
+    return `"${String(text ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
 
-  /**
-   * 应用语言
-   * 目的：集中应用配置，确保入口一致
-   * @param {any} lang - 参数 lang
-   * @returns {any} 返回结果
-   */
-  function applyLang(lang) {
-    const pack = dict[lang] || dict.zh;
-    const _heroTitleEl = $("#heroTitle");
-    if (_heroTitleEl) _heroTitleEl.textContent = pack.heroTitle;
+  function shouldTranslateValueAttribute(el) {
+    if (!el || !el.tagName) return false;
+    const tag = el.tagName.toUpperCase();
+    if (tag === "INPUT") {
+      const type = String(el.getAttribute("type") || "").trim().toLowerCase();
+      return type === "button" || type === "submit" || type === "reset";
+    }
+    if (tag === "BUTTON") {
+      return el.hasAttribute("value");
+    }
+    return false;
+  }
 
-    const _heroSubEl = $("#heroSub");
-    if (_heroSubEl) _heroSubEl.textContent = pack.heroSub;
+  function isI18nExcludedNode(node) {
+    if (!node) return false;
+    const host = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    if (!host || typeof host.closest !== "function") return false;
+    return !!host.closest('#logBox, [data-i18n-skip="true"]');
+  }
 
-    $$(".sidebar .nav-item").forEach((a) => {
-      const k = a.getAttribute("data-key");
+  function shouldAttemptLiteralTranslation(text, lang) {
+    const raw = String(text ?? "");
+    if (!raw) return false;
+    if (lang === "en") return RE_HAS_HAN.test(raw);
+    return RE_HAS_LATIN.test(raw) || raw.includes("Unknown(");
+  }
 
-      const span = a.querySelector('.nav-text');
-      if (span && k && pack.nav[k]) {
-          span.textContent = pack.nav[k];
+  function translateTextNode(node, lang) {
+    if (!node || node.nodeType !== Node.TEXT_NODE) return;
+    if (isI18nExcludedNode(node)) return;
+    const parentTag = node.parentElement?.tagName?.toUpperCase();
+    if (parentTag === "SCRIPT" || parentTag === "STYLE" || parentTag === "NOSCRIPT") return;
+    const current = node.nodeValue || "";
+    if (!current) return;
+    if (current.length > 1024 && current.includes("\n")) return;
+    if (!shouldAttemptLiteralTranslation(current, lang)) return;
+    const next = translateLiteralText(current, lang);
+    if (next !== node.nodeValue) node.nodeValue = next;
+  }
+
+  function translateElementAttributes(el, lang) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return;
+    if (isI18nExcludedNode(el)) return;
+    for (const attrName of I18N_ATTRIBUTE_NAMES) {
+      if (!el.hasAttribute(attrName)) continue;
+      const current = el.getAttribute(attrName);
+      if (!shouldAttemptLiteralTranslation(current || "", lang)) continue;
+      const next = translateLiteralText(current || "", lang);
+      if (next !== current) el.setAttribute(attrName, next);
+    }
+    if (shouldTranslateValueAttribute(el) && el.hasAttribute("value")) {
+      const current = el.getAttribute("value");
+      if (shouldAttemptLiteralTranslation(current || "", lang)) {
+        const next = translateLiteralText(current || "", lang);
+        if (next !== current) {
+          el.setAttribute("value", next);
+          if ("value" in el) el.value = next;
+        }
+      }
+    }
+  }
+
+  function translateSubtree(root, lang) {
+    if (!root) return;
+    if (root.nodeType === Node.TEXT_NODE) {
+      translateTextNode(root, lang);
+      return;
+    }
+    if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_NODE) return;
+    if (root.nodeType === Node.ELEMENT_NODE && isI18nExcludedNode(root)) return;
+    if (root.nodeType === Node.ELEMENT_NODE) {
+      translateElementAttributes(root, lang);
+    }
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node.nodeType === Node.TEXT_NODE) {
+        translateTextNode(node, lang);
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        translateElementAttributes(node, lang);
+      }
+    }
+  }
+
+  function ensureUiLangObserver() {
+    if (__uiLangObserver || !window.MutationObserver || !document.body) return;
+    __uiLangObserver = new MutationObserver((records) => {
+      if (__uiLangApplying) return;
+      __uiLangApplying = true;
+      try {
+        for (const rec of records) {
+          if (rec.type === "childList") {
+            rec.addedNodes.forEach((n) => translateSubtree(n, __uiLang));
+            continue;
+          }
+          if (rec.type === "characterData") {
+            translateTextNode(rec.target, __uiLang);
+            continue;
+          }
+          if (rec.type === "attributes") {
+            translateElementAttributes(rec.target, __uiLang);
+          }
+        }
+      } finally {
+        __uiLangApplying = false;
       }
     });
-
-    document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
-    if (langBtnLabel) langBtnLabel.textContent = lang === "zh" ? "EN" : "中";
-    langBtn?.setAttribute("aria-label", lang === "zh" ? "Switch to English" : "切换中文");
+    __uiLangObserver.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: I18N_ATTRIBUTE_NAMES.concat("value"),
+    });
   }
 
-  applyLang(FIXED_LANG);
-  try { localStorage.setItem(LANG_KEY, FIXED_LANG); } catch (_) {}
-  langBtn?.setAttribute("aria-label", "语言切换暂未开放");
+  function applyUiLangCssVars() {
+    const root = document.documentElement;
+    root.style.setProperty("--i18n-lod-low", cssContentLiteral(window.tr("低", "Low")));
+    root.style.setProperty("--i18n-lod-mid", cssContentLiteral(window.tr("中", "Mid")));
+    root.style.setProperty("--i18n-lod-high", cssContentLiteral(window.tr("高", "High")));
+    root.style.setProperty("--i18n-atk-lod-off", cssContentLiteral(window.tr("已关闭", "Disabled")));
+    root.style.setProperty("--i18n-atk-lod-on", cssContentLiteral(window.tr("已激活", "Active")));
+  }
+
+  function applyUiLang(lang, { broadcast = true, translate = true } = {}) {
+    const normalized = normalizeUiLang(lang);
+    document.documentElement.lang = normalized;
+    if (langBtnLabel) langBtnLabel.textContent = normalized === "zh" ? "EN" : "简中";
+    if (__overrideLangBtnLabel) __overrideLangBtnLabel.textContent = normalized === "zh" ? "ENGLISH" : "简体中文";
+    langBtn?.setAttribute("aria-label", window.tr("切换语言", "Switch language"));
+    __overrideLangBtn?.setAttribute("aria-label", window.tr("切换语言", "Switch language"));
+    syncThemeToggleUi(__currentTheme);
+    applyUiLangCssVars();
+
+    if (translate) {
+      ensureUiLangObserver();
+      __uiLangApplying = true;
+      try {
+        translateSubtree(document.body, normalized);
+      } finally {
+        __uiLangApplying = false;
+      }
+    }
+
+    if (broadcast) {
+      window.dispatchEvent(new CustomEvent("uilangchange", { detail: { lang: normalized } }));
+    }
+  }
+
+  __applyUiLangRuntime = (lang, opts = {}) => {
+    applyUiLang(lang, opts);
+  };
+
+  langBtn?.addEventListener("click", () => {
+    window.setUiLang(window.getUiLang() === "zh" ? "en" : "zh");
+  });
+  __overrideLangBtn?.addEventListener("click", () => {
+    window.setUiLang(window.getUiLang() === "zh" ? "en" : "zh");
+  });
+  window.setUiLang(window.getUiLang(), { persist: false, broadcast: false, translate: true });
 
 
-  const TOP_CONFIG_SLOT_LABELS = ["壹", "贰", "叁", "肆", "伍"];
-  const __hasConfigSlots = hasFeature("hasConfigSlots");
+  const TOP_CONFIG_SLOT_LABELS = [
+    ["壹", "I"],
+    ["贰", "II"],
+    ["叁", "III"],
+    ["肆", "IV"],
+    ["伍", "V"],
+  ];
+  let __hasConfigSlots = hasFeature("hasConfigSlots");
   let __uiTopConfigSlotCount = 1;
   let __uiTopActiveConfigSlotIndex = 0;
 
@@ -1994,7 +2585,7 @@ function lockEl(el) {
         btn.setAttribute("aria-disabled", "true");
         btn.classList.toggle("active", visible);
         btn.setAttribute("aria-selected", visible ? "true" : "false");
-        if (visible) btn.textContent = "当前配置";
+        if (visible) btn.textContent = window.tr("当前配置", "Current Profile");
       });
       return;
     }
@@ -2021,8 +2612,9 @@ function lockEl(el) {
       btn.classList.toggle("active", isActive);
       btn.setAttribute("aria-selected", isActive ? "true" : "false");
       if (visible) {
-        const label = TOP_CONFIG_SLOT_LABELS[idx] || String(slotNo);
-        btn.textContent = `配置${label}`;
+        const pair = TOP_CONFIG_SLOT_LABELS[idx];
+        const label = Array.isArray(pair) ? window.tr(pair[0], pair[1]) : String(slotNo);
+        btn.textContent = `${window.tr("配置", "Profile")}${label === "I" ? " " : ""}${label}`;
       }
     });
   }
@@ -2039,7 +2631,7 @@ function lockEl(el) {
       if (targetIndex < 0 || targetIndex >= __uiTopConfigSlotCount) return;
       if (targetIndex === __uiTopActiveConfigSlotIndex) return;
 
-      if (!confirm("是否切换配置")) return;
+      if (!confirm(window.tr("是否切换配置", "Switch profile?"))) return;
       renderTopConfigSlots({ slotCount: __uiTopConfigSlotCount, activeIndex: targetIndex });
       enqueueDevicePatch({ activeConfigSlotIndex: targetIndex });
     });
@@ -2062,9 +2654,9 @@ function lockEl(el) {
 
 
   /**
-   * 设置active、by
-   * 目的：提供统一读写入口，降低耦合
-   * @returns {any} 返回结果
+   * Set active page by URL hash.
+   * Purpose: provide a single read/write entry and reduce coupling.
+   * @returns {any} Update result.
    */
   function setActiveByHash(triggerNavSwitching = false) {
     if (triggerNavSwitching) markNavSwitching();
@@ -2135,24 +2727,24 @@ function lockEl(el) {
 
 
   const __defaultPerfConfig = {
-    low:  { color: "#00A86B", text: "低功耗模式 传感器帧率 1000~5000 AutoFPS" },
-    hp:   { color: "#000000", text: "标准模式 传感器帧率 1000~20000 AutoFPS" },
-    sport:{ color: "#FF4500", text: "竞技模式 传感器帧率 10800 FPS" },
-    oc:   { color: "#4F46E5", text: "超频模式 传感器帧率 25000 FPS" },
+    low:  { color: "#00A86B", text: window.tr("低功耗模式 传感器帧率 1000~5000 AutoFPS", "Low-power mode sensor framerate 1000~5000 AutoFPS") },
+    hp:   { color: "#000000", text: window.tr("标准模式 传感器帧率 1000~20000 AutoFPS", "Standard mode sensor framerate 1000~20000 AutoFPS") },
+    sport:{ color: "#FF4500", text: window.tr("竞技模式 传感器帧率 10800 FPS", "Competitive mode sensor framerate 10800 FPS") },
+    oc:   { color: "#4F46E5", text: window.tr("超频模式 传感器帧率 25000 FPS", "Overclock mode sensor framerate 25000 FPS") },
   };
 
 
-  const __basicModeConfig = adapter?.ui?.perfMode || __defaultPerfConfig;
-  const __isDualPollingRates = hasFeature("hasDualPollingRates");
-  const __hasPerformanceMode = hasFeature("hasPerformanceMode");
-  const __hideBasicSynapse = hasFeature("hideBasicSynapse");
-  const __hideBasicFooterSecondaryText = hasFeature("hideBasicFooterSecondaryText");
-  const __primarySurfaceLockPerfModes = Array.isArray(adapter?.features?.surfaceModePrimaryLockPerfModes)
+  let __basicModeConfig = adapter?.ui?.perfMode || __defaultPerfConfig;
+  let __isDualPollingRates = hasFeature("hasDualPollingRates");
+  let __hasPerformanceMode = hasFeature("hasPerformanceMode");
+  let __hideBasicSynapse = hasFeature("hideBasicSynapse");
+  let __hideBasicFooterSecondaryText = hasFeature("hideBasicFooterSecondaryText");
+  let __primarySurfaceLockPerfModes = Array.isArray(adapter?.features?.surfaceModePrimaryLockPerfModes)
     ? adapter.features.surfaceModePrimaryLockPerfModes
       .map((mode) => String(mode || "").trim().toLowerCase())
       .filter(Boolean)
     : [];
-  const __dualPollingThemeMap =
+  let __dualPollingThemeMap =
     (adapter?.ui?.pollingThemeByWirelessHz && typeof adapter.ui.pollingThemeByWirelessHz === "object")
       ? adapter.ui.pollingThemeByWirelessHz
       : null;
@@ -2177,10 +2769,10 @@ function lockEl(el) {
   }
 
   /**
-   * 刷新基础性能页项引用
-   * 目的：在 DOM 重建后重新抓取节点，避免使用失效引用
-   * @param {any} root - 参数 root
-   * @returns {any} 返回结果
+   * Refresh basic-performance item references.
+   * Purpose: re-query nodes after DOM rebuild to avoid stale references.
+   * @param {any} root - Basic monolith root.
+   * @returns {any} Refresh result.
    */
   function __refreshBasicItemRefs(root = document.getElementById("basicMonolith")) {
     if (!root) {
@@ -2196,9 +2788,9 @@ function lockEl(el) {
   }
 
   /**
-   * 同步basic、monolith
-   * 目的：保持状态一致性，避免局部更新遗漏
-   * @returns {any} 返回结果
+   * Sync basic monolith UI.
+   * Purpose: keep state consistency and avoid partial-update gaps.
+   * @returns {any} Sync result.
    */
   function syncBasicMonolithUI() {
     const root = document.getElementById("basicMonolith");
@@ -2238,7 +2830,7 @@ function lockEl(el) {
 
     const ticker = document.getElementById("basicHzTicker");
     if (ticker) {
-      ticker.innerHTML = '<span class="ticker-label">轮询率：</span>' + String(hz) + " HZ";
+      ticker.innerHTML = `<span class="ticker-label">${window.tr("轮询率：", "Polling Rate:")}</span>` + String(hz) + " HZ";
     }
 
     const st = document.getElementById("basicStatusText");
@@ -2258,9 +2850,12 @@ function lockEl(el) {
     }
 
     if (__isDualPollingRates) {
-      if (ticker) ticker.innerHTML = '<span class="ticker-label">回报率:</span>' + `无线 ${wirelessHz} HZ \u00A0 \u00A0 \u00A0  有线 ${wiredHz} HZ`;
+      if (ticker) {
+        ticker.innerHTML = `<span class="ticker-label">${window.tr("回报率:", "Report Rate:")}</span>`
+          + `${window.tr("无线", "Wireless")} ${wirelessHz} HZ \u00A0 \u00A0 \u00A0 ${window.tr("有线", "Wired")} ${wiredHz} HZ`;
+      }
       if (st && !__hideBasicFooterSecondaryText) {
-        st.textContent = `无线 ${wirelessHz}Hz \u00A0 \u00A0 \u00A0 有线 ${wiredHz}Hz`;
+        st.textContent = `${window.tr("无线", "Wireless")} ${wirelessHz}Hz \u00A0 \u00A0 \u00A0 ${window.tr("有线", "Wired")} ${wiredHz}Hz`;
       }
     }
 
@@ -2271,10 +2866,10 @@ function lockEl(el) {
   }
 
   /**
-   * 内部处理性能模式逻辑
-   * 目的：提供统一读写入口，降低耦合
-   * @param {any} perf - 参数 perf
-   * @returns {any} 返回结果
+   * Set performance mode radio.
+   * Purpose: provide a single read/write entry and reduce coupling.
+   * @param {any} perf - Performance mode key.
+   * @returns {any} Set result.
    */
   function __basicSetPerf(perf) {
     const r = document.querySelector(`input[name="perfMode"][value="${perf}"]`);
@@ -2284,10 +2879,10 @@ function lockEl(el) {
   }
 
   /**
-   * 内部处理basic、set逻辑
-   * 目的：提供统一读写入口，降低耦合
-   * @param {any} hz - 参数 hz
-   * @returns {any} 返回结果
+   * Set wired polling rate.
+   * Purpose: provide a single read/write entry and reduce coupling.
+   * @param {any} hz - Polling rate.
+   * @returns {any} Set result.
    */
   function __basicSetHz(hz) {
     const sel = document.getElementById("pollingSelect");
@@ -2297,10 +2892,10 @@ function lockEl(el) {
   }
 
   /**
-   * 内部处理basic、wireless set逻辑
-   * 目的：将左侧列点击和隐藏控件绑定到无线回报率写入流程
-   * @param {any} hz - 参数 hz
-   * @returns {any} 返回结果
+   * Set wireless polling rate.
+   * Purpose: bind left-column clicks/hidden controls to wireless report-rate writes.
+   * @param {any} hz - Polling rate.
+   * @returns {any} Set result.
    */
   function __basicSetWirelessHz(hz) {
     const sel = document.getElementById("pollingSelectWireless");
@@ -2310,11 +2905,11 @@ function lockEl(el) {
   }
 
   /**
-   * 内部处理basic、bind逻辑
-   * 目的：统一处理basic、bind相关流程，保证行为一致
-   * @param {any} el - 参数 el
-   * @param {any} handler - 参数 handler
-   * @returns {any} 返回结果
+   * Bind basic item interaction.
+   * Purpose: centralize basic-binding flow and keep behavior consistent.
+   * @param {any} el - Target element.
+   * @param {any} handler - Click/keyboard handler.
+   * @returns {any} Bind result.
    */
   function __basicBindItem(el, handler) {
     if (!el || typeof handler !== "function") return;
@@ -2337,9 +2932,9 @@ function lockEl(el) {
   }
 
   /**
-   * 初始化basic、monolith
-   * 目的：集中初始化与事件绑定，避免重复绑定或顺序问题
-   * @returns {any} 返回结果
+   * Initialize basic monolith UI.
+   * Purpose: centralize setup and event binding to avoid duplicate binds or ordering issues.
+   * @returns {any} Initialization result.
    */
   function initBasicMonolithUI() {
     if (__basicMonolithInited) return;
@@ -2354,11 +2949,11 @@ function lockEl(el) {
 
 
     /**
-     * 确保span
-     * 目的：统一处理span相关流程，保证行为一致
-     * @param {any} item - 参数 item
-     * @param {any} side - 参数 side
-     * @returns {any} 返回结果
+     * Ensure label span exists on a basic item.
+     * Purpose: centralize span-conversion flow and keep behavior consistent.
+     * @param {any} item - Basic item element.
+     * @param {any} side - Anchor side.
+     * @returns {any} Ensure result.
      */
     const ensureLabelSpan = (item, side) => {
       if (!item || item.querySelector(":scope > .basicLabel")) return;
@@ -2389,9 +2984,9 @@ function lockEl(el) {
 
 
     /**
-     * 同步svg、box
-     * 目的：保持状态一致性，避免局部更新遗漏
-     * @returns {any} 返回结果
+     * Sync SVG view box.
+     * Purpose: keep state consistency and avoid partial-update gaps.
+     * @returns {any} Sync result.
      */
     const syncSvgBox = () => {
       if (!__basicSvgLayer) return;
@@ -2433,21 +3028,18 @@ function lockEl(el) {
 
 
     document.getElementById("pollingSelect")?.addEventListener("change", syncBasicMonolithUI);
-    if (__isDualPollingRates) {
-      document.getElementById("pollingSelectWireless")?.addEventListener("change", syncBasicMonolithUI);
-    } else {
-      document.querySelectorAll('input[name="perfMode"]').forEach((r) => {
-        r.addEventListener("change", syncBasicMonolithUI);
-      });
-    }
+    document.getElementById("pollingSelectWireless")?.addEventListener("change", syncBasicMonolithUI);
+    document.querySelectorAll('input[name="perfMode"]').forEach((r) => {
+      r.addEventListener("change", syncBasicMonolithUI);
+    });
 
 
     /**
-     * 处理client、to逻辑
-     * 目的：处理指针交互与坐标映射，保证拖命中判断准确
-     * @param {any} x - 参数 x
-     * @param {any} y - 参数 y
-     * @returns {any} 返回结果
+     * Convert client coordinates to SVG coordinates.
+     * Purpose: keep pointer hit/mapping calculations accurate.
+     * @param {any} x - Client X.
+     * @param {any} y - Client Y.
+     * @returns {any} Converted coordinates.
      */
     const clientToSvg = (x, y) => {
       const layerRect = __basicSvgLayer?.getBoundingClientRect();
@@ -2459,11 +3051,11 @@ function lockEl(el) {
     };
 
     /**
-     * 获取attach、point
-     * 目的：提供统一读写入口，降低耦合
-     * @param {any} item - 参数 item
-     * @param {any} side - 参数 side
-     * @returns {any} 返回结果
+     * Get attachment point for connection line.
+     * Purpose: provide a single read/write entry and reduce coupling.
+     * @param {any} item - Target item.
+     * @param {any} side - Left or right side.
+     * @returns {any} Attachment point.
      */
     const getAttachPoint = (item, side) => {
       const label = item?.querySelector(".basicLabel") || item;
@@ -2488,9 +3080,9 @@ function lockEl(el) {
 
 
     /**
-     * 更新line、once
-     * 目的：在状态变化时同步 UI 或数据，避免不一致
-     * @returns {any} 返回结果
+     * Update connection line once.
+     * Purpose: synchronize UI/data when state changes to avoid inconsistencies.
+     * @returns {any} Update result.
      */
     const updateLineOnce = () => {
       if (!document.body.classList.contains("page-basic")) return;
@@ -2512,20 +3104,20 @@ function lockEl(el) {
 
 
     /**
-     * 启动line、animation
-     * 目的：统一处理line、animation相关流程，保证行为一致
-     * @param {any} duration - 参数 duration
-     * @returns {any} 返回结果
+     * Start connection line animation.
+     * Purpose: centralize line-animation flow and keep behavior consistent.
+     * @param {any} duration - Animation duration.
+     * @returns {any} Start result.
      */
     const startLineAnimation = (duration = 800) => {
       if (lineRafId) cancelAnimationFrame(lineRafId);
       const start = performance.now();
 
       /**
-       * 处理loop逻辑
-       * 目的：统一处理loop相关流程，保证行为一致
-       * @param {any} now - 参数 now
-       * @returns {any} 返回结果
+       * Animation loop callback.
+       * Purpose: centralize loop flow and keep behavior consistent.
+       * @param {any} now - Current timestamp.
+       * @returns {any} Loop result.
        */
       const loop = (now) => {
         updateLineOnce();
@@ -2571,10 +3163,10 @@ function lockEl(el) {
   let __singleAdvancedUiInited = false;
 
   /**
-   * 内部处理列表逻辑
-   * 目的：统一处理列表相关流程，保证行为一致
-   * @param {any} selectEl - 参数 selectEl
-   * @returns {any} 返回结果
+   * Build normalized option list from select.
+   * Purpose: centralize list handling and keep behavior consistent.
+   * @param {any} selectEl - Source select.
+   * @returns {any} Option list.
    */
   function __optList(selectEl) {
     if (!selectEl) return [];
@@ -2586,11 +3178,11 @@ function lockEl(el) {
   }
 
   /**
-   * 内部格式化休眠
-   * 目的：统一展示格式，减少格式分散
-   * @param {any} valStr - 参数 valStr
-   * @param {any} rawLabel - 参数 rawLabel
-   * @returns {any} 返回结果
+   * Format sleep label text.
+   * Purpose: standardize display format.
+   * @param {any} valStr - Option value text.
+   * @param {any} rawLabel - Raw label text.
+   * @returns {any} Formatted label.
    */
   function __formatSleepLabel(valStr, rawLabel) {
     const raw = String(rawLabel || "");
@@ -2620,10 +3212,10 @@ function lockEl(el) {
   }
 
   /**
-   * 内部获取休眠
-   * 目的：提供统一读写入口，降低耦合
-   * @param {any} valStr - 参数 valStr
-   * @returns {any} 返回结果
+   * Resolve sleep unit for display.
+   * Purpose: provide a single read/write entry and reduce coupling.
+   * @param {any} valStr - Option value text.
+   * @returns {any} Unit text.
    */
   function __getSleepUnit(valStr) {
     const v = Number(valStr);
@@ -2635,11 +3227,11 @@ function lockEl(el) {
   }
 
   /**
-   * 内部格式化防抖
-   * 目的：合并高频触发，降低写入抖动与性能开销
-   * @param {any} valStr - 参数 valStr
-   * @param {any} rawLabel - 参数 rawLabel
-   * @returns {any} 返回结果
+   * Format debounce label text.
+   * Purpose: normalize display and avoid noisy/high-frequency value presentation.
+   * @param {any} valStr - Option value text.
+   * @param {any} rawLabel - Raw label text.
+   * @returns {any} Formatted label.
    */
   function __formatDebounceLabel(valStr, rawLabel) {
     const v = Number(valStr);
@@ -2648,12 +3240,12 @@ function lockEl(el) {
   }
 
   /**
-   * 内部钳制逻辑
-   * 目的：限制数值边界，防止越界
-   * @param {any} n - 参数 n
-   * @param {any} a - 参数 a
-   * @param {any} b - 参数 b
-   * @returns {any} 返回结果
+   * Clamp value to bounds.
+   * Purpose: enforce numeric boundaries and prevent overflow.
+   * @param {any} n - Value.
+   * @param {any} a - Min.
+   * @param {any} b - Max.
+   * @returns {any} Clamped value.
    */
   function __clamp(n, a, b) {
     return Math.max(a, Math.min(b, n));
@@ -2847,10 +3439,19 @@ function lockEl(el) {
         if (panel.getAttribute("aria-disabled") === "true") return;
         const picker = initColorPicker();
         const current = __normalizeHexColorUi(panel.dataset.color, __staticLedColorValue);
-        picker.open(panel, current, (nextHex) => {
-          const normalized = __normalizeHexColorUi(nextHex, current);
-          __applyStaticLedColorPanelValue(panel, normalized);
-          enqueueDevicePatch({ staticLedColor: normalized });
+        picker.open(panel, current, {
+          onPreview: (nextHex) => {
+            const normalized = __normalizeHexColorUi(nextHex, current);
+            __applyStaticLedColorPanelValue(panel, normalized);
+          },
+          onCancel: () => {
+            __applyStaticLedColorPanelValue(panel, current);
+          },
+          onConfirm: (nextHex) => {
+            const normalized = __normalizeHexColorUi(nextHex, current);
+            __applyStaticLedColorPanelValue(panel, normalized);
+            enqueueDevicePatch({ staticLedColor: normalized });
+          }
         });
       };
       panel.addEventListener("click", openPicker);
@@ -2917,14 +3518,14 @@ function lockEl(el) {
   }
 
   /**
-   * 内部同步滑块
-   * 目的：同步滑块与数值输入，避免 UI 与值不一致
-   * @param {any} selectEl - 参数 selectEl
-   * @param {any} rangeEl - 参数 rangeEl
-   * @param {any} dispEl - 参数 dispEl
-   * @param {any} formatLabel - 参数 formatLabel
-   * @param {any} getUnit - 参数 getUnit
-   * @returns {any} 返回结果
+   * Sync a discrete slider with select/display.
+   * Purpose: keep slider and value input synchronized.
+   * @param {any} selectEl - Source select.
+   * @param {any} rangeEl - Range input.
+   * @param {any} dispEl - Display element.
+   * @param {any} formatLabel - Label formatter.
+   * @param {any} getUnit - Unit resolver.
+   * @returns {any} Sync result.
    */
   function __syncDiscreteSlider(selectEl, rangeEl, dispEl, formatLabel, getUnit) {
     const opts = __optList(selectEl);
@@ -2953,9 +3554,9 @@ function lockEl(el) {
 
 
   /**
-   * 更新休眠
-   * 目的：在状态变化时同步 UI 或数据，避免不一致
-   * @returns {any} 返回结果
+   * Sync sleep fin display by progress.
+   * Purpose: synchronize visual state when data changes.
+   * @returns {any} Sync result.
    */
   function __syncFinDisplayByProgress(finDisplay, progress) {
     if (!finDisplay) return;
@@ -3016,9 +3617,9 @@ function lockEl(el) {
   }
 
   /**
-   * 同步advanced、panel
-   * 目的：保持状态一致性，避免局部更新遗漏
-   * @returns {any} 返回结果
+   * Sync advanced panel UI.
+   * Purpose: keep state consistency and avoid partial-update gaps.
+   * @returns {any} Sync result.
    */
   function syncAdvancedPanelUi() {
     const root = getAdvancedPanelNode();
@@ -3161,7 +3762,10 @@ function lockEl(el) {
 
   function __getOnboardMemoryDisableConfirmText() {
     const text = String(adapter?.ui?.onboardMemoryDisableConfirmText || "").trim();
-    return text || "是否关闭板载内存模式，关闭后驱动设置不保证可用";
+    return text || window.tr(
+      "是否关闭板载内存模式，关闭后驱动设置不保证可用",
+      "Turn off onboard memory mode? Driver settings are not guaranteed after disabling."
+    );
   }
 
   function __tryAutoEnableOnboardMemoryByConfig(cfg) {
@@ -3171,7 +3775,10 @@ function lockEl(el) {
     const onboardMemoryMode = readStandardValue(cfg, "onboardMemoryMode");
     if (onboardMemoryMode == null || !!onboardMemoryMode) return;
     enqueueDevicePatch({ onboardMemoryMode: true });
-    log("检测到板载内存模式未开启，已自动开启");
+    log(window.tr(
+      "检测到板载内存模式未开启，已自动开启",
+      "Onboard memory mode was disabled and has been auto-enabled"
+    ));
   }
 
   const HYPERPOLLING_MODE_OPTIONS = [
@@ -3332,8 +3939,11 @@ function lockEl(el) {
     }
 
     const profileHint = String(adapter?.ui?.lowPowerThresholdLockedHint || "").trim();
-    const hint = profileHint || `回报率达到 ${LOW_POWER_THRESHOLD_LOCK_HZ}Hz 及以上时，该功能不启用且无法修改`;
-    lowPowerSub.textContent = `${hint}（当前 ${pollingHz}Hz）`;
+    const hint = profileHint || window.tr(
+      `回报率达到 ${LOW_POWER_THRESHOLD_LOCK_HZ}Hz 及以上时，该功能不启用且无法修改`,
+      `At polling rates of ${LOW_POWER_THRESHOLD_LOCK_HZ}Hz or above, this feature is disabled and cannot be changed`
+    );
+    lowPowerSub.textContent = window.tr(`${hint}（当前 ${pollingHz}Hz）`, `${hint} (Current ${pollingHz}Hz)`);
   }
 
   function __resolveSmartTrackingLevelLabel(rawLevel) {
@@ -3884,7 +4494,8 @@ function lockEl(el) {
     const debounceDisp = getAdvancedValueReadout("debounceMs", { region: ADV_REGION_DUAL_LEFT, control: "range" });
 
 
-    if (sleepSel && sleepInput) {
+    if (sleepSel && sleepInput && sleepInput.dataset.sleepRangeLegacyBound !== "1") {
+      sleepInput.dataset.sleepRangeLegacyBound = "1";
       // Sleep slider is source-region driven; this binding works for dual and single layouts.
       bindRangeCommit(sleepInput, {
         onInput: () => {
@@ -3897,7 +4508,8 @@ function lockEl(el) {
       });
     }
 
-    if (debounceInput) {
+    if (debounceInput && debounceInput.dataset.debounceRangeLegacyBound !== "1") {
+      debounceInput.dataset.debounceRangeLegacyBound = "1";
       // Debounce keeps live visual preview on input, submits only on unified commit events.
       bindRangeCommit(debounceInput, {
         onInput: () => {
@@ -3943,14 +4555,26 @@ function lockEl(el) {
     }
 
 
-    sleepSel?.addEventListener("change", syncAdvancedPanelUi);
-    debounceSel?.addEventListener("change", syncAdvancedPanelUi);
+    if (sleepSel && sleepSel.dataset.sleepSelectLegacySyncBound !== "1") {
+      sleepSel.dataset.sleepSelectLegacySyncBound = "1";
+      sleepSel.addEventListener("change", syncAdvancedPanelUi);
+    }
+    if (debounceSel && debounceSel.dataset.debounceSelectLegacySyncBound !== "1") {
+      debounceSel.dataset.debounceSelectLegacySyncBound = "1";
+      debounceSel.addEventListener("change", syncAdvancedPanelUi);
+    }
 
 
     const angleInput = getSourceRangeByStdKey("sensorAngle", ADV_REGION_DUAL_LEFT);
     const feelInput = getAdvancedRangeInput("surfaceFeel", { region: ADV_REGION_DUAL_LEFT });
-    angleInput?.addEventListener("input", syncAdvancedPanelUi);
-    feelInput?.addEventListener("input", syncAdvancedPanelUi);
+    if (angleInput && angleInput.dataset.sensorAngleLegacySyncBound !== "1") {
+      angleInput.dataset.sensorAngleLegacySyncBound = "1";
+      angleInput.addEventListener("input", syncAdvancedPanelUi);
+    }
+    if (feelInput && feelInput.dataset.surfaceFeelLegacySyncBound !== "1") {
+      feelInput.dataset.surfaceFeelLegacySyncBound = "1";
+      feelInput.addEventListener("input", syncAdvancedPanelUi);
+    }
 
 
     syncAdvancedPanelUi();
@@ -3984,15 +4608,19 @@ function lockEl(el) {
 
 
   const logBox = $("#logBox");
+  if (logBox) logBox.setAttribute("data-i18n-skip", "true");
   /**
-   * 记录逻辑
-   * 目的：统一日志输出，便于问题追踪
-   * @param {any} args - 参数 args
-   * @returns {any} 返回结果
+   * Log helper.
+   * Purpose: unify log output for easier issue tracing.
+   * @param {any} args - Log arguments.
+   * @returns {any} Log result.
    */
   function log(...args) {
     const line = args
-      .map((x) => (typeof x === "string" ? x : JSON.stringify(x)))
+      .map((x) => {
+        if (typeof x === "string") return translateLiteralText(x, "zh");
+        try { return JSON.stringify(x); } catch (_) { return String(x); }
+      })
       .join(" ");
     const ts = new Date().toLocaleTimeString();
 
@@ -4006,13 +4634,13 @@ function lockEl(el) {
     }
   }
   /**
-   * 记录err
-   * 目的：统一日志输出，便于问题追踪
-   * @param {any} err - 参数 err
-   * @param {any} prefix - 参数 prefix
-   * @returns {any} 返回结果
+   * Error log helper.
+   * Purpose: unify error output for easier issue tracing.
+   * @param {any} err - Error object.
+   * @param {any} prefix - Message prefix.
+   * @returns {any} Log result.
    */
-  function logErr(err, prefix = "错误") {
+  function logErr(err, prefix = window.tr("错误", "Error")) {
     const msg = err?.message || String(err);
     log(`${prefix}: ${msg}`);
     console.error(err);
@@ -4023,10 +4651,10 @@ function lockEl(el) {
     try {
       if (logBox) {
         await navigator.clipboard.writeText(logBox.textContent || "");
-        log("日志已复制到剪贴");
+        log(window.tr("日志已复制到剪贴", "Logs copied to clipboard"));
       }
     } catch (e) {
-      logErr(e, "复制失败");
+      logErr(e, window.tr("复制失败", "Copy failed"));
     }
   });
 
@@ -4040,9 +4668,12 @@ function lockEl(el) {
   // - New device protocol onboarding must complete in DeviceRuntime.ensureProtocolLoaded().
   // - app.js should never hardcode protocol script paths.
   try { await DeviceRuntime?.whenProtocolReady?.(); } catch (e) {}
-  const ProtocolApi = window.ProtocolApi;
+  let ProtocolApi = window.ProtocolApi;
   if (!ProtocolApi) {
-    log("未找到 ProtocolApi：请确认已加载对应设备协议脚本");
+    log(window.tr(
+      "未找到 ProtocolApi：请确认已加载对应设备协议脚本",
+      "ProtocolApi not found: ensure device protocol script is loaded"
+    ));
     return;
   }
 
@@ -4065,14 +4696,125 @@ function lockEl(el) {
       : null;
   }
 
+  const __hidApiBindings = new WeakSet();
+
+  function __bindHidApiEventHandlers(api) {
+    if (!api || __hidApiBindings.has(api)) return;
+    __hidApiBindings.add(api);
+
+    api.onConfig((cfg) => {
+      try {
+        if (api !== hidApi) return;
+        if (cfg && typeof cfg === "object") __cachedDeviceConfig = cfg;
+        const isHandshakePhase = hidConnecting || __activeHandshakeSeq !== 0 || (__connectInFlight && !hidLinked);
+        if (isHandshakePhase || !isHidOpened()) return;
+        const cfgDeviceName = String(cfg?.deviceName || "").trim();
+        if (cfgDeviceName) currentDeviceName = cfgDeviceName;
+        __applyDeviceVariantOnce({ deviceName: cfgDeviceName || currentDeviceName, cfg, keymapOnly: true });
+        applyConfigToUi(cfg);
+
+        hidLinked = true;
+        __writesEnabled = true;
+        __tryAutoEnableOnboardMemoryByConfig(cfg);
+      } catch (e) {
+        logErr(e, window.tr("搴旂敤閰嶇疆澶辫触", "Apply config failed"));
+      }
+    });
+
+    api.onBattery((bat) => {
+      if (api !== hidApi) return;
+      const p = Number(bat?.batteryPercent);
+
+      if (!Number.isFinite(p) || p < 0) {
+        if (hdrBatteryVal) {
+          hdrBatteryVal.textContent = "...";
+          hdrBatteryVal.classList.remove("connected");
+        }
+        renderTopDeviceMeta(true, currentDeviceName || "Connected", "");
+        return;
+      }
+
+      const batteryText = `${p}%`;
+      if (hdrBatteryVal) {
+        hdrBatteryVal.textContent = batteryText;
+        hdrBatteryVal.classList.add("connected");
+      }
+
+      currentBatteryText = batteryText;
+      updateDeviceStatus(true, currentDeviceName || "Connected", batteryText, currentFirmwareText || "");
+
+      log(`Battery packet received: ${p}%`);
+    });
+
+    api.onRawReport((raw) => {
+
+    });
+  }
+
+  async function __ensureProtocolBinding(deviceId = DeviceRuntime.getSelectedDevice(), { recreateHidApi = false } = {}) {
+    __refreshRuntimeDeviceState(deviceId);
+    const ready = await DeviceRuntime?.whenProtocolReady?.(deviceId);
+    ProtocolApi = ready?.ProtocolApi || window.ProtocolApi;
+    if (!ProtocolApi?.MouseMouseHidApi) {
+      return { ProtocolApi: null, hidApi: null };
+    }
+
+    const prevApi = window.__HID_API_INSTANCE__;
+    const canReuse = !recreateHidApi && prevApi && (prevApi instanceof ProtocolApi.MouseMouseHidApi);
+    if (!canReuse && prevApi?.device?.opened) {
+      try {
+        await prevApi.close?.({ clearListeners: false });
+      } catch (_) {
+        try { await prevApi.close?.(); } catch (_) {}
+      }
+    }
+
+    hidApi = canReuse ? prevApi : new ProtocolApi.MouseMouseHidApi();
+    window.__HID_API_INSTANCE__ = hidApi;
+    __bindHidApiEventHandlers(hidApi);
+    return { ProtocolApi, hidApi };
+  }
+
+  function __resetDeviceScopedTransientState() {
+    __cachedDeviceConfig = null;
+    __writesEnabled = false;
+    __pendingDevicePatch = null;
+    __intentByKey.clear();
+    for (const timerId of writeDebouncers.values()) {
+      try { clearTimeout(timerId); } catch (_) {}
+    }
+    writeDebouncers.clear();
+  }
+
+  async function __switchRuntimeDevice(deviceId) {
+    const nextDeviceId = DeviceRuntime?.normalizeDeviceId?.(deviceId)
+      || String(deviceId || "").trim().toLowerCase()
+      || "chaos";
+    DeviceRuntime?.setSelectedDevice?.(nextDeviceId, { reload: false });
+    __resetDeviceScopedTransientState();
+    await __ensureProtocolBinding(nextDeviceId, { recreateHidApi: true });
+    try { __applyDeviceVariantOnce({ keymapOnly: false }); } catch (_) {}
+    try { __refreshKeymapActionCatalog?.(); } catch (_) {}
+    try { initKeyScanningRateCycle(); } catch (_) {}
+    try { initAdvancedLightCycles(); } catch (_) {}
+    try { initBasicMonolithUI(); } catch (_) {}
+    try { initAdvancedPanelUI(); } catch (_) {}
+    try { initSingleAdvancedUi(); } catch (_) {}
+    try { renderTopConfigSlots({ slotCount: 1, activeIndex: 0 }); } catch (_) {}
+    try { syncBasicMonolithUI(); } catch (_) {}
+    try { syncAdvancedPanelUi(); } catch (_) {}
+    try { syncSingleAdvancedUi(); } catch (_) {}
+    return { deviceId: nextDeviceId, ProtocolApi, hidApi };
+  }
+
 
   if (!window.__HID_UNLOAD_HOOKED__) {
     window.__HID_UNLOAD_HOOKED__ = true;
 
     /**
-     * 安全关闭逻辑
-     * 目的：集中控制可见性或开关状态，避免多处直接修改
-     * @returns {any} 返回结果
+     * Safely close HID on unload.
+     * Purpose: centralize close-state handling and avoid scattered direct mutations.
+     * @returns {any} Close result.
      */
     const safeClose = () => {
       try { void window.__HID_API_INSTANCE__?.close(); } catch (_) {}
@@ -4091,33 +4833,14 @@ function lockEl(el) {
 // - All runtime config pushes arrive here.
 // - applyConfigToUi(cfg) is the only config->DOM sink.
 // - Keep this callback idempotent and side-effect-light; writes still go through enqueueDevicePatch.
-hidApi.onConfig((cfg) => {
-  try {
-    if (cfg && typeof cfg === "object") __cachedDeviceConfig = cfg;
-    const isHandshakePhase = hidConnecting || __activeHandshakeSeq !== 0 || (__connectInFlight && !hidLinked);
-    if (isHandshakePhase || !isHidOpened()) return;
-    const cfgDeviceName = String(cfg?.deviceName || "").trim();
-    if (cfgDeviceName) currentDeviceName = cfgDeviceName;
-    __applyDeviceVariantOnce({ deviceName: cfgDeviceName || currentDeviceName, cfg, keymapOnly: true });
-    applyConfigToUi(cfg);
-
-    hidLinked = true;
-
-
-    __writesEnabled = true;
-    __tryAutoEnableOnboardMemoryByConfig(cfg);
-
-  } catch (e) {
-    logErr(e, "应用配置失败");
-  }
-});
+  __bindHidApiEventHandlers(hidApi);
 
 
   /**
-   * 处理HID、设备逻辑
-   * 目的：统一处理HID、设备相关流程，保证行为一致
-   * @param {any} dev - 参数 dev
-   * @returns {any} 返回结果
+   * Save last HID device.
+   * Purpose: centralize HID-device persistence behavior.
+   * @param {any} dev - HID device.
+   * @returns {any} Save result.
    */
   const saveLastHidDevice = (dev) => {
     try { DeviceRuntime?.saveLastHidDevice?.(dev); } catch (_) {}
@@ -4125,9 +4848,9 @@ hidApi.onConfig((cfg) => {
 
 
   /**
-   * 执行一次自动连接探测
-   * 目的：复用已授权设备句柄，提高自动连接成功率
-   * @returns {Promise<any>} 异步结果
+   * Execute one auto-connect probe.
+   * Purpose: reuse authorized device handles to improve auto-connect success rate.
+   * @returns {Promise<any>} Async result.
    */
   async function autoConnectHidOnce() {
     if (!navigator.hid) return null;
@@ -4171,10 +4894,10 @@ hidApi.onConfig((cfg) => {
 
 
   /**
-   * 设置header、chips
-   * 目的：提供统一读写入口，降低耦合
-   * @param {any} visible - 参数 visible
-   * @returns {any} 返回结果
+   * Toggle header chip visibility.
+   * Purpose: provide a single read/write entry and reduce coupling.
+   * @param {any} visible - Visibility flag.
+   * @returns {any} Toggle result.
    */
   function setHeaderChipsVisible(visible) {
     [hdrBattery, hdrHid, hdrFw].forEach((el) => {
@@ -4184,9 +4907,9 @@ hidApi.onConfig((cfg) => {
   }
 
   /**
-   * 重置header、chip
-   * 目的：统一处理header、chip相关流程，保证行为一致
-   * @returns {any} 返回结果
+   * Reset header chip values.
+   * Purpose: centralize header-chip reset flow and keep behavior consistent.
+   * @returns {any} Reset result.
    */
   function resetHeaderChipValues() {
     if (hdrHidVal) {
@@ -4204,10 +4927,10 @@ hidApi.onConfig((cfg) => {
   }
 
   /**
-   * 格式化固件
-   * 目的：统一展示格式，减少格式分散
-   * @param {any} fwText - 参数 fwText
-   * @returns {any} 返回结果
+   * Format firmware text for header chip display.
+   * Purpose: standardize presentation format.
+   * @param {any} fwText - Firmware raw text.
+   * @returns {any} Formatted text.
    */
   function formatFwForChip(fwText) {
     if (!fwText) return "-";
@@ -4247,10 +4970,49 @@ let __capabilities = {
 };
 let __capabilitiesDeviceId = String(window.DeviceRuntime?.getSelectedDevice?.() || DEVICE_ID).trim().toLowerCase();
 
+function __refreshRuntimeDeviceState(deviceId = DeviceRuntime.getSelectedDevice()) {
+  const nextDeviceId = String(deviceId || DeviceRuntime.getSelectedDevice() || DEVICE_ID || "chaos").trim().toLowerCase() || "chaos";
+  DEVICE_ID = nextDeviceId;
+  adapter = window.DeviceAdapters.getAdapter(DEVICE_ID);
+  adapterFeatures = adapter?.features || {};
+  hasDpiLightCycle = !!adapterFeatures.hasDpiLightCycle;
+  hasReceiverLightCycle = !!adapterFeatures.hasReceiverLightCycle;
+  hasStaticLedColorPanel = !!adapterFeatures.hasStaticLedColorPanel;
+  resolvedDeviceId = adapter?.id || DEVICE_ID;
+  DPI_LIGHT_EFFECT_OPTIONS = adapter?.ui?.lights?.dpi || DEFAULT_DPI_LIGHT_EFFECT_OPTIONS;
+  RECEIVER_LIGHT_EFFECT_OPTIONS = adapter?.ui?.lights?.receiver || DEFAULT_RECEIVER_LIGHT_EFFECT_OPTIONS;
+  __hasConfigSlots = hasFeature("hasConfigSlots");
+  __basicModeConfig = adapter?.ui?.perfMode || __defaultPerfConfig;
+  __isDualPollingRates = hasFeature("hasDualPollingRates");
+  __hasPerformanceMode = hasFeature("hasPerformanceMode");
+  __hideBasicSynapse = hasFeature("hideBasicSynapse");
+  __hideBasicFooterSecondaryText = hasFeature("hideBasicFooterSecondaryText");
+  __primarySurfaceLockPerfModes = Array.isArray(adapter?.features?.surfaceModePrimaryLockPerfModes)
+    ? adapter.features.surfaceModePrimaryLockPerfModes
+      .map((mode) => String(mode || "").trim().toLowerCase())
+      .filter(Boolean)
+    : [];
+  __dualPollingThemeMap =
+    (adapter?.ui?.pollingThemeByWirelessHz && typeof adapter.ui.pollingThemeByWirelessHz === "object")
+      ? adapter.ui.pollingThemeByWirelessHz
+      : null;
+  DPI_UI_MAX = 26000;
+  DPI_STEP = Math.max(1, Number(adapter?.ranges?.dpi?.step) || 50);
+  __capabilities = {
+    dpiSlotCount: 6,
+    maxDpi: DPI_UI_MAX,
+    dpiStep: DPI_STEP,
+    pollingRates: null,
+  };
+  __capabilitiesDeviceId = DEVICE_ID;
+  __advancedSourceWarned.clear();
+  __applyResolvedDeviceTheme(resolvedDeviceId);
+}
+
 /**
- * 获取能力
- * 目的：提供统一读写入口，降低耦合
- * @returns {any} 返回结果
+ * Get cached device capabilities.
+ * Purpose: provide a single read/write entry and reduce coupling.
+ * @returns {any} Capability object.
  */
 function getCapabilities() {
   return __capabilities || {};
@@ -4377,9 +5139,9 @@ function resolveDpiSlotValueWithClipGuard(incomingValue, previousValue, protectA
 }
 
 /**
- * 获取DPI、槽位
- * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
- * @returns {any} 返回结果
+ * Get DPI slot capacity.
+ * Purpose: keep DPI values and slot state consistent.
+ * @returns {any} Slot capacity.
  */
 function getDpiSlotCap() {
   const n = Number(getCapabilities().dpiSlotCount);
@@ -4387,11 +5149,11 @@ function getDpiSlotCap() {
 }
 
 /**
- * 钳制槽位、能力
- * 目的：限制数值边界，防止越界
- * @param {any} n - 参数 n
- * @param {any} fallback - 参数 fallback
- * @returns {any} 返回结果
+ * Clamp slot count by capability bounds.
+ * Purpose: enforce numeric boundaries and prevent overflow.
+ * @param {any} n - Requested slot count.
+ * @param {any} fallback - Fallback value.
+ * @returns {any} Clamped slot count.
  */
 function clampSlotCountToCap(n, fallback = 6) {
   const cap = getDpiSlotCap();
@@ -4402,10 +5164,10 @@ function clampSlotCountToCap(n, fallback = 6) {
 
 
 /**
- * 应用能力开关到 UI
- * 目的：按设备能力控制 UI 可用性，避免无效操作
- * @param {any} cap - 参数 cap
- * @returns {any} 返回结果
+ * Apply capability switches to UI.
+ * Purpose: gate UI availability by device capabilities and avoid invalid actions.
+ * @param {any} cap - Capability object.
+ * @returns {any} Apply result.
  */
 function applyCapabilitiesToUi(cap, opts = {}) {
   const incoming = (cap && typeof cap === "object") ? cap : {};
@@ -4555,12 +5317,12 @@ function applyCapabilitiesToUi(cap, opts = {}) {
 
 
   /**
-   * 生成seq
-   * 目的：统一处理seq相关流程，保证行为一致
-   * @param {any} start - 参数 start
-   * @param {any} end - 参数 end
-   * @param {any} step - 参数 step
-   * @returns {any} 返回结果
+   * Build max-DPI option sequence.
+   * Purpose: centralize sequence generation and keep behavior consistent.
+   * @param {any} start - Sequence start.
+   * @param {any} end - Sequence end.
+   * @param {any} step - Step size.
+   * @returns {any} Option sequence.
    */
   function buildDpiMaxOptions(maxDpi) {
     const upper = Math.max(2000, Math.trunc(Number(maxDpi) || 26000));
@@ -4577,12 +5339,12 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   let DPI_MAX_OPTIONS = buildDpiMaxOptions(DPI_UI_MAX);
 
   /**
-   * 填充逻辑
-   * 目的：统一选项构建与应用，避免选项与值不匹配
-   * @param {any} el - 参数 el
-   * @param {any} values - 参数 values
-   * @param {any} defVal - 参数 defVal
-   * @returns {any} 返回结果
+   * Fill select options.
+   * Purpose: centralize option construction/application and avoid option/value mismatches.
+   * @param {any} el - Select element.
+   * @param {any} values - Option values.
+   * @param {any} defVal - Default value.
+   * @returns {any} Fill result.
    */
   function fillSelect(el, values, defVal) {
     if (!el) return;
@@ -4624,9 +5386,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 获取DPI
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @returns {any} 返回结果
+   * Get current DPI min/max range.
+   * Purpose: keep DPI values and slot state consistent.
+   * @returns {any} Range object.
    */
   function getDpiMinMax() {
     const min = Number(dpiMinSelect?.value ?? 100);
@@ -4722,9 +5484,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 处理DPI逻辑
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @returns {any} 返回结果
+   * Normalize DPI min/max bounds.
+   * Purpose: keep DPI values and slot state consistent.
+   * @returns {any} Normalize result.
    */
   function normalizeDpiMinMax() {
     if (!dpiMinSelect || !dpiMaxSelect) return;
@@ -4761,9 +5523,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 应用DPI、范围
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @returns {any} 返回结果
+   * Apply DPI range to all row controls.
+   * Purpose: keep DPI values and slot state consistent.
+   * @returns {any} Apply result.
    */
   function applyDpiRangeToRows() {
     const { min, max } = getDpiMinMax();
@@ -4791,12 +5553,12 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 钳制逻辑
-   * 目的：限制数值边界，防止越界
-   * @param {any} v - 参数 v
-   * @param {any} min - 参数 min
-   * @param {any} max - 参数 max
-   * @returns {any} 返回结果
+   * Clamp numeric value.
+   * Purpose: enforce numeric bounds and prevent overflow.
+   * @param {any} v - Value.
+   * @param {any} min - Min bound.
+   * @param {any} max - Max bound.
+   * @returns {any} Clamped value.
    */
   function clamp(v, min, max) {
     const n = Number(v);
@@ -4939,7 +5701,7 @@ function applyCapabilitiesToUi(cap, opts = {}) {
         }
       });
     } catch (err) {
-      logErr(err, "DPI 高级模式关闭同步失败");
+      logErr(err, window.tr("DPI 高级模式关闭同步失败", "Failed to sync DPI advanced mode off state"));
     } finally {
       dpiSyncingToSingleMode = false;
     }
@@ -4962,7 +5724,7 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       dpiAdvancedToggle.disabled = !canAdvanced;
       dpiAdvancedToggle.setAttribute("aria-pressed", on ? "true" : "false");
       const stateEl = dpiAdvancedToggle.querySelector(".dpiAdvancedToggleState");
-      if (stateEl) stateEl.textContent = on ? "开" : "关闭";
+      if (stateEl) stateEl.textContent = on ? window.tr("开", "On") : window.tr("关闭", "Off");
     }
   }
 
@@ -4992,20 +5754,20 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   let dpiRowDragBlockClickUntil = 0;
 
   /**
-   * 获取DPI、气泡提示
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @param {any} slot - 参数 slot
-   * @returns {any} 返回结果
+   * Get DPI bubble element.
+   * Purpose: keep DPI values and slot state consistent.
+   * @param {any} slot - DPI slot index.
+   * @returns {any} Bubble element.
    */
   function getDpiBubble(slot) {
     return $("#dpiBubble" + slot);
   }
 
   /**
-   * 获取DPI、槽位编号
-   * 目的：减少重复字符串解析，避免高频路径额外开销
-   * @param {any} range - 参数 range
-   * @returns {any} 返回结果
+   * Resolve DPI slot index from range control.
+   * Purpose: avoid repeated string parsing on hot paths.
+   * @param {any} range - Range input.
+   * @returns {any} Slot index.
    */
   function getDpiRangeSlot(range) {
     if (!range) return NaN;
@@ -5017,10 +5779,10 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 获取DPI、拇指尺寸
-   * 目的：缓存静态样式读取，降低 pointermove 期间布局与样式计算压力
-   * @param {any} range - 参数 range
-   * @returns {any} 返回结果
+   * Get DPI slider thumb size.
+   * Purpose: cache static style reads to reduce layout/style cost during pointermove.
+   * @param {any} range - Range input.
+   * @returns {any} Thumb size.
    */
   function getDpiThumbSize(range) {
     if (!range) return 22;
@@ -5033,10 +5795,10 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 更新DPI、气泡提示
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @param {any} slot - 参数 slot
-   * @returns {any} 返回结果
+   * Resolve range control used by DPI bubble.
+   * Purpose: keep DPI values and slot state consistent.
+   * @param {any} slot - DPI slot index.
+   * @returns {any} Range element.
    */
   function getDpiBubbleRange(slot, preferredRange) {
     if (preferredRange?.isConnected) return preferredRange;
@@ -5091,10 +5853,10 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 显示DPI、气泡提示
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @param {any} slot - 参数 slot
-   * @returns {any} 返回结果
+   * Show DPI tooltip bubble.
+   * Purpose: keep DPI values and slot state consistent.
+   * @param {any} slot - DPI slot index.
+   * @returns {any} Show result.
    */
   function showDpiBubble(slot, preferredRange) {
     const bubble = getDpiBubble(slot);
@@ -5105,10 +5867,10 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 隐藏DPI、气泡提示
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @param {any} slot - 参数 slot
-   * @returns {any} 返回结果
+   * Hide DPI tooltip bubble.
+   * Purpose: keep DPI values and slot state consistent.
+   * @param {any} slot - DPI slot index.
+   * @returns {any} Hide result.
    */
   function hideDpiBubble(slot) {
     const bubble = getDpiBubble(slot);
@@ -5119,9 +5881,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 更新DPI
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @returns {any} 返回结果
+   * Update visible DPI bubbles.
+   * Purpose: keep DPI values and slot state consistent.
+   * @returns {any} Update result.
    */
   function updateVisibleDpiBubbles() {
     for (let i = 1; i <= getDpiSlotCap(); i++) {
@@ -5132,9 +5894,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
 
 
   /**
-   * 获取槽位
-   * 目的：提供统一读写入口，降低耦合
-   * @returns {any} 返回结果
+   * Get current slot count from UI.
+   * Purpose: provide a single read/write entry and reduce coupling.
+   * @returns {any} Slot count.
    */
   function getSlotCountUi() {
     const el = $("#slotCountSelect");
@@ -5143,11 +5905,11 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 设置DPI、槽位
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @param {any} slot - 参数 slot
-   * @param {any} slotCountOverride - 参数 slotCountOverride
-   * @returns {any} 返回结果
+   * Set active DPI slot.
+   * Purpose: keep DPI values and slot state consistent.
+   * @param {any} slot - Target slot index.
+   * @param {any} slotCountOverride - Optional slot-count override.
+   * @returns {any} Set result.
    */
   function setActiveDpiSlot(slot, slotCountOverride) {
     const prev = uiCurrentDpiSlot;
@@ -5184,10 +5946,10 @@ function applyCapabilitiesToUi(cap, opts = {}) {
     dpiAnimReady = true;
   }
   /**
-   * 设置DPI
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @param {any} count - 参数 count
-   * @returns {any} 返回结果
+   * Set enabled DPI row count.
+   * Purpose: keep DPI values and slot state consistent.
+   * @param {any} count - Enabled row count.
+   * @returns {any} Set result.
    */
   function setDpiRowsEnabledCount(count) {
     const n = clampSlotCountToCap(Number(count), getDpiSlotCap());
@@ -5220,9 +5982,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 初始化DPI、范围
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @returns {any} 返回结果
+   * Initialize DPI range controls.
+   * Purpose: keep DPI values and slot state consistent.
+   * @returns {any} Initialization result.
    */
   function initDpiRangeControls() {
     if (!dpiMinSelect || !dpiMaxSelect) return;
@@ -5233,9 +5995,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
     applyDpiRangeToRows();
 
     /**
-     * 处理on、change逻辑
-     * 目的：统一处理on、change相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Handle min/max range changes.
+     * Purpose: centralize change flow and keep behavior consistent.
+     * @returns {any} Update result.
      */
     const onChange = () => {
       normalizeDpiMinMax();
@@ -5265,9 +6027,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   let __colorPicker = null;
 
   /**
-   * 初始化颜色
-   * 目的：集中初始化与事件绑定，避免重复绑定或顺序问题
-   * @returns {any} 返回结果
+   * Initialize color picker popover.
+   * Purpose: centralize setup and event binding to avoid duplicate binds or ordering issues.
+   * @returns {any} Picker instance.
    */
   function initColorPicker() {
     if (__colorPicker) return __colorPicker;
@@ -5293,9 +6055,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
 
 
     /**
-     * 处理draw、wheel逻辑
-     * 目的：统一处理draw、wheel相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Draw hue wheel.
+     * Purpose: centralize wheel rendering flow and keep behavior consistent.
+     * @returns {any} Draw result.
      */
     const drawWheel = () => {
       const w = canvas.width, h = canvas.height;
@@ -5325,26 +6087,37 @@ function applyCapabilitiesToUi(cap, opts = {}) {
     drawWheel();
 
 
-    let currentCallback = null;
+    let currentPreviewCallback = null;
+    let currentConfirmCallback = null;
+    let currentCancelCallback = null;
+    let currentColor = "#FF0000";
+    let initialPickerColor = "#FF0000";
     let isDragging = false;
 
-    /**
-     * 设置颜色
-     * 目的：提供统一读写入口，降低耦合
-     * @param {any} hex - 参数 hex
-     * @returns {any} 返回结果
-     */
-    const setColor = (hex) => {
-      preview.style.background = hex;
-      hexInput.value = hex;
-      if (currentCallback) currentCallback(hex);
+    const applyPickerColorUi = (hex) => {
+      currentColor = __normalizeHexColorUi(hex, initialPickerColor || "#FF0000");
+      preview.style.background = currentColor;
+      hexInput.value = currentColor;
+      return currentColor;
     };
 
     /**
-     * 处理颜色逻辑
-     * 目的：统一处理颜色相关流程，保证行为一致
-     * @param {any} e - 参数 e
-     * @returns {any} 返回结果
+     * Set current picker color.
+     * Purpose: provide a single read/write entry and reduce coupling.
+     * @param {any} hex - Hex color.
+     * @returns {any} Set result.
+     */
+    const setColor = (hex) => {
+      const normalized = applyPickerColorUi(hex);
+      if (currentPreviewCallback) currentPreviewCallback(normalized);
+      return normalized;
+    };
+
+    /**
+     * Pick color from pointer event.
+     * Purpose: centralize color-pick flow and keep behavior consistent.
+     * @param {any} e - Pointer event.
+     * @returns {any} Pick result.
      */
     const pickColor = (e) => {
       const rect = canvas.getBoundingClientRect();
@@ -5374,16 +6147,29 @@ function applyCapabilitiesToUi(cap, opts = {}) {
     canvas.addEventListener("pointerup", () => isDragging = false);
 
     /**
-     * 关闭逻辑
-     * 目的：集中控制可见性或开关状态，避免多处直接修改
-     * @returns {any} 返回结果
+     * Close color picker.
+     * Purpose: centralize visibility switching and avoid scattered direct mutations.
+     * @returns {any} Close result.
      */
-    const close = () => {
+    const close = ({ commit = false } = {}) => {
+      if (!wrap.classList.contains("open")) return;
+      const confirmedColor = currentColor;
+      const initialColor = initialPickerColor;
+      const confirmCallback = currentConfirmCallback;
+      const cancelCallback = currentCancelCallback;
       wrap.classList.remove("open");
-      currentCallback = null;
+      isDragging = false;
+      currentPreviewCallback = null;
+      currentConfirmCallback = null;
+      currentCancelCallback = null;
+      if (commit) {
+        if (confirmCallback) confirmCallback(confirmedColor);
+        return;
+      }
+      if (cancelCallback) cancelCallback(initialColor);
     };
 
-    btnClose.addEventListener("click", close);
+    btnClose.addEventListener("click", () => close({ commit: true }));
 
 
     document.addEventListener("pointerdown", (e) => {
@@ -5400,7 +6186,12 @@ function applyCapabilitiesToUi(cap, opts = {}) {
     });
 
     __colorPicker = {
-      open: (anchorEl, initialColor, onColorChange) => {
+      open: (anchorEl, initialColor, handlers = {}) => {
+
+        if (wrap.classList.contains("open")) close();
+
+        const resolvedHandlers = (handlers && typeof handlers === "object") ? handlers : {};
+        initialPickerColor = __normalizeHexColorUi(initialColor, "#FF0000");
 
         const r = anchorEl.getBoundingClientRect();
 
@@ -5415,8 +6206,10 @@ function applyCapabilitiesToUi(cap, opts = {}) {
         wrap.style.left = `${left}px`;
         wrap.style.top = `${top}px`;
 
-        setColor(initialColor || "#FF0000");
-        currentCallback = onColorChange;
+        applyPickerColorUi(initialPickerColor);
+        currentPreviewCallback = typeof resolvedHandlers.onPreview === "function" ? resolvedHandlers.onPreview : null;
+        currentConfirmCallback = typeof resolvedHandlers.onConfirm === "function" ? resolvedHandlers.onConfirm : null;
+        currentCancelCallback = typeof resolvedHandlers.onCancel === "function" ? resolvedHandlers.onCancel : null;
 
         wrap.classList.add("open");
       },
@@ -5426,9 +6219,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   }
 
   /**
-   * 构建DPI
-   * 目的：保DPI 数值与槽位状态一致，避免错位或跳变
-   * @returns {any} 返回结果
+   * Build DPI editor rows.
+   * Purpose: keep DPI values and slot state consistent.
+   * @returns {any} Build result.
    */
   function buildDpiEditor() {
     if (!dpiList) return;
@@ -5466,10 +6259,10 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       const lodInit = getUiDpiLod(i, "mid");
       const lodSwitchHtml = hasFeature("hasDpiLods")
         ? `
-          <div class="dpiLodSwitch" role="group" aria-label="DPI档位${i} LOD">
-            <button class="dpiLodBtn${lodInit === "low" ? " is-active" : ""}" type="button" data-lod="low" aria-pressed="${lodInit === "low" ? "true" : "false"}">低</button>
-            <button class="dpiLodBtn${lodInit === "mid" ? " is-active" : ""}" type="button" data-lod="mid" aria-pressed="${lodInit === "mid" ? "true" : "false"}">中</button>
-            <button class="dpiLodBtn${lodInit === "high" ? " is-active" : ""}" type="button" data-lod="high" aria-pressed="${lodInit === "high" ? "true" : "false"}">高</button>
+          <div class="dpiLodSwitch" role="group" aria-label="${window.tr(`DPI档位${i} LOD`, `DPI Level ${i} LOD`)}">
+            <button class="dpiLodBtn${lodInit === "low" ? " is-active" : ""}" type="button" data-lod="low" aria-pressed="${lodInit === "low" ? "true" : "false"}">${window.tr("低", "Low")}</button>
+            <button class="dpiLodBtn${lodInit === "mid" ? " is-active" : ""}" type="button" data-lod="mid" aria-pressed="${lodInit === "mid" ? "true" : "false"}">${window.tr("中", "Mid")}</button>
+            <button class="dpiLodBtn${lodInit === "high" ? " is-active" : ""}" type="button" data-lod="high" aria-pressed="${lodInit === "high" ? "true" : "false"}">${window.tr("高", "High")}</button>
           </div>
         `
         : "";
@@ -5489,12 +6282,12 @@ function applyCapabilitiesToUi(cap, opts = {}) {
         <div class="dpiNumWrap">
           <input class="dpiNum" id="dpiInput${i}" type="number" min="${min}" max="${max}" step="${numberStep}" value="100" />
           <div class="dpiSpin" aria-hidden="true">
-            <button class="dpiSpinBtn up" type="button" tabindex="-1" aria-label="增加"></button>
-            <button class="dpiSpinBtn down" type="button" tabindex="-1" aria-label="减少"></button>
+            <button class="dpiSpinBtn up" type="button" tabindex="-1" aria-label="${window.tr("增加", "Increase")}"></button>
+            <button class="dpiSpinBtn down" type="button" tabindex="-1" aria-label="${window.tr("减少", "Decrease")}"></button>
           </div>
         </div>
 
-        <button class="dpiSelectBtn" type="button" aria-label="切换到档位 ${i}" title="切换到该档"></button>
+        <button class="dpiSelectBtn" type="button" aria-label="${window.tr(`切换到档位 ${i}`, `Switch to level ${i}`)}" title="${window.tr("切换到该档", "Switch to this level")}"></button>
       `;
       dpiList.appendChild(row);
       if (lodSwitchHtml) {
@@ -5661,7 +6454,6 @@ function applyCapabilitiesToUi(cap, opts = {}) {
 
 
       debounceKey(`dpi:${slot}`, 80, async () => {
-        if (!isHidReady()) return;
         try {
           await withMutex(async () => {
 
@@ -5678,7 +6470,7 @@ function applyCapabilitiesToUi(cap, opts = {}) {
             });
           });
         } catch (err) {
-          logErr(err, "DPI 写入失败");
+          logErr(err, window.tr("DPI 写入失败", "DPI write failed"));
         }
       });
       });
@@ -5719,7 +6511,6 @@ function applyCapabilitiesToUi(cap, opts = {}) {
         if (!nextLod) return;
         setUiDpiLod(slot, nextLod);
         syncDpiLodRow(slot);
-        if (!isHidReady()) return;
         enqueueDevicePatch({ dpiLods: buildUiDpiLodsPayload() });
         return;
       }
@@ -5737,39 +6528,46 @@ function applyCapabilitiesToUi(cap, opts = {}) {
         if (!Number.isFinite(xVal) || xVal <= 0) return;
 
 
-        if (hasFeature("hasDpiColors") && isHidReady()) {
-            if (!Number.isFinite(xVal) || xVal <= 0) return;
-            const picker = initColorPicker();
+        if (hasFeature("hasDpiColors")) {
+          if (!Number.isFinite(xVal) || xVal <= 0) return;
+          const picker = initColorPicker();
+          const currentColor = __normalizeHexColorUi(selectBtn.style.getPropertyValue("--btn-bg"), "#FF0000");
 
-            const currentColor = selectBtn.style.getPropertyValue("--btn-bg") || "#FF0000";
-
-            picker.open(selectBtn, currentColor, (newHex) => {
-
-                selectBtn.style.setProperty("--btn-bg", newHex);
-
-
-                debounceKey(`dpiColor:${slot}`, 150, async () => {
-                    try {
-                        await withMutex(async () => {
-                            const payload = hasDpiAdvancedAxis()
-                              ? { x: xVal, y: (isDpiAdvancedUiEnabled() ? yVal : xVal) }
-                              : xVal;
-                            await hidApi.setDpi(slot, payload, {
-                                color: newHex,
-                                select: false
-                            });
-                        });
-                    } catch (e) {
-                        logErr(e, "颜色写入失败");
-                    }
+          picker.open(selectBtn, currentColor, {
+            onPreview: (newHex) => {
+              selectBtn.style.setProperty("--btn-bg", newHex);
+            },
+            onCancel: (initialColor) => {
+              selectBtn.style.setProperty("--btn-bg", initialColor);
+            },
+            onConfirm: async (newHex) => {
+              try {
+                const currentX = getUiDpiAxisValue(slot, "x", Number($("#dpiInput" + slot)?.value));
+                const currentY = getUiDpiAxisValue(slot, "y", currentX);
+                if (!Number.isFinite(currentX) || currentX <= 0) {
+                  selectBtn.style.setProperty("--btn-bg", currentColor);
+                  return;
+                }
+                await withMutex(async () => {
+                  const payload = hasDpiAdvancedAxis()
+                    ? { x: currentX, y: (isDpiAdvancedUiEnabled() ? currentY : currentX) }
+                    : currentX;
+                  await hidApi.setDpi(slot, payload, {
+                    color: newHex,
+                    select: false
+                  });
                 });
-            });
-            return;
+              } catch (e) {
+                selectBtn.style.setProperty("--btn-bg", currentColor);
+                logErr(e, window.tr("棰滆壊鍐欏叆澶辫触", "Color write failed"));
+              }
+            }
+          });
+          return;
         }
 
 
         setActiveDpiSlot(slot);
-        if (!isHidReady()) return;
         enqueueDevicePatch({ activeDpiSlotIndex: slot - 1 });
         return;
       }
@@ -5784,7 +6582,6 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       if (!__isDpiSlotInCap(slot)) return;
 
       setActiveDpiSlot(slot);
-      if (!isHidReady()) return;
       enqueueDevicePatch({ activeDpiSlotIndex: slot - 1 });
       });
     }
@@ -5805,11 +6602,11 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       const THUMB_HIT_PAD = 6;
       const TRACK_HIT_HALF_Y = 8;
       /**
-       * 检查DPI、拖拽点
-       * 目的：用于判断DPI、拖拽点状态，避免分散判断
-       * @param {any} range - 参数 range
-       * @param {any} clientX - 参数 clientX
-       * @returns {any} 返回结果
+       * Check whether pointer is on DPI slider thumb.
+       * Purpose: centralize DPI-thumb hit checks.
+       * @param {any} range - Range input.
+       * @param {any} clientX - Pointer clientX.
+       * @returns {any} Check result.
        */
       function isPointerOnDpiThumb(range, clientX) {
         try {
@@ -5834,8 +6631,8 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       }
 
       /**
-       * 设置 DPI 滑块拖动态视觉
-       * 目的：行级模拟拖动时与原:active 视觉保持一致
+       * Set DPI slider drag visual state.
+       * Purpose: keep simulated row-drag visuals aligned with native :active style.
        * @param {HTMLInputElement|null} range
        * @param {boolean} dragging
        */
@@ -5845,10 +6642,10 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       }
 
       /**
-       * 处理DPI、拖拽点逻辑
-       * 目的：处理指针交互与坐标映射，保证拖命中判断准确
-       * @param {any} e - 参数 e
-       * @returns {any} 返回结果
+       * Handle DPI thumb hover behavior.
+       * Purpose: keep pointer interaction and coordinate mapping accurate.
+       * @param {any} e - Pointer event.
+       * @returns {any} Handle result.
        */
       function handleDpiThumbHover(e) {
         const t = e.target;
@@ -5902,9 +6699,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
 
 
       /**
-       * 处理DPI逻辑
-       * 目的：处理指针交互与坐标映射，保证拖命中判断准确
-       * @returns {any} 返回结果
+       * End DPI drag interaction.
+       * Purpose: keep pointer interaction and coordinate mapping accurate.
+       * @returns {any} End result.
        */
       function endDpiDrag() {
         if (!dpiDraggingSlot) return;
@@ -5939,11 +6736,11 @@ function applyCapabilitiesToUi(cap, opts = {}) {
 
 
       /**
-       * 内部处理DPI、值逻辑
-       * 目的：处理指针交互与坐标映射，保证拖命中判断准确
-       * @param {any} rangeEl - 参数 rangeEl
-       * @param {any} clientX - 参数 clientX
-       * @returns {any} 返回结果
+       * Compute DPI value from clientX.
+       * Purpose: keep pointer interaction and coordinate mapping accurate.
+       * @param {any} rangeEl - Range input.
+       * @param {any} clientX - Pointer clientX.
+       * @returns {any} Computed value.
        */
       function __dpiValueFromClientX(rangeEl, clientX) {
         const rect = rangeEl.getBoundingClientRect();
@@ -6084,10 +6881,11 @@ function applyCapabilitiesToUi(cap, opts = {}) {
 
 
   let applyKeymapFromCfg = null;
+  let __refreshKeymapActionCatalog = null;
   /**
-   * 构建按键映射
-   * 目的：集中按键映射的渲染与编辑，避免多处修改导致冲突
-   * @returns {any} 返回结果
+   * Build key-mapping editor.
+   * Purpose: centralize key-mapping rendering/editing and avoid conflicting scattered updates.
+   * @returns {any} Build result.
    */
   function buildKeymapEditor() {
 
@@ -6106,19 +6904,19 @@ function applyCapabilitiesToUi(cap, opts = {}) {
 
 
     /**
-     * 内部钳制01
-     * 目的：限制数值边界，防止越界
-     * @param {any} v - 参数 v
-     * @returns {any} 返回结果
+     * Clamp value to [0, 1].
+     * Purpose: enforce numeric boundaries and prevent overflow.
+     * @param {any} v - Value.
+     * @returns {any} Clamped value.
      */
     function __clamp01(v){ return v < 0 ? 0 : (v > 1 ? 1 : v); }
 
 
     /**
-     * 获取img、content
-     * 目的：提供统一读写入口，降低耦合
-     * @param {any} imgEl - 参数 imgEl
-     * @returns {any} 返回结果
+     * Get rendered image-content rectangle.
+     * Purpose: provide a single read/write entry and reduce coupling.
+     * @param {any} imgEl - Image element.
+     * @returns {any} Content rectangle.
      */
     function getImgContentRect(imgEl){
       const nw = imgEl.naturalWidth || 0;
@@ -6154,11 +6952,11 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       const yTok = parts[1] || "50%";
 
       /**
-       * 处理parse、pos逻辑
-       * 目的：统一处理parse、pos相关流程，保证行为一致
-       * @param {any} tok - 参数 tok
-       * @param {any} axis - 参数 axis
-       * @returns {any} 返回结果
+       * Parse object-position token.
+       * Purpose: centralize parse flow and keep behavior consistent.
+       * @param {any} tok - Position token.
+       * @param {any} axis - Axis name.
+       * @returns {any} Parsed ratio.
        */
       const parsePos = (tok, axis) => {
         const t = String(tok).toLowerCase();
@@ -6192,9 +6990,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
     }
 
     /**
-     * 处理layout、km逻辑
-     * 目的：在尺寸或状态变化时重新计算布局，避免错位
-     * @returns {any} 返回结果
+     * Layout key-mapping points.
+     * Purpose: recalculate layout on size/state changes to avoid misalignment.
+     * @returns {any} Layout result.
      */
     function layoutKmPoints() {
       if (!canvas || !img) return;
@@ -6213,9 +7011,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
     }
 
     /**
-     * 处理schedule、layout逻辑
-     * 目的：在尺寸或状态变化时重新计算布局，避免错位
-     * @returns {any} 返回结果
+     * Schedule key-mapping layout stabilization.
+     * Purpose: recalculate layout on size/state changes to avoid misalignment.
+     * @returns {any} Schedule result.
      */
     const scheduleLayoutKmPoints = () => {
 
@@ -6225,9 +7023,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       const token = layoutKmPoints.__token;
 
       /**
-       * 处理逻辑
-       * 目的：统一处理逻辑相关流程，保证行为一致
-       * @returns {any} 返回结果
+       * Iterative stabilization step.
+       * Purpose: centralize iterative layout flow and keep behavior consistent.
+       * @returns {any} Step result.
        */
       const step = () => {
         if (token !== layoutKmPoints.__token) return;
@@ -6294,43 +7092,51 @@ function applyCapabilitiesToUi(cap, opts = {}) {
 
     scheduleLayoutKmPoints();
 
-    const ACTIONS = ProtocolApi.KEYMAP_ACTIONS || {};
-    const allLabels = Object.keys(ACTIONS).filter((l) => l && l !== "MODIFIER_ONLY");
-
-
+    let ACTIONS = {};
     let groups = { mouse: [], keyboard: [], system: [] };
-    try {
-      const fn = ProtocolApi.listKeyActionsByType;
-      if (typeof fn === "function") {
-        const arr = fn() || [];
-        for (const g of arr) {
-          const t = g?.type;
-          if (t === "mouse" || t === "keyboard" || t === "system") {
-            groups[t] = (g.items || []).filter((l) => l && l !== "MODIFIER_ONLY");
+
+    function refreshActionCatalog() {
+      const protocol = (window.ProtocolApi && typeof window.ProtocolApi === "object")
+        ? window.ProtocolApi
+        : ((ProtocolApi && typeof ProtocolApi === "object") ? ProtocolApi : {});
+      ACTIONS = (protocol?.KEYMAP_ACTIONS && typeof protocol.KEYMAP_ACTIONS === "object")
+        ? protocol.KEYMAP_ACTIONS
+        : {};
+
+      const allLabels = Object.keys(ACTIONS).filter((l) => l && l !== "MODIFIER_ONLY");
+      const nextGroups = { mouse: [], keyboard: [], system: [] };
+      try {
+        const fn = protocol?.listKeyActionsByType;
+        if (typeof fn === "function") {
+          const arr = fn.call(protocol) || [];
+          for (const g of arr) {
+            const t = g?.type;
+            if (t === "mouse" || t === "keyboard" || t === "system") {
+              nextGroups[t] = (g.items || []).filter((l) => l && l !== "MODIFIER_ONLY");
+            }
           }
+        } else {
+          nextGroups.mouse = allLabels.filter((l) => ACTIONS[l]?.type === "mouse");
+          nextGroups.keyboard = allLabels.filter((l) => ACTIONS[l]?.type === "keyboard");
+          nextGroups.system = allLabels.filter((l) => ACTIONS[l]?.type === "system");
         }
-      } else {
-        groups = {
-          mouse: allLabels.filter((l) => ACTIONS[l]?.type === "mouse"),
-          keyboard: allLabels.filter((l) => ACTIONS[l]?.type === "keyboard"),
-          system: allLabels.filter((l) => ACTIONS[l]?.type === "system"),
-        };
+      } catch (_) {
+        nextGroups.mouse = allLabels.filter((l) => ACTIONS[l]?.type === "mouse");
+        nextGroups.keyboard = allLabels.filter((l) => ACTIONS[l]?.type === "keyboard");
+        nextGroups.system = allLabels.filter((l) => ACTIONS[l]?.type === "system");
       }
-    } catch {
-      groups = {
-        mouse: allLabels.filter((l) => ACTIONS[l]?.type === "mouse"),
-        keyboard: allLabels.filter((l) => ACTIONS[l]?.type === "keyboard"),
-        system: allLabels.filter((l) => ACTIONS[l]?.type === "system"),
-      };
+      groups = nextGroups;
     }
+
+    refreshActionCatalog();
 
 
 /**
- * 生成标签from、funckey
- * 目的：统一处理from、funckey相关流程，保证行为一致
- * @param {any} funckey - 参数 funckey
- * @param {any} keycode - 参数 keycode
- * @returns {any} 返回结果
+ * Resolve display label from funckey/keycode.
+ * Purpose: centralize label resolution flow and keep behavior consistent.
+ * @param {any} funckey - Function key value.
+ * @param {any} keycode - Keycode value.
+ * @returns {any} Resolved label.
  */
 function labelFromFunckeyKeycode(funckey, keycode) {
   try {
@@ -6343,16 +7149,16 @@ function labelFromFunckeyKeycode(funckey, keycode) {
 
 
     const tabDefs = [
-      { cat: "mouse", label: "鼠标按键" },
-      { cat: "keyboard", label: "键盘按键" },
-      { cat: "system", label: "系统" },
+      { cat: "mouse", zh: "鼠标按键", en: "Mouse" },
+      { cat: "keyboard", zh: "键盘按键", en: "Keyboard" },
+      { cat: "system", zh: "系统", en: "System" },
     ];
 
     /**
-     * 处理group、of逻辑
-     * 目的：统一处理group、of相关流程，保证行为一致
-     * @param {any} label - 参数 label
-     * @returns {any} 返回结果
+     * Resolve action group for a label.
+     * Purpose: centralize grouping flow and keep behavior consistent.
+     * @param {any} label - Action label.
+     * @returns {any} Group key.
      */
     function groupOfLabel(label) {
       const t = ACTIONS[label]?.type;
@@ -6383,10 +7189,10 @@ const defaultMap = {
     const mapping = { ...defaultMap };
 
     /**
-     * 设置active、point
-     * 目的：提供统一读写入口，降低耦合
-     * @param {any} btn - 参数 btn
-     * @returns {any} 返回结果
+     * Set active key-mapping point.
+     * Purpose: provide a single read/write entry and reduce coupling.
+     * @param {any} btn - Button index.
+     * @returns {any} Set result.
      */
     function setActivePoint(btn) {
       points.forEach((p) => p.classList.toggle("active", Number(p.getAttribute("data-btn")) === btn));
@@ -6394,10 +7200,10 @@ const defaultMap = {
 
 
     /**
-     * 检查按钮
-     * 目的：用于判断按钮状态，避免分散判断
-     * @param {any} btn - 参数 btn
-     * @returns {any} 返回结果
+     * Check whether a button mapping was modified.
+     * Purpose: centralize button-state checks.
+     * @param {any} btn - Button index.
+     * @returns {any} Check result.
      */
     function isButtonModified(btn) {
       return mapping[btn] !== defaultMap[btn];
@@ -6405,14 +7211,17 @@ const defaultMap = {
 
 
     /**
-     * 重置按钮
-     * 目的：统一处理按钮相关流程，保证行为一致
-     * @param {any} btn - 参数 btn
-     * @returns {Promise<any>} 异步结果
+     * Reset a single button mapping.
+     * Purpose: centralize button-reset flow and keep behavior consistent.
+     * @param {any} btn - Button index.
+     * @returns {Promise<any>} Async result.
      */
     async function resetSingleButton(btn) {
       if (btn === 1) {
-        alert("为防止误操作，主按键（左键）已被锁定，不可修改");
+        alert(window.tr(
+          "为防止误操作，主按键（左键）已被锁定，不可修改",
+          "To prevent misclicks, the primary button (Left) is locked and cannot be changed"
+        ));
         return;
       }
 
@@ -6426,15 +7235,15 @@ const defaultMap = {
     }
 
     /**
-     * 更新气泡提示
-     * 目的：在状态变化时同步 UI 或数据，避免不一致
-     * @param {any} btn - 参数 btn
-     * @returns {any} 返回结果
+     * Update key bubble display.
+     * Purpose: synchronize UI/data on state changes to avoid inconsistencies.
+     * @param {any} btn - Button index.
+     * @returns {any} Update result.
      */
     function updateBubble(btn) {
       const el = $(`#kmLabel${btn}`);
       if (!el) return;
-      el.textContent = mapping[btn] || "-";
+      el.textContent = toDisplayActionLabel(mapping[btn] || "-");
 
 
       const point = $(`.kmPoint[data-btn="${btn}"]`);
@@ -6455,7 +7264,7 @@ const defaultMap = {
         resetBtn = document.createElement("button");
         resetBtn.className = "kmResetBtn";
         resetBtn.type = "button";
-        resetBtn.setAttribute("aria-label", `恢复按键${btn}默认值`);
+        resetBtn.setAttribute("aria-label", window.tr(`恢复按键${btn}默认值`, `Reset button ${btn} to default`));
         resetBtn.innerHTML = "↺";
         resetBtn.addEventListener("click", (e) => {
           e.preventDefault();
@@ -6470,9 +7279,9 @@ const defaultMap = {
     }
 
     /**
-     * 更新all、bubbles
-     * 目的：在状态变化时同步 UI 或数据，避免不一致
-     * @returns {any} 返回结果
+     * Update all key bubbles.
+     * Purpose: synchronize UI/data on state changes to avoid inconsistencies.
+     * @returns {any} Update result.
      */
     function updateAllBubbles() {
       const cap = resolveKeymapButtonCap();
@@ -6481,10 +7290,10 @@ const defaultMap = {
 
 
      /**
-      * 应用按键映射、设备
-      * 目的：集中按键映射的渲染与编辑，避免多处修改导致冲突
-      * @param {any} cfg - 参数 cfg
-      * @returns {any} 返回结果
+      * Apply key mapping from device config.
+      * Purpose: centralize key-mapping render/edit updates to avoid conflicting scattered changes.
+      * @param {any} cfg - Device config.
+      * @returns {any} Apply result.
       */
      function applyKeymapFromDeviceCfg(cfg) {
        const arr = cfg?.buttonMappings;
@@ -6510,9 +7319,9 @@ const defaultMap = {
 
     let __focusTimer = null;
     /**
-     * 延迟focus、search
-     * 目的：统一处理focus、search相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Defer focus to search input.
+     * Purpose: centralize focus flow and keep behavior consistent.
+     * @returns {any} Focus result.
      */
     function deferFocusSearch() {
       if (!search) return;
@@ -6524,9 +7333,9 @@ const defaultMap = {
       }
 
       /**
-       * 处理do、focus逻辑
-       * 目的：统一处理do、focus相关流程，保证行为一致
-       * @returns {any} 返回结果
+       * Execute deferred focus.
+       * Purpose: centralize focus execution and keep behavior consistent.
+       * @returns {any} Focus result.
        */
       const doFocus = () => {
 
@@ -6553,10 +7362,10 @@ const defaultMap = {
 
       let fired = false;
       /**
-       * 处理on、end逻辑
-       * 目的：统一处理on、end相关流程，保证行为一致
-       * @param {any} e - 参数 e
-       * @returns {any} 返回结果
+       * Drawer transition-end handler.
+       * Purpose: centralize transition-end flow and keep behavior consistent.
+       * @param {any} e - Transition event.
+       * @returns {any} Handle result.
        */
       const onEnd = (e) => {
         if (e.target !== drawer) return;
@@ -6580,13 +7389,14 @@ const defaultMap = {
       }, 260);
     }
 /**
- * 打开抽屉
- * 目的：集中控制可见性或开关状态，避免多处直接修改
- * @param {any} btn - 参数 btn
- * @returns {any} 返回结果
+ * Open key-mapping drawer.
+ * Purpose: centralize visibility/toggle state changes and avoid scattered direct mutations.
+ * @param {any} btn - Button index.
+ * @returns {any} Open result.
  */
 function openDrawer(btn) {
       if (!isButtonWithinCap(btn)) return;
+      refreshActionCatalog();
       const btnId = Math.trunc(Number(btn));
       activeBtn = btnId;
       setActivePoint(btnId);
@@ -6595,7 +7405,7 @@ function openDrawer(btn) {
       const cur = mapping[btnId];
       activeCat = groupOfLabel(cur) || activeCat;
 
-      if (drawerTitle) drawerTitle.textContent = `按键 ${btnId} 映射`;
+      if (drawerTitle) drawerTitle.textContent = window.tr(`按键 ${btnId} 映射`, `Button ${btnId} Mapping`);
       drawer.classList.add("open");
       drawer.setAttribute("aria-hidden", "false");
       backdrop?.classList.add("show");
@@ -6609,9 +7419,9 @@ function openDrawer(btn) {
     }
 
     /**
-     * 关闭抽屉
-     * 目的：集中控制可见性或开关状态，避免多处直接修改
-     * @returns {any} 返回结果
+     * Close key-mapping drawer.
+     * Purpose: centralize visibility/toggle state changes and avoid scattered direct mutations.
+     * @returns {any} Close result.
      */
     function closeDrawer() {
       if (__focusTimer) { clearTimeout(__focusTimer); __focusTimer = null; }
@@ -6624,9 +7434,9 @@ function openDrawer(btn) {
     }
 
     /**
-     * 渲染tabs
-     * 目的：集中渲染入口，减少分散更新
-     * @returns {any} 返回结果
+     * Render drawer tabs.
+     * Purpose: centralize render entry points and reduce scattered updates.
+     * @returns {any} Render result.
      */
     function renderTabs() {
       tabs.innerHTML = "";
@@ -6634,7 +7444,7 @@ function openDrawer(btn) {
         const b = document.createElement("button");
         b.type = "button";
         b.className = "kmTab" + (t.cat === activeCat ? " active" : "");
-        b.textContent = t.label;
+        b.textContent = window.tr(t.zh, t.en);
         b.setAttribute("role", "tab");
         b.addEventListener("click", () => {
           activeCat = t.cat;
@@ -6646,20 +7456,26 @@ function openDrawer(btn) {
     }
 
     /**
-     * 渲染列表
-     * 目的：集中渲染入口，减少分散更新
-     * @returns {any} 返回结果
+     * Render action list.
+     * Purpose: centralize render entry points and reduce scattered updates.
+     * @returns {any} Render result.
      */
     function renderList() {
+      refreshActionCatalog();
       const q = (search.value || "").trim().toLowerCase();
       const items0 = groups[activeCat] || [];
-      const items = items0.filter((x) => !q || String(x).toLowerCase().includes(q));
+      const items = items0.filter((x) => {
+        if (!q) return true;
+        const canonical = String(x || "");
+        const display = String(toDisplayActionLabel(canonical) || "");
+        return canonical.toLowerCase().includes(q) || display.toLowerCase().includes(q);
+      });
 
       list.innerHTML = "";
       if (!items.length) {
         const empty = document.createElement("div");
         empty.className = "hint";
-        empty.textContent = "无匹配结果";
+        empty.textContent = window.tr("无匹配结果", "No matching result");
         list.appendChild(empty);
         return;
       }
@@ -6667,24 +7483,38 @@ function openDrawer(btn) {
       const current = mapping[activeBtn];
 
       for (const label of items) {
+        const display = toDisplayActionLabel(label);
         const row = document.createElement("div");
         row.className = "kmItem" + (label === current ? " selected" : "");
         row.setAttribute("role", "listitem");
-        row.innerHTML = `<div>${escapeHtml(label)}</div><div style="opacity:.55;font-weight:800;">→</div>`;
+        row.innerHTML = `<div>${escapeHtml(display)}</div><div style="opacity:.55;font-weight:800;">→</div>`;
         row.addEventListener("click", () => choose(label));
         list.appendChild(row);
       }
     }
 
+    function refreshKeymapActionCatalogUi() {
+      refreshActionCatalog();
+      if (drawer.classList.contains("open")) {
+        renderTabs();
+        renderList();
+      }
+    }
+
+    __refreshKeymapActionCatalog = refreshKeymapActionCatalogUi;
+
     /**
-     * 选择逻辑
-     * 目的：统一处理逻辑相关流程，保证行为一致
-     * @param {any} label - 参数 label
-     * @returns {Promise<any>} 异步结果
+     * Apply selected key action.
+     * Purpose: centralize selection flow and keep behavior consistent.
+     * @param {any} label - Action label.
+     * @returns {Promise<any>} Async result.
      */
     async function choose(label) {
       if (activeBtn === 1) {
-         alert("为防止误操作，主按键（左键）已被锁定，不可修改");
+         alert(window.tr(
+           "为防止误操作，主按键（左键）已被锁定，不可修改",
+           "To prevent misclicks, the primary button (Left) is locked and cannot be changed"
+         ));
          return;
       }
 
@@ -6703,10 +7533,10 @@ function openDrawer(btn) {
       const btn = Number(p.getAttribute("data-btn"));
       if (!Number.isFinite(btn)) return;
       /**
-       * 处理handler逻辑
-       * 目的：统一处理handler相关流程，保证行为一致
-       * @param {any} e - 参数 e
-       * @returns {any} 返回结果
+       * Point click handler.
+       * Purpose: centralize handler flow and keep behavior consistent.
+       * @param {any} e - Event object.
+       * @returns {any} Handle result.
        */
       const handler = (e) => {
         e.preventDefault();
@@ -6742,10 +7572,10 @@ function openDrawer(btn) {
 
 
     /**
-     * 转义逻辑
-     * 目的：统一处理逻辑相关流程，保证行为一致
-     * @param {any} s - 参数 s
-     * @returns {any} 返回结果
+     * Escape HTML string.
+     * Purpose: centralize escaping flow and keep behavior consistent.
+     * @param {any} s - Source string.
+     * @returns {any} Escaped string.
      */
     function escapeHtml(s) {
     return String(s)
@@ -6798,7 +7628,7 @@ function openDrawer(btn) {
 
 
   // ============================================================
-  // 6) 设备写入队列（防+ 适配器驱动）
+  // 6) Device write queue (race protection + adapter-driven)
   // ============================================================
   let __pendingDevicePatch = null;
 
@@ -6880,10 +7710,10 @@ function openDrawer(btn) {
 
 
   /**
-   * 加入设备写入队列
-   * 目的：合并高频写入并通过适配器统一转换路径，降低竞态风险
-   * @param {any} patch - 参数 patch
-   * @returns {any} 返回结果
+   * Enqueue a device patch write.
+   * Purpose: merge high-frequency writes and route conversion through adapter logic to reduce race risk.
+   * @param {any} patch - Standard-key patch payload.
+   * @returns {any} Enqueue result.
    */
   // Write-chain invariants (critical for correctness):
   // 1) Every UI write MUST enter through enqueueDevicePatch.
@@ -6940,16 +7770,30 @@ function openDrawer(btn) {
           }
         });
 
-        if (payload.pollingHz != null) log(`回报率已写入:${payload.pollingHz}Hz`);
-        if (payload.performanceMode != null) log(`性能模式已写入:${payload.performanceMode}`);
-        if (payload.linearCorrection != null) log(`直线修正已写入:${payload.linearCorrection ? "开" : "关"}`);
-        if (payload.rippleControl != null) log(`纹波修正已写入:${payload.rippleControl ? "开" : "关"}`);
+        if (payload.pollingHz != null) {
+          log(window.tr(`回报率已写入:${payload.pollingHz}Hz`, `Polling rate written: ${payload.pollingHz}Hz`));
+        }
+        if (payload.performanceMode != null) {
+          log(window.tr(`性能模式已写入:${payload.performanceMode}`, `Performance mode written: ${payload.performanceMode}`));
+        }
+        if (payload.linearCorrection != null) {
+          log(window.tr(
+            `直线修正已写入:${payload.linearCorrection ? "开" : "关"}`,
+            `Linear correction written: ${payload.linearCorrection ? "On" : "Off"}`
+          ));
+        }
+        if (payload.rippleControl != null) {
+          log(window.tr(
+            `纹波修正已写入:${payload.rippleControl ? "开" : "关"}`,
+            `Ripple correction written: ${payload.rippleControl ? "On" : "Off"}`
+          ));
+        }
       } catch (e) {
         for (const key of Object.keys(payload)) {
           __clearWriteIntent(key, attemptSeqByKey[key]);
         }
-        // 写失败后的配置纠偏由协议层 setBatchFeatures 内部完成，这里只保留错误可观测性。
-        logErr(e, "设备状态写入失败");
+        // Reconcile after write failures is handled by protocol-level setBatchFeatures; keep observability here only.
+        logErr(e, window.tr("设备状态写入失败", "Device state write failed"));
       }
     });
   }
@@ -6976,7 +7820,8 @@ function openDrawer(btn) {
   }
 
   const sleepSel = getSourceSelectByStdKey("sleepSeconds", ADV_REGION_DUAL_LEFT, { warnOnMissing: true });
-  if (sleepSel) {
+  if (sleepSel && sleepSel.dataset.sleepSelectWriteBound !== "1") {
+    sleepSel.dataset.sleepSelectWriteBound = "1";
     sleepSel.addEventListener("change", () => {
       const sec = Number(sleepSel.value);
       if (!Number.isFinite(sec)) return;
@@ -6985,7 +7830,8 @@ function openDrawer(btn) {
   }
 
   const debounceSel = getAdvancedSelectControl("debounceMs", { region: ADV_REGION_DUAL_LEFT });
-  if (debounceSel) {
+  if (debounceSel && debounceSel.dataset.debounceSelectWriteBound !== "1") {
+    debounceSel.dataset.debounceSelectWriteBound = "1";
     debounceSel.addEventListener("change", () => {
       const ms = Number(debounceSel.value);
       if (!Number.isFinite(ms)) return;
@@ -7095,13 +7941,14 @@ function openDrawer(btn) {
   }
 
   const angleInput = getSourceRangeByStdKey("sensorAngle", ADV_REGION_DUAL_LEFT, { warnOnMissing: true });
-  if (angleInput) {
+  if (angleInput && angleInput.dataset.sensorAngleRangeLegacyBound !== "1") {
+    angleInput.dataset.sensorAngleRangeLegacyBound = "1";
 
 
     /**
-     * 处理角度逻辑
-     * 目的：统一处理角度相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Commit sensor angle change.
+     * Purpose: centralize angle commit flow and keep behavior consistent.
+     * @returns {any} Commit result.
      */
     const commitAngle = () => {
       if (angleInput.disabled) return;
@@ -7115,13 +7962,14 @@ function openDrawer(btn) {
 
 
   const feelInput = getAdvancedRangeInput("surfaceFeel", { region: ADV_REGION_DUAL_LEFT });
-  if (feelInput) {
+  if (feelInput && feelInput.dataset.surfaceFeelRangeLegacyBound !== "1") {
+    feelInput.dataset.surfaceFeelRangeLegacyBound = "1";
 
 
     /**
-     * 处理手感逻辑
-     * 目的：统一处理手感相关流程，保证行为一致
-     * @returns {any} 返回结果
+     * Commit surface-feel change.
+     * Purpose: centralize feel commit flow and keep behavior consistent.
+     * @returns {any} Commit result.
      */
     const commitFeel = () => {
       if (feelInput.disabled) return;
@@ -7133,28 +7981,150 @@ function openDrawer(btn) {
     bindRangeCommit(feelInput, { onCommit: commitFeel });
   }
 
+  let __advancedSourceFallbackBound = false;
+  function __bindAdvancedSourceFallbackHandlers() {
+    if (__advancedSourceFallbackBound) return;
+    __advancedSourceFallbackBound = true;
+
+    const isRangeControl = (target) => {
+      if (!target?.matches) return false;
+      if (!target.matches('[data-adv-control="range"][data-std-key]')) return false;
+      const tag = String(target.tagName || "").toLowerCase();
+      if (tag === "input") {
+        const type = String(target.type || "").toLowerCase();
+        return type === "range" || type === "number";
+      }
+      return false;
+    };
+
+    const commitAdvancedRangeFallback = (target) => {
+      if (!isRangeControl(target)) return;
+      const stdKey = String(target.getAttribute("data-std-key") || "").trim();
+      if (!stdKey) return;
+
+      if (stdKey === "sleepSeconds") {
+        if (target.dataset.sleepRangeLegacyBound === "1") return;
+        commitSleepFromSourceUi();
+        syncAdvancedPanelUi();
+        return;
+      }
+
+      if (stdKey === "debounceMs") {
+        if (target.dataset.debounceRangeLegacyBound === "1") return;
+        const selectEl = getSourceSelectByStdKey("debounceMs", ADV_REGION_DUAL_LEFT, { warnOnMissing: true });
+        const opts = __optList(selectEl);
+        const idx = __clamp(Number(target.value) || 0, 0, Math.max(0, opts.length - 1));
+        const picked = opts[idx];
+        const nextVal = Number(picked?.val);
+        if (selectEl && picked) {
+          selectEl.value = String(picked.val);
+        }
+        if (Number.isFinite(nextVal)) {
+          enqueueDevicePatch({ debounceMs: nextVal });
+        }
+        syncAdvancedPanelUi();
+        return;
+      }
+
+      if (stdKey === "sensorAngle") {
+        if (target.dataset.sensorAngleRangeLegacyBound === "1") return;
+        if (target.disabled) return;
+        const value = Number(target.value);
+        if (!Number.isFinite(value)) return;
+        enqueueDevicePatch({ sensorAngle: value });
+        syncAdvancedPanelUi();
+        return;
+      }
+
+      if (stdKey === "surfaceFeel") {
+        if (target.dataset.surfaceFeelRangeLegacyBound === "1") return;
+        if (target.disabled) return;
+        const value = Number(target.value);
+        if (!Number.isFinite(value)) return;
+        enqueueDevicePatch({ surfaceFeel: value });
+        syncAdvancedPanelUi();
+      }
+    };
+
+    document.addEventListener("input", (event) => {
+      const target = event?.target;
+      if (!isRangeControl(target)) return;
+      const stdKey = String(target.getAttribute("data-std-key") || "").trim();
+      if (stdKey === "sleepSeconds" && target.dataset.sleepRangeLegacyBound !== "1") {
+        syncSleepSourceUi({ preferInputValue: true });
+        return;
+      }
+      if (stdKey === "debounceMs" && target.dataset.debounceRangeLegacyBound !== "1") {
+        syncAdvancedPanelUi();
+        return;
+      }
+      if (stdKey === "sensorAngle" && target.dataset.sensorAngleLegacySyncBound !== "1") {
+        syncAdvancedPanelUi();
+        return;
+      }
+      if (stdKey === "surfaceFeel" && target.dataset.surfaceFeelLegacySyncBound !== "1") {
+        syncAdvancedPanelUi();
+      }
+    }, true);
+
+    document.addEventListener("change", (event) => {
+      const target = event?.target;
+      if (target?.matches?.('[data-std-key="sleepSeconds"][data-adv-control="select"]')) {
+        if (target.dataset.sleepSelectWriteBound !== "1") {
+          const sec = Number(target.value);
+          if (Number.isFinite(sec)) enqueueDevicePatch({ sleepSeconds: sec });
+        }
+        return;
+      }
+      if (target?.matches?.('[data-std-key="debounceMs"][data-adv-control="select"]')) {
+        if (target.dataset.debounceSelectWriteBound !== "1") {
+          const ms = Number(target.value);
+          if (Number.isFinite(ms)) enqueueDevicePatch({ debounceMs: ms });
+        }
+        return;
+      }
+      commitAdvancedRangeFallback(target);
+    }, true);
+
+    const pointerCommit = (event) => {
+      const target = event?.target;
+      commitAdvancedRangeFallback(target);
+    };
+    document.addEventListener("pointerup", pointerCommit, true);
+    document.addEventListener("touchend", pointerCommit, true);
+  }
+  __bindAdvancedSourceFallbackHandlers();
+
 
   /**
-   * 同步basic、extra
-   * 目的：保持状态一致性，避免局部更新遗漏
-   * @returns {any} 返回结果
+   * Sync basic extra-switch labels.
+   * Purpose: keep state consistency and avoid partial-update gaps.
+   * @returns {any} Sync result.
    */
   function syncBasicExtraSwitchState() {
     const wsToggle = $("#wirelessStrategyToggle");
     const wsState = $("#wirelessStrategyState");
-    if (wsToggle && wsState) wsState.textContent = wsToggle.checked ? "满格射频" : "智能调节";
+    if (wsToggle && wsState) {
+      wsState.textContent = wsToggle.checked
+        ? window.tr("满格射频", "Full RF")
+        : window.tr("智能调节", "Smart");
+    }
 
     const cpToggle = $("#commProtocolToggle");
     const cpState = $("#commProtocolState");
-    if (cpToggle && cpState) cpState.textContent = cpToggle.checked ? "初始" : "高效";
+    if (cpToggle && cpState) {
+      cpState.textContent = cpToggle.checked
+        ? window.tr("初始", "Initial")
+        : window.tr("高效", "Efficient");
+    }
   }
 
   /**
-   * 设置radio
-   * 目的：提供统一读写入口，降低耦合
-   * @param {any} name - 参数 name
-   * @param {any} value - 参数 value
-   * @returns {any} 返回结果
+   * Set radio by name/value.
+   * Purpose: provide a single read/write entry and reduce coupling.
+   * @param {any} name - Radio group name.
+   * @param {any} value - Radio value.
+   * @returns {any} Set result.
    */
   function setRadio(name, value) {
     const ae = document.activeElement;
@@ -7165,13 +8135,13 @@ function openDrawer(btn) {
 
 
   // ============================================================
-  // 7) 配置 -> UI 同步（单向数据流
+  // 7) Config -> UI sync (one-way data flow)
   // ============================================================
   /**
-   * 将设备配置映射到 UI
-   * 目的：保持设备回包到 UI 的单向数据流，避免回写回路
-   * @param {any} cfg - 参数 cfg
-   * @returns {any} 返回结果
+   * Map device config to UI.
+   * Purpose: keep one-way device-readback-to-UI flow and avoid writeback loops.
+   * @param {any} cfg - Device config.
+   * @returns {any} Apply result.
    */
   // Config -> UI synchronization contract:
   // - This function is the single sink for device readback rendering.
@@ -7343,11 +8313,11 @@ function openDrawer(btn) {
     }
 
     /**
-     * 设置逻辑
-     * 目的：提供统一读写入口，降低耦合
-     * @param {any} id - 参数 id
-     * @param {any} v - 参数 v
-     * @returns {any} 返回结果
+     * Set checkbox safely.
+     * Purpose: provide a single read/write entry and reduce coupling.
+     * @param {any} el - Target checkbox element.
+     * @param {any} v - Checked value.
+     * @returns {any} Set result.
      */
     const setCb = (el, v) => {
       if (!el) return;
@@ -7547,45 +8517,18 @@ function openDrawer(btn) {
     syncAdvancedPanelUi();
   }
 
-  hidApi.onBattery((bat) => {
-    const p = Number(bat?.batteryPercent);
-
-    if (!Number.isFinite(p) || p < 0) {
-      if (hdrBatteryVal) {
-        hdrBatteryVal.textContent = "...";
-        hdrBatteryVal.classList.remove("connected");
-      }
-      renderTopDeviceMeta(true, currentDeviceName || "已连接", "");
-      return;
-    }
-
-    const batteryText = `${p}%`;
-    if (hdrBatteryVal) {
-      hdrBatteryVal.textContent = batteryText;
-      hdrBatteryVal.classList.add("connected");
-    }
-
-
-    currentBatteryText = batteryText;
-    updateDeviceStatus(true, currentDeviceName || "已连接", batteryText, currentFirmwareText || "");
-
-    log(`收到电量包:${p}%`);
-  });
-
-  hidApi.onRawReport((raw) => {
-
-  });
+  // Battery/raw-report listeners are attached in __bindHidApiEventHandlers().
 
 
   // ============================================================
-  // 5) WebHID 连接编排（运行期而非设备逻辑
+  // 5) WebHID connect orchestration (runtime, not device logic)
   // ============================================================
   /**
-   * 建立 HID 连接并完成配置拉取
-   * 目的：统一握手流程与状态清理，避免并发连接冲突
-   * @param {any} mode - 参数 mode
-   * @param {any} isSilent - 参数 isSilent
-   * @returns {Promise<any>} 异步结果
+   * Establish HID connection and fetch initial configuration.
+   * Purpose: unify handshake flow and state cleanup to avoid concurrent-connect conflicts.
+   * @param {any} mode - Connect mode or preferred device.
+   * @param {any} isSilent - Silent-mode flag.
+   * @returns {Promise<any>} Async result.
    */
   /**
    * WebHID connect orchestration contract.
@@ -7623,7 +8566,10 @@ function openDrawer(btn) {
       if (isHidOpened()) return;
 
       try {
-        if (!navigator.hid) throw new Error("当前浏览器不支持 WebHID");
+        if (!navigator.hid) throw new Error(window.tr(
+          "当前浏览器不支持 WebHID",
+          "Current browser does not support WebHID"
+        ));
 
       let dev = null;
       let candidates = [];
@@ -7659,11 +8605,9 @@ function openDrawer(btn) {
 
       const currentType = DeviceRuntime.getSelectedDevice();
       if (detectedType && detectedType !== currentType) {
-        console.log(`[AutoSwitch] switching to ${detectedType} (from ${currentType})...`);
-        DeviceRuntime.setSelectedDevice(detectedType, { reload: true });
-        return;
+        console.log(`[AutoSwitch] switching to ${detectedType} (from ${currentType}) without reload...`);
+        await __switchRuntimeDevice(detectedType);
       }
-
       if (!candidates.length) candidates = [dev];
 
       hidConnecting = true;
@@ -7679,7 +8623,8 @@ function openDrawer(btn) {
       const handshakeTimeoutMs = resolvePositiveInt(window.AppConfig?.timings?.handshakeTimeoutMs, 5000, 100, 60_000);
       const bootstrapReadTimeoutMs = resolvePositiveInt(window.AppConfig?.timings?.bootstrapReadTimeoutMs, 1200, 100, 60_000);
       const bootstrapReadRetry = resolvePositiveInt(window.AppConfig?.timings?.bootstrapReadRetry, 2, 1, 10);
-      // true: 连接阶段禁用“旧缓存回读”fallback（首读失败即按失败处理）；false: 允许用旧缓存降级进入
+      // true: disable old-cache fallback during connect (treat first-read failure as failure);
+      // false: allow degraded entry via old-cache fallback.
       const strictConnectNoCacheFallback = (window.AppConfig?.features?.strictConnectNoCacheFallback !== false);
 
       const withHandshakeTimeout = async (task, timeoutMs, hooks = {}) => {
@@ -7699,7 +8644,7 @@ function openDrawer(btn) {
                     }
                   } catch (_) {}
                 }
-                const err = new Error(`握手超时（>${ms}ms）`);
+                const err = new Error(window.tr(`握手超时（>${ms}ms）`, `Handshake timeout (> ${ms}ms)`));
                 err.code = "HANDSHAKE_TIMEOUT";
                 reject(err);
               }, ms);
@@ -7712,16 +8657,21 @@ function openDrawer(btn) {
 
 
       /**
-       * 统一握手入口
-       * 目的：连接编排只负责设备选择UI 进场，open/首读/重试/回退下沉到协议层 bootstrapSession
-       * @param {any} targetDev - 参数 targetDev
-       * @returns {Promise<any>} 异步结果
+       * Unified handshake entry.
+       * Purpose: connection orchestration only handles device selection and UI entry;
+       * open/first-read/retry/fallback are delegated to protocol-layer bootstrapSession.
+       * @param {any} targetDev - Target HID device.
+       * @returns {Promise<any>} Async result.
        */
       const performHandshake = async (targetDev) => {
         if (!targetDev) throw new Error("No HID device selected.");
         const handshakeSeq = (++__handshakeSeq);
         __activeHandshakeSeq = handshakeSeq;
         try {
+        // 防止下面 close() 触发浏览器的 disconnect 事件导致 UI 退回浅色页
+        if (hidApi && hidApi.device === targetDev) {
+            hidApi.device = null;
+        }
 
         try {
           if (targetDev.opened) {
@@ -7740,7 +8690,7 @@ function openDrawer(btn) {
         __armOnboardMemoryAutoEnableCheck();
 
         if (widgetDeviceName) widgetDeviceName.textContent = displayName;
-        if (widgetDeviceMeta) widgetDeviceMeta.textContent = "正在读取配置...";
+        if (widgetDeviceMeta) widgetDeviceMeta.textContent = window.tr("正在读取配置...", "Reading configuration...");
 
         const { cfg } = await withHandshakeTimeout(
           () => hidApi.bootstrapSession({
@@ -7748,7 +8698,7 @@ function openDrawer(btn) {
             reason: "connect",
             readTimeoutMs: bootstrapReadTimeoutMs,
             readRetry: bootstrapReadRetry,
-            // 连接场景是否允许协议层使用旧缓存回读（fallback）
+            // Whether connect flow allows protocol layer to use old-cache fallback.
             useCacheFallback: !strictConnectNoCacheFallback,
           }),
           handshakeTimeoutMs,
@@ -7764,7 +8714,7 @@ function openDrawer(btn) {
           }
         );
         if (__activeHandshakeSeq !== handshakeSeq) {
-          const staleErr = new Error("握手结果已过期");
+          const staleErr = new Error(window.tr("握手结果已过期", "Handshake result is stale"));
           staleErr.code = "STALE_HANDSHAKE_RESULT";
           throw staleErr;
         }
@@ -7777,7 +8727,7 @@ function openDrawer(btn) {
           displayName = cfgDeviceName;
           if (widgetDeviceName) widgetDeviceName.textContent = displayName;
         }
-        if (widgetDeviceMeta) widgetDeviceMeta.textContent = "点击断开";
+        if (widgetDeviceMeta) widgetDeviceMeta.textContent = window.tr("点击断开", "Click to Disconnect");
         if (typeof updatePollingCycleUI === "function") {
           const rate = readStandardValueWithIntent(cfg, "keyScanningRate") || 1000;
           updatePollingCycleUI(rate, false);
@@ -7858,7 +8808,7 @@ function openDrawer(btn) {
         hdrBatteryVal.classList.toggle("connected", !!currentBatteryText);
       }
       if (hdrHidVal) {
-        hdrHidVal.textContent = `已连接 · ${displayName}`;
+        hdrHidVal.textContent = `${window.tr("已连接 · ", "Connected · ")}${displayName}`;
         hdrHidVal.classList.add("connected");
       }
       updateDeviceStatus(true, displayName, currentBatteryText || "", currentFirmwareText || "");
@@ -7870,7 +8820,7 @@ function openDrawer(btn) {
       saveLastHidDevice(finalDev);
       startBatteryAutoRead();
 
-      // UI 进场与协议握手统一performHandshake 内部处理，这里不再重复编排
+      // UI entry and protocol handshake are unified in performHandshake; avoid duplicate orchestration here.
 
     } catch (err) {
       __clearOnboardMemoryAutoEnableCheck();
@@ -7884,7 +8834,7 @@ function openDrawer(btn) {
       resetHeaderChipValues();
       setHeaderChipsVisible(false);
 
-      logErr(err, "连接失败");
+      logErr(err, window.tr("连接失败", "Connection failed"));
       try { document.body.classList.remove("landing-charging", "landing-holding", "landing-drop", "landing-system-ready", "landing-ready-out", "landing-reveal"); } catch (_) {}
       try { if (__triggerZone) __triggerZone.style.pointerEvents = ""; } catch (_) {}
        __setLandingCaption("CONNECTION SEVERED");
@@ -7892,7 +8842,10 @@ function openDrawer(btn) {
 
 
       if (!isSilent && err && err.message && !err.message.includes("cancel")) {
-         alert(`连接失败：${err.message}\n请尝试重新插拔设备或重启页面。`);
+         alert(window.tr(
+           `连接失败：${err.message}\n请尝试重新插拔设备或重启页面。`,
+           `Connection failed: ${err.message}\nPlease reconnect the device or restart the page.`
+         ));
       }
     }
   } finally {
@@ -7910,9 +8863,9 @@ function openDrawer(btn) {
 
 
   /**
-   * 断开HID
-   * 目的：集中释放连接资源并同步 UI，避免残留状态
-   * @returns {Promise<any>} 异步结果
+   * Disconnect HID device.
+   * Purpose: centralize connection resource cleanup and UI sync to avoid residual state.
+   * @returns {Promise<any>} Async result.
    */
   async function disconnectHid() {
     if (!hidApi || !hidApi.device) return;
@@ -7935,44 +8888,96 @@ function openDrawer(btn) {
       resetHeaderChipValues();
       setHeaderChipsVisible(false);
 
-      log("HID 已断开");
+      log(window.tr("HID 已断开", "HID disconnected"));
 
       try { showLanding("disconnect"); } catch (_) {}
     } catch (err) {
-      logErr(err, "断开失败");
+      logErr(err, window.tr("断开失败", "Disconnect failed"));
     }
   }
 
   disconnectBtn?.addEventListener("click", async () => {
     if (!isHidOpened()) return;
-    if (!confirm("确定要断开当前设备连接")) return;
+    if (!confirm(window.tr("确定要断开当前设备连接", "Are you sure you want to disconnect the current device?"))) return;
     await disconnectHid();
   });
 
 
   updateDeviceStatus(false);
 
+  try { await window.showSystemOverrideWarning?.(); } catch (_) {}
   try { showLanding("init"); } catch (_) {}
 
 
   /**
-   * 初始化自动流程
-   * 目的：统一连接流程并处理并发保护，避免重复连接或状态错乱
-   * @returns {Promise<any>} 异步结果
+   * Initialize auto-connect flow.
+   * Purpose: centralize connection flow with concurrency protection.
+   * @returns {Promise<any>} Async result.
    */
+  let __autoConnecting = false;
   const initAutoConnect = async () => {
+      if (__autoConnecting || hidConnecting || isHidOpened()) return;
+      
       const detectedDev = await autoConnectHidOnce();
       if (detectedDev) {
-        connectHid(detectedDev, true);
+        __autoConnecting = true;
+
+        // 检查是否是因为切换设备而带来的重启
+        let skipAnim = false;
+        try {
+          if (sessionStorage.getItem("skip_landing_anim_once") === "1") {
+            skipAnim = true;
+            sessionStorage.removeItem("skip_landing_anim_once"); // 阅后即焚
+          }
+        } catch(e) {}
+
+        if (skipAnim) {
+          // 如果是设备切换刷新，直接锁定暗色状态，跳过350ms动画
+          document.body.classList.add("landing-charging");
+          document.body.classList.remove("landing-precharge", "landing-holding");
+          
+          // 手动将水滴撑满，无缝衔接上一页的视觉
+          const layerSolid = document.getElementById("layer-solid");
+          if (layerSolid) layerSolid.style.setProperty("clip-path", "circle(150% at 50% 50%)", "important");
+          
+          __autoConnecting = false;
+          connectHid(detectedDev, false);
+          return;
+        }
+
+        // 下面是正常的动画逻辑
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        __landingClickOrigin = { x: cx, y: cy };
+
+        document.body.classList.add("landing-precharge");
+        document.body.classList.remove("landing-holding");
+
+        const startOk = __landingFx?.beginAutoWipe?.(cx, cy, () => {
+          document.body.classList.remove("landing-precharge");
+          document.body.classList.add("landing-charging");
+          
+          setTimeout(() => {
+              __autoConnecting = false;
+              connectHid(detectedDev, false);
+          }, 0);
+        }, { durationMs: 200 });
+
+        if (!startOk) {
+          document.body.classList.remove("landing-precharge");
+          document.body.classList.add("landing-charging");
+          __autoConnecting = false;
+          connectHid(detectedDev, false);
+        }
       }
   };
 
 
   /**
-   * 内部处理run、heavy逻辑
-   * 目的：统一处理run、heavy相关流程，保证行为一致
-   * @param {any} task - 参数 task
-   * @returns {any} 返回结果
+   * Run heavy task safely around landing animation.
+   * Purpose: centralize heavy-task flow and keep behavior consistent.
+   * @param {any} task - Task function.
+   * @returns {any} Task result.
    */
   const __runHeavyTaskSafely = (task) => {
     const landingVisible = !!(__landingLayer && __landingLayer.getAttribute("aria-hidden") !== "true");
@@ -8007,7 +9012,6 @@ function openDrawer(btn) {
 
          if (__isManualConnectGuardOn()) return;
 
-         // [优化] 缩短延迟，快速响应用户操
          setTimeout(() => {
              if (!isHidOpened()) __runHeavyTaskSafely(initAutoConnect);
          }, 150);
@@ -8020,10 +9024,13 @@ function openDrawer(btn) {
 
 
   if (adapterFeatures.supportsBatteryRequest !== false) {
-    setTimeout(() => __runHeavyTaskSafely(() => requestBatterySafe("页面进入")), 1400);
+    setTimeout(() => __runHeavyTaskSafely(() => requestBatterySafe(window.tr("页面进入", "Page Enter"))), 1400);
   }
 
-  log("页面已加载。点击页面顶部设备卡片开始连接设备");
+  log(window.tr(
+    "页面已加载。点击页面顶部设备卡片开始连接设备",
+    "Page loaded. Click the device card at the top to connect"
+  ));
 
 
   const sidebar = document.querySelector('.sidebar');
@@ -8085,10 +9092,10 @@ function openDrawer(btn) {
 
 
   /**
-   * 设置导航
-   * 目的：提供统一读写入口，降低耦合
-   * @param {any} collapsed - 参数 collapsed
-   * @returns {any} 返回结果
+   * Set navigation collapsed state.
+   * Purpose: provide a single read/write entry and reduce coupling.
+   * @param {any} collapsed - Collapsed flag.
+   * @returns {any} Set result.
    */
   const setNavCollapsed = (collapsed) => {
     if (__navRafId) cancelAnimationFrame(__navRafId);
@@ -8105,9 +9112,9 @@ function openDrawer(btn) {
     });
   };
   /**
-   * 处理导航逻辑
-   * 目的：统一处理导航相关流程，保证行为一致
-   * @returns {any} 返回结果
+   * Apply navigation collapse policy.
+   * Purpose: centralize nav-policy flow and keep behavior consistent.
+   * @returns {any} Apply result.
    */
   const applyNavCollapsedPolicy = (force = false) => {
     const isNarrow = isNarrowViewport();

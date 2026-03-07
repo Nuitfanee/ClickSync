@@ -1,39 +1,51 @@
 /**
- * protocol_api_logitech.js 架构说明
- * * 核心思想：
- * 1) 业务解耦：MouseMouseHidApi 仅处理“意图”（如 setDpi），不关心 HID++ 报文的具体字节偏移或 Feature Index。
- * 2) 声明式驱动：所有逻辑由 SPEC (规范表) 驱动。新增功能只需在 SPEC 中定义其 kind (direct/virtual)、priority 和 plan。
- * 3) 状态机驱动：Planner 负责计算“当前状态 + 修改补丁 = 目标状态”，并根据状态差异自动推导出一组有序的指令序列。
- * 4) 严格流控：针对罗技板载内存写入易受干扰的特性，Transport 层实现了基于 Ack 匹配的阻塞式发送机制。
+ * protocol_api_logitech.js architecture notes
+ * * Core ideas:
+ * 1) Business decoupling: MouseMouseHidApi handles only intent (for example setDpi),
+ *    without caring about HID++ byte offsets or Feature Index details.
+ * 2) Declarative drive: all logic is driven by SPEC.
+ *    New features usually only require defining kind (direct/virtual), priority, and plan in SPEC.
+ * 3) State-machine driven: Planner computes
+ *    "current state + patch = target state", then derives an ordered command sequence from diffs.
+ * 4) Strict flow control: because Logitech onboard-memory writes are sensitive to interference,
+ *    Transport uses blocking send based on Ack matching.
  *
- * 本文件实现优势：
- * - 拒绝硬编码：不使用静态模板，而是通过 ProtocolCodec 动态构建符合 HID++ 2.0 规范的报文。
- * - 聚合更新 (Virtual Features)：当修改 DPI 或按键时，Planner 会自动将其聚合为一次“Profile Stream”写入，而不是零散地发送冲突指令。
- * - 拓扑排序：通过 priority 确保指令顺序（例如：必须先 Start Profile，再写 Chunk，最后 Commit）。
+ * Implementation strengths:
+ * - No hardcoded templates: ProtocolCodec dynamically builds packets compliant with HID++ 2.0.
+ * - Aggregated updates (Virtual Features): when DPI or button mapping changes,
+ *   Planner aggregates writes into a single Profile Stream update instead of emitting conflicting fragments.
+ * - Topological ordering: priority enforces command order
+ *   (for example: Start Profile -> write Chunk -> Commit).
  *
- * 架构分层：
- * - UniversalHidDriver (传输层)：
- * - 职责：管理 WebHID 设备实例，维护发送队列 (SendQueue)。
- * - 核心：`sendAndWait`。发送指令后，会通过 `criteria.match` 匹配设备返回的 Input Report，确保指令被执行后才继续下一步。
+ * Architecture layers:
+ * - UniversalHidDriver (transport layer):
+ * - Responsibility: manage WebHID device instances and maintain send queue (SendQueue).
+ * - Core: `sendAndWait`. After sending a command, it matches incoming Input Reports
+ *   with `criteria.match` and continues only after confirmation.
  *
- * - ProtocolCodec (编码层)：
- * - 职责：HID++ 协议的二进制封包。
- * - 核心：`buildProfileStream`。它将复杂的 JavaScript 状态对象转换为一个 256 字节的板载内存镜像，并计算 CRC16-CCITT 校验和。
+ * - ProtocolCodec (encoding layer):
+ * - Responsibility: binary packet encoding for HID++ protocol.
+ * - Core: `buildProfileStream`. It converts a JavaScript state object into
+ *   a 256-byte onboard-memory image and computes CRC16-CCITT checksum.
  *
- * - TRANSFORMERS (转换层)：
- * - 职责：语义值与协议值的互转（如 "optical" <=> 0x00, 800DPI <=> 0x0320）。
+ * - TRANSFORMERS (conversion layer):
+ * - Responsibility: semantic value <-> protocol value conversion
+ *   (for example "optical" <=> 0x00, 800DPI <=> 0x0320).
  *
- * - SPEC (规范层 - 最核心)：
- * - Direct 模式：直接映射到简单的 HID++ 指令（如灯光、表面模式）。
- * - Virtual 模式：如 `dpiProfile`，它并不对应单一指令，而是监听多个字段的变更，一旦触发则重新规划整个 Profile Stream。
+ * - SPEC (spec layer - core):
+ * - Direct mode: map directly to simple HID++ commands (for example lighting/surface mode).
+ * - Virtual mode: such as `dpiProfile`, which does not correspond to one command;
+ *   it watches multiple field changes and replans the whole Profile Stream when triggered.
  *
- * - CommandPlanner (计划层)：
- * - 职责：执行 `plan(prevState, patch)`。
- * - 流程：标准化 Key -> 状态补全 -> 收集受影响的 SPEC 条目 -> 按优先级排序 -> 调用 SPEC.plan 生成指令集。
+ * - CommandPlanner (planning layer):
+ * - Responsibility: execute `plan(prevState, patch)`.
+ * - Flow: normalize keys -> complete state -> collect affected SPEC items
+ *   -> sort by priority -> call SPEC.plan to generate command set.
  *
- * - MouseMouseHidApi (业务层)：
- * - 职责：对外公开的干净接口。
- * - 特点：内部维护 `_cfg` 快照，通过 `setBatchFeatures` 触发 Planner，实现“改一处、动全局”的自动化配置同步。
+ * - MouseMouseHidApi (business layer):
+ * - Responsibility: clean public interface.
+ * - Characteristic: maintains internal `_cfg` snapshot and triggers Planner via `setBatchFeatures`,
+ *   enabling automatic synchronized config updates from localized changes.
  */
 
 (() => {
@@ -553,7 +565,7 @@
     { chunk: 3, offset: 0 },
     { chunk: 3, offset: 4 },
     { chunk: 3, offset: 8 },
-    // UI Btn4(前进) 对应设备第5槽，UI Btn5(后退) 对应设备第4槽
+    // UI Btn4 (forward) maps to device slot 5; UI Btn5 (back) maps to device slot 4.
     { chunk: 4, offset: 0 },
     { chunk: 3, offset: 12 },
   ]);
@@ -569,10 +581,10 @@
   const DEFAULT_STREAM_LAYOUT = Object.freeze({
     pollingWireless: { chunk: 0, offset: 0 },
     pollingWired: { chunk: 0, offset: 1 },
-    // 默认DPI档位索引 (Chunk 0, Byte 2) - 设备重启后恢复到此档位
+    // Default DPI slot index (Chunk 0, Byte 2) - restored after device reboot.
     defaultDpiSlotIndex: { chunk: 0, offset: 2 },
     dpi: { chunk: 0, spanChunks: 2, offset: 4, slots: 5, stride: 5, endian: "le", enableValue: 0x02 },
-    // BHOP: 读取从 0x25 (Chunk 2, Offset 5), 单字节 * 10 = ms
+    // BHOP: read from 0x25 (Chunk 2, Offset 5), single byte * 10 = ms.
     bhop: { chunk: 2, offset: 0x05 },
     buttons: DEFAULT_BUTTON_LAYOUT,
     buttonsMirror: DEFAULT_BUTTON_MIRROR_LAYOUT,
@@ -617,7 +629,7 @@
       );
       if (!Number.isFinite(rid)) throw new ProtocolError("encode(): reportId/iface required", "BAD_PARAM");
 
-      // Feature Index (由调用方传入动态索引)
+      // Feature Index (dynamic index provided by caller).
       const groupIndex = feat != null ? toU8(feat) : 0x00;
 
       if (!payloadBytes && !Number.isFinite(Number(cmd))) {
@@ -627,8 +639,8 @@
       const g = groupIndex;
       const c = toU8(cmd);
 
-      // HID++ 消息格式: [DeviceIndex] [FeatureIndex] [FunctionID] [Params...]
-      // Report ID (0x10/0x11) 通过 sendReport 单独传递，不包含在 payload 中
+      // HID++ message format: [DeviceIndex] [FeatureIndex] [FunctionID] [Params...]
+      // Report ID (0x10/0x11) is passed separately via sendReport and is not part of payload.
       const bytes = payloadBytes
         ? (payloadBytes instanceof Uint8Array ? payloadBytes : new Uint8Array(payloadBytes))
         : new Uint8Array([0x01, g, c, ...dataBytes.map(toU8)]);
@@ -648,9 +660,9 @@
       });
     },
 
-    // 抓包格式分析 (Header 0x6F):
+    // Captured packet format analysis (Header 0x6F):
     // OUT: 11 01 0D 6F 00 [ProfileId] 00 00 00 FF 00 00 00 00 00 00 00 00 00 00
-    // ProfileId: 0x01=配置1, 0x02=配置2, ...
+    // ProfileId: 0x01=profile1, 0x02=profile2, ...
     buildProfileStream(state, profile, targetProfileSlotIndex = null, featMap = {}) {
       const featProfile = toU8(
         Number.isFinite(Number(featMap?.PROFILE))
@@ -666,15 +678,15 @@
         : PROFILE_STREAM_HEADER;
       const layout = Object.assign({}, DEFAULT_STREAM_LAYOUT, prof.streamLayout || {});
 
-      // 根据目标 Profile Slot 修改 Header 中的 Profile ID
-      // Header 格式: [0x00, ProfileId, 0x00, 0x00, 0x00, 0xFF, ...]
-      // 如果未指定 targetProfileSlotIndex，使用 state.activeProfileSlotIndex 或默认 0
+      // Set Profile ID in header according to target Profile Slot.
+      // Header format: [0x00, ProfileId, 0x00, 0x00, 0x00, 0xFF, ...]
+      // If targetProfileSlotIndex is unspecified, use state.activeProfileSlotIndex or default 0.
       const profileSlotIndex = targetProfileSlotIndex != null
         ? clampInt(targetProfileSlotIndex, 0, 4)
         : clampInt(state.activeProfileSlotIndex ?? 0, 0, 4);
       const profileId = profileSlotIndex + 1; // 设备使用 1-based (0x01 ~ 0x05)
 
-      // 复制 header 并设置正确的 Profile ID
+      // Copy header and set the correct Profile ID.
       const headerBytes = [...baseHeaderBytes];
       if (headerBytes.length >= 2) {
         headerBytes[1] = profileId;
@@ -698,14 +710,14 @@
         }
       }
 
-      // 默认DPI档位索引写入 (Chunk 0, Byte 2)
+      // Write default DPI slot index (Chunk 0, Byte 2).
       if (state.defaultDpiSlotIndex != null) {
         const maxDpiSlots = clampInt(prof.capabilities?.dpiSlotMax ?? 5, 1, 10);
         const defaultIdx = clampInt(Number(state.defaultDpiSlotIndex), 0, maxDpiSlots - 1);
         setByte(layout.defaultDpiSlotIndex, defaultIdx);
       }
 
-      // DPI Slots 处理
+      // Process DPI slots.
       {
         const dpiCfg = layout.dpi || {};
         const maxDpiSlots = clampInt(prof.capabilities?.dpiSlotMax ?? dpiCfg.slots ?? 5, 1, 10);
@@ -823,11 +835,11 @@
             const loc = targets[i];
             const c = chunks[loc.chunk];
             if (!c) continue;
-            const code = TRANSFORMERS.buttonCode(entries[i]);
-            c[loc.offset + 0] = 0x80;
-            c[loc.offset + 1] = 0x01;
-            c[loc.offset + 2] = 0x00;
-            c[loc.offset + 3] = toU8(code);
+            const bytes = TRANSFORMERS.keymapActionBytes(entries[i]);
+            c[loc.offset + 0] = toU8(bytes[0]);
+            c[loc.offset + 1] = toU8(bytes[1]);
+            c[loc.offset + 2] = toU8(bytes[2]);
+            c[loc.offset + 3] = toU8(bytes[3]);
           }
         };
         applyButtons(layout.buttons);
@@ -1151,27 +1163,104 @@
       if (!raw) return 0x00;
       const v = raw.toLowerCase();
       const map = {
-        left: 0x01,
-        "left click": 0x01,
         "左键": 0x01,
-        right: 0x02,
-        "right click": 0x02,
         "右键": 0x02,
-        middle: 0x04,
-        "middle click": 0x04,
         "中键": 0x04,
-        back: 0x08,
         "后退": 0x08,
-        forward: 0x10,
         "前进": 0x10,
-        none: 0x00,
         "无": 0x00,
-        disable: 0x07,
-        disabled: 0x07,
-        "禁用": 0x07,
         "禁止按键": 0x07,
       };
       return map[v] ?? 0x00;
+    },
+    keymapActionBytes(value) {
+      const defaultBytes = [0x80, 0x01, 0x00, 0x00];
+
+      if (value == null) return defaultBytes.slice(0);
+      if (value instanceof Uint8Array || Array.isArray(value)) {
+        return normalizeLogitechKeymapRawBytes(value);
+      }
+      if (typeof value === "string") {
+        const canonical = normalizeLogitechActionLabel(value);
+        const action = canonical ? LABEL_TO_PROTOCOL_ACTION[canonical] : null;
+        return action ? TRANSFORMERS.keymapActionBytes(action) : defaultBytes.slice(0);
+      }
+      if (typeof value === "number") {
+        return [0x80, 0x01, 0x00, clampInt(value, 0, 0xff)];
+      }
+      if (!isObject(value)) return defaultBytes.slice(0);
+
+      if (value.rawBytes instanceof Uint8Array || Array.isArray(value.rawBytes)) {
+        return normalizeLogitechKeymapRawBytes(value.rawBytes);
+      }
+
+      const labelCandidate = String(value.label ?? value.source ?? "").trim();
+      if (labelCandidate) {
+        const canonical = normalizeLogitechActionLabel(labelCandidate);
+        const action = canonical ? LABEL_TO_PROTOCOL_ACTION[canonical] : null;
+        if (action) return TRANSFORMERS.keymapActionBytes(action);
+      }
+
+      const hasSemanticFields = (
+        value.funckey != null
+        || value.func != null
+        || value.keycode != null
+        || value.code != null
+      );
+
+      if (hasSemanticFields) {
+        const fk = toU8(value.funckey ?? value.func ?? 0);
+        const kc = clampInt(value.keycode ?? value.code ?? 0, 0, 0xffff);
+
+        if (kc === 0 && [0x00, 0x01, 0x02, 0x04, 0x07, 0x08, 0x10].includes(fk)) {
+          return [0x80, 0x01, 0x00, fk];
+        }
+        if (fk === LOGITECH_PUBLIC_FUNCKEY.KEYBOARD) {
+          return [0x80, 0x02, (kc >> 8) & 0xff, kc & 0xff];
+        }
+        if (fk === LOGITECH_PUBLIC_FUNCKEY.MEDIA) {
+          const page = ((kc >> 8) & 0xff) || 0x0c;
+          return [0x80, 0x03, page, kc & 0xff];
+        }
+        if (fk === LOGITECH_PUBLIC_FUNCKEY.SPECIAL && kc === LOGITECH_SPECIAL_KEYCODE.DPI_CYCLE) {
+          return [0x90, 0x05, 0xff, 0xff];
+        }
+      }
+
+      if (value.btn != null || value.button != null) {
+        return [0x80, 0x01, 0x00, clampInt(value.btn ?? value.button, 0, 0xff)];
+      }
+
+      return defaultBytes.slice(0);
+    },
+    keymapActionFromBytes(bytes4) {
+      const rawBytes = normalizeLogitechKeymapRawBytes(bytes4);
+      const [b0, b1, b2, b3] = rawBytes;
+
+      if (b0 === 0x80 && b1 === 0x01) {
+        const fk = toU8(b3);
+        const label = lookupLogitechActionLabel(fk, 0);
+        return makeLogitechButtonMappingEntry(fk, 0, label, rawBytes);
+      }
+
+      if (b0 === 0x80 && b1 === 0x02) {
+        const keycode = ((b2 << 8) | b3) & 0xffff;
+        const label = lookupLogitechActionLabel(LOGITECH_PUBLIC_FUNCKEY.KEYBOARD, keycode);
+        return makeLogitechButtonMappingEntry(LOGITECH_PUBLIC_FUNCKEY.KEYBOARD, keycode, label, rawBytes);
+      }
+
+      if (b0 === 0x80 && b1 === 0x03) {
+        const keycode = ((b2 << 8) | b3) & 0xffff;
+        const label = lookupLogitechActionLabel(LOGITECH_PUBLIC_FUNCKEY.MEDIA, keycode);
+        return makeLogitechButtonMappingEntry(LOGITECH_PUBLIC_FUNCKEY.MEDIA, keycode, label, rawBytes);
+      }
+
+      if (b0 === 0x90 && b1 === 0x05 && b2 === 0xff && b3 === 0xff) {
+        const label = lookupLogitechActionLabel(LOGITECH_PUBLIC_FUNCKEY.SPECIAL, LOGITECH_SPECIAL_KEYCODE.DPI_CYCLE) || "DPI循环";
+        return makeLogitechButtonMappingEntry(LOGITECH_PUBLIC_FUNCKEY.SPECIAL, LOGITECH_SPECIAL_KEYCODE.DPI_CYCLE, label, rawBytes);
+      }
+
+      return makeLogitechButtonMappingEntry(0xff, ((b2 << 8) | b3) & 0xffff, `原始 ${formatLogitechKeymapBytes(rawBytes)}`, rawBytes);
     },
   });
 
@@ -1180,25 +1269,7 @@
     const out = [];
     const n = clampInt(Number(count ?? 6), 1, 12);
     for (let i = 0; i < n; i++) {
-      const it = src[i];
-      if (isObject(it)) {
-        if (it.funckey != null || it.keycode != null || it.func != null) {
-          out.push({
-            funckey: toU8(it.funckey ?? it.func ?? 0),
-            keycode: clampInt(it.keycode ?? it.code ?? 0, 0, 0xffff),
-          });
-          continue;
-        }
-        if (it.code != null || it.btn != null || it.button != null || it.label != null) {
-          out.push({ funckey: TRANSFORMERS.buttonCode(it), keycode: 0 });
-          continue;
-        }
-      }
-      if (it != null) {
-        out.push({ funckey: TRANSFORMERS.buttonCode(it), keycode: 0 });
-        continue;
-      }
-      out.push({ funckey: 0, keycode: 0 });
+      out.push(normalizeLogitechButtonMappingEntry(src[i]));
     }
     return out;
   }
@@ -1522,10 +1593,61 @@
   };
 
   // ============================================================
-  // 8.5) Keymap helpers (subset for Logitech button mapping)
+  // 8.5) Keymap helpers (Logitech 4-byte action model)
   // ============================================================
-  const KEYMAP_ACTIONS = (() => {
+  const LOGITECH_PUBLIC_FUNCKEY = Object.freeze({
+    KEYBOARD: 0x20,
+    MEDIA: 0x30,
+    SPECIAL: 0x40,
+  });
+
+  const LOGITECH_SPECIAL_KEYCODE = Object.freeze({
+    DPI_CYCLE: 0x0001,
+  });
+
+  const LOGITECH_KEYBOARD_MODIFIERS = Object.freeze({
+    LEFT_CTRL: 0x01,
+    LEFT_SHIFT: 0x02,
+    LEFT_ALT: 0x04,
+    LEFT_WIN: 0x08,
+    RIGHT_CTRL: 0x10,
+    RIGHT_SHIFT: 0x20,
+    RIGHT_ALT: 0x40,
+    RIGHT_WIN: 0x80,
+  });
+
+  function normalizeLogitechKeymapRawBytes(rawBytes) {
+    const src = rawBytes instanceof Uint8Array
+      ? Array.from(rawBytes)
+      : (Array.isArray(rawBytes) ? rawBytes.slice(0) : []);
+    const out = [0x80, 0x01, 0x00, 0x00];
+    for (let i = 0; i < 4; i++) out[i] = toU8(src[i] ?? out[i]);
+    return out;
+  }
+
+  function formatLogitechKeymapBytes(rawBytes) {
+    return normalizeLogitechKeymapRawBytes(rawBytes)
+      .map((b) => toU8(b).toString(16).padStart(2, "0"))
+      .join(" ");
+  }
+
+  function makeLogitechButtonMappingEntry(funckey, keycode, source = "", rawBytes = null) {
+    const entry = {
+      funckey: toU8(funckey),
+      keycode: clampInt(keycode ?? 0, 0, 0xffff),
+    };
+    const label = String(source || "").trim();
+    if (label) entry.source = label;
+    if (rawBytes instanceof Uint8Array || Array.isArray(rawBytes)) {
+      entry.rawBytes = normalizeLogitechKeymapRawBytes(rawBytes);
+    }
+    return entry;
+  }
+
+  const KEYMAP_META = (() => {
     const actions = Object.create(null);
+    const aliases = Object.create(null);
+
     const add = (label, type, funckey, keycode) => {
       if (!label || actions[label]) return;
       actions[label] = {
@@ -1535,7 +1657,27 @@
       };
     };
 
-    // Basic mouse buttons
+    const addKeyboardUsage = (label, usage) => {
+      add(label, "keyboard", LOGITECH_PUBLIC_FUNCKEY.KEYBOARD, usage & 0xff);
+    };
+
+    const addKeyboardModifier = (label, modifierBit) => {
+      add(label, "keyboard", LOGITECH_PUBLIC_FUNCKEY.KEYBOARD, (toU8(modifierBit) << 8));
+    };
+
+    const addKeyboardChord = (label, modifierMask, usage) => {
+      const mod = toU8(modifierMask);
+      add(label, "keyboard", LOGITECH_PUBLIC_FUNCKEY.KEYBOARD, ((mod << 8) | (usage & 0xff)));
+    };
+
+    const addMedia = (label, usage) => {
+      add(label, "system", LOGITECH_PUBLIC_FUNCKEY.MEDIA, ((0x0c << 8) | toU8(usage)));
+    };
+
+    const addSpecial = (label, keycode) => {
+      add(label, "mouse", LOGITECH_PUBLIC_FUNCKEY.SPECIAL, keycode);
+    };
+
     add("左键", "mouse", 0x01, 0x0000);
     add("右键", "mouse", 0x02, 0x0000);
     add("中键", "mouse", 0x04, 0x0000);
@@ -1543,51 +1685,339 @@
     add("前进", "mouse", 0x10, 0x0000);
     add("无", "mouse", 0x00, 0x0000);
     add("禁止按键", "mouse", 0x07, 0x0000);
+    addSpecial("DPI循环", LOGITECH_SPECIAL_KEYCODE.DPI_CYCLE);
 
-    return Object.freeze(actions);
+    for (let i = 0; i < 26; i++) {
+      const upper = String.fromCharCode(65 + i);
+      addKeyboardUsage(upper, 0x04 + i);
+    }
+
+    [
+      ["1", 0x1e],
+      ["2", 0x1f],
+      ["3", 0x20],
+      ["4", 0x21],
+      ["5", 0x22],
+      ["6", 0x23],
+      ["7", 0x24],
+      ["8", 0x25],
+      ["9", 0x26],
+      ["0", 0x27],
+    ].forEach(([label, usage]) => addKeyboardUsage(label, usage));
+
+    for (let i = 1; i <= 12; i++) {
+      addKeyboardUsage(`F${i}`, 0x39 + i);
+    }
+
+    addKeyboardUsage("Enter", 0x28);
+    addKeyboardUsage("Esc", 0x29);
+    addKeyboardUsage("Backspace", 0x2a);
+    addKeyboardUsage("Tab", 0x2b);
+    addKeyboardUsage("Space", 0x2c);
+    addKeyboardUsage("- _", 0x2d);
+    addKeyboardUsage("= +", 0x2e);
+    addKeyboardUsage("[ {", 0x2f);
+    addKeyboardUsage("] }", 0x30);
+    addKeyboardUsage("\\ |", 0x31);
+    addKeyboardUsage("; :", 0x33);
+    addKeyboardUsage("' \"", 0x34);
+    addKeyboardUsage("` ~", 0x35);
+    addKeyboardUsage(", <", 0x36);
+    addKeyboardUsage(". >", 0x37);
+    addKeyboardUsage("/ ?", 0x38);
+    addKeyboardUsage("Caps Lock", 0x39);
+    addKeyboardUsage("Print Screen", 0x46);
+    addKeyboardUsage("Scroll Lock", 0x47);
+    addKeyboardUsage("Pause", 0x48);
+    addKeyboardUsage("Insert", 0x49);
+    addKeyboardUsage("Home", 0x4a);
+    addKeyboardUsage("Page Up", 0x4b);
+    addKeyboardUsage("Delete", 0x4c);
+    addKeyboardUsage("End", 0x4d);
+    addKeyboardUsage("Page Down", 0x4e);
+    addKeyboardUsage("Right Arrow", 0x4f);
+    addKeyboardUsage("Left Arrow", 0x50);
+    addKeyboardUsage("Down Arrow", 0x51);
+    addKeyboardUsage("Up Arrow", 0x52);
+    addKeyboardUsage("Num Lock", 0x53);
+    addKeyboardUsage("Numpad /", 0x54);
+    addKeyboardUsage("Numpad *", 0x55);
+    addKeyboardUsage("Numpad -", 0x56);
+    addKeyboardUsage("Numpad +", 0x57);
+    addKeyboardUsage("Numpad Enter", 0x58);
+    addKeyboardUsage("Numpad 1", 0x59);
+    addKeyboardUsage("Numpad 2", 0x5a);
+    addKeyboardUsage("Numpad 3", 0x5b);
+    addKeyboardUsage("Numpad 4", 0x5c);
+    addKeyboardUsage("Numpad 5", 0x5d);
+    addKeyboardUsage("Numpad 6", 0x5e);
+    addKeyboardUsage("Numpad 7", 0x5f);
+    addKeyboardUsage("Numpad 8", 0x60);
+    addKeyboardUsage("Numpad 9", 0x61);
+    addKeyboardUsage("Numpad 0", 0x62);
+    addKeyboardUsage("Numpad .", 0x63);
+
+    addKeyboardModifier("Left Ctrl", LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL);
+    addKeyboardModifier("Left Shift", LOGITECH_KEYBOARD_MODIFIERS.LEFT_SHIFT);
+    addKeyboardModifier("Left Alt", LOGITECH_KEYBOARD_MODIFIERS.LEFT_ALT);
+    addKeyboardModifier("Left Win", LOGITECH_KEYBOARD_MODIFIERS.LEFT_WIN);
+    addKeyboardModifier("Right Ctrl", LOGITECH_KEYBOARD_MODIFIERS.RIGHT_CTRL);
+    addKeyboardModifier("Right Shift", LOGITECH_KEYBOARD_MODIFIERS.RIGHT_SHIFT);
+    addKeyboardModifier("Right Alt", LOGITECH_KEYBOARD_MODIFIERS.RIGHT_ALT);
+    addKeyboardModifier("Right Win", LOGITECH_KEYBOARD_MODIFIERS.RIGHT_WIN);
+
+    addKeyboardChord(
+      "复制 Ctrl + C",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x06,
+      []
+    );
+    addKeyboardChord(
+      "粘贴 Ctrl + V",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x19,
+      []
+    );
+    addKeyboardChord(
+      "剪切 Ctrl + X",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x1b,
+      []
+    );
+    addKeyboardChord(
+      "撤销 Ctrl + Z",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x1d,
+      []
+    );
+    addKeyboardChord(
+      "重做 Ctrl + Y",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x1c,
+      []
+    );
+    addKeyboardChord(
+      "全选 Ctrl + A",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x04,
+      []
+    );
+    addKeyboardChord(
+      "查找 Ctrl + F",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x09,
+      []
+    );
+    addKeyboardChord(
+      "新建 Ctrl + N",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x11,
+      []
+    );
+    addKeyboardChord(
+      "打开 Ctrl + O",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x12,
+      []
+    );
+    addKeyboardChord(
+      "保存 Ctrl + S",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x16,
+      []
+    );
+    addKeyboardChord(
+      "另存为 Ctrl + Shift + S",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL | LOGITECH_KEYBOARD_MODIFIERS.LEFT_SHIFT,
+      0x16,
+      []
+    );
+    addKeyboardChord(
+      "打印 Ctrl + P",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x13,
+      []
+    );
+    addKeyboardChord(
+      "关闭标签页 Ctrl + W",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL,
+      0x1a,
+      []
+    );
+    addKeyboardChord(
+      "恢复关闭标签页 Ctrl + Shift + T",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL | LOGITECH_KEYBOARD_MODIFIERS.LEFT_SHIFT,
+      0x17,
+      []
+    );
+    addKeyboardChord(
+      "切换窗口 Alt + Tab",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_ALT,
+      0x2b,
+      []
+    );
+    addKeyboardChord(
+      "关闭窗口 Alt + F4",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_ALT,
+      0x3d,
+      []
+    );
+    addKeyboardChord(
+      "任务管理器 Ctrl + Shift + Esc",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_CTRL | LOGITECH_KEYBOARD_MODIFIERS.LEFT_SHIFT,
+      0x29,
+      []
+    );
+    addKeyboardChord(
+      "显示桌面 Win + D",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_WIN,
+      0x07,
+      []
+    );
+    addKeyboardChord(
+      "文件资源管理器 Win + E",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_WIN,
+      0x08,
+      []
+    );
+    addKeyboardChord(
+      "锁定电脑 Win + L",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_WIN,
+      0x0f,
+      []
+    );
+    addKeyboardChord(
+      "运行 Win + R",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_WIN,
+      0x15,
+      []
+    );
+    addKeyboardChord(
+      "打开设置 Win + I",
+      LOGITECH_KEYBOARD_MODIFIERS.LEFT_WIN,
+      0x0c,
+      []
+    );
+
+    addMedia("播放/暂停", 0xcd);
+    addMedia("上一曲", 0xb6);
+    addMedia("下一曲", 0xb5);
+    addMedia("静音", 0xe2);
+    addMedia("音量加", 0xe9);
+    addMedia("音量减", 0xea);
+
+    return {
+      actions: Object.freeze(actions),
+      aliases: Object.freeze(aliases),
+    };
   })();
 
+  const KEYMAP_ACTIONS = KEYMAP_META.actions;
   ProtocolApi.KEYMAP_ACTIONS = KEYMAP_ACTIONS;
 
-  const KEYMAP_LABEL_ALIASES = Object.freeze({
-    left: "左键",
-    "left click": "左键",
-    right: "右键",
-    "right click": "右键",
-    middle: "中键",
-    "middle click": "中键",
-    back: "后退",
-    forward: "前进",
-    none: "无",
-    disable: "禁止按键",
-    disabled: "禁止按键",
-  });
-
   const LABEL_TO_PROTOCOL_ACTION = Object.freeze(
-    Object.fromEntries(Object.entries(KEYMAP_ACTIONS).map(([label, a]) => [label, { funckey: a.funckey, keycode: a.keycode }]))
+    Object.fromEntries(Object.entries(KEYMAP_ACTIONS).map(([label, action]) => [
+      label,
+      { funckey: action.funckey, keycode: action.keycode },
+    ]))
   );
 
   const FUNCKEY_KEYCODE_TO_LABEL = (() => {
-    const m = new Map();
-    for (const [label, a] of Object.entries(KEYMAP_ACTIONS)) {
-      const k = `${Number(a.funckey)}:${Number(a.keycode)}`;
-      if (!m.has(k)) m.set(k, label);
+    const out = new Map();
+    for (const [label, action] of Object.entries(KEYMAP_ACTIONS)) {
+      const key = `${Number(action.funckey)}:${Number(action.keycode)}`;
+      if (!out.has(key)) out.set(key, label);
     }
-    return m;
+    return out;
   })();
+
+  function normalizeLogitechActionLabel(label) {
+    const raw = String(label || "").trim();
+    if (!raw) return "";
+    return raw;
+  }
+
+  function lookupLogitechActionLabel(funckey, keycode) {
+    return FUNCKEY_KEYCODE_TO_LABEL.get(`${Number(funckey)}:${Number(keycode)}`) || "";
+  }
+
+  function isWritableLogitechSemanticAction(funckey, keycode) {
+    const fk = toU8(funckey);
+    const kc = clampInt(keycode ?? 0, 0, 0xffff);
+    if (kc === 0 && [0x00, 0x01, 0x02, 0x04, 0x07, 0x08, 0x10].includes(fk)) return true;
+    if (fk === LOGITECH_PUBLIC_FUNCKEY.KEYBOARD) return true;
+    if (fk === LOGITECH_PUBLIC_FUNCKEY.MEDIA) return true;
+    if (fk === LOGITECH_PUBLIC_FUNCKEY.SPECIAL && kc === LOGITECH_SPECIAL_KEYCODE.DPI_CYCLE) return true;
+    return false;
+  }
+
+  function normalizeLogitechButtonMappingEntry(value, opts = {}) {
+    const strictLabel = !!opts.strictLabel;
+    const fallback = () => makeLogitechButtonMappingEntry(0x00, 0x0000, "无", [0x80, 0x01, 0x00, 0x00]);
+
+    if (value == null) return fallback();
+
+    if (typeof value === "string") {
+      const canonical = normalizeLogitechActionLabel(value);
+      const action = canonical ? LABEL_TO_PROTOCOL_ACTION[canonical] : null;
+      if (!action) return strictLabel ? null : fallback();
+      return makeLogitechButtonMappingEntry(action.funckey, action.keycode, canonical, TRANSFORMERS.keymapActionBytes(action));
+    }
+
+    if (typeof value === "number") {
+      return normalizeLogitechButtonMappingEntry({ funckey: clampInt(value, 0, 0xff), keycode: 0 });
+    }
+
+    if (!isObject(value)) return strictLabel ? null : fallback();
+
+    if (value.rawBytes instanceof Uint8Array || Array.isArray(value.rawBytes)) {
+      const decoded = TRANSFORMERS.keymapActionFromBytes(value.rawBytes);
+      const source = String(value.source ?? value.label ?? "").trim();
+      if (source && !decoded.source) decoded.source = source;
+      return decoded;
+    }
+
+    const labelCandidate = String(value.label ?? value.source ?? "").trim();
+    if (labelCandidate) {
+      const canonical = normalizeLogitechActionLabel(labelCandidate);
+      const action = canonical ? LABEL_TO_PROTOCOL_ACTION[canonical] : null;
+      if (action) {
+        return makeLogitechButtonMappingEntry(action.funckey, action.keycode, canonical, TRANSFORMERS.keymapActionBytes(action));
+      }
+      if (strictLabel) return null;
+    }
+
+    if (value.funckey != null || value.func != null || value.keycode != null || value.code != null) {
+      const funckey = toU8(value.funckey ?? value.func ?? 0);
+      const keycode = clampInt(value.keycode ?? value.code ?? 0, 0, 0xffff);
+      if (!isWritableLogitechSemanticAction(funckey, keycode)) {
+        return strictLabel ? null : fallback();
+      }
+      const source = lookupLogitechActionLabel(funckey, keycode) || String(value.source ?? value.label ?? "").trim();
+      return makeLogitechButtonMappingEntry(funckey, keycode, source, TRANSFORMERS.keymapActionBytes({ funckey, keycode }));
+    }
+
+    if (value.btn != null || value.button != null) {
+      const funckey = clampInt(value.btn ?? value.button, 0, 0xff);
+      const source = lookupLogitechActionLabel(funckey, 0) || String(value.source ?? value.label ?? "").trim();
+      return makeLogitechButtonMappingEntry(funckey, 0, source, TRANSFORMERS.keymapActionBytes({ funckey, keycode: 0 }));
+    }
+
+    return strictLabel ? null : fallback();
+  }
 
   ProtocolApi.labelFromFunckeyKeycode = function labelFromFunckeyKeycode(funckey, keycode) {
     const fk = Number(funckey);
     const kc = Number(keycode);
-    return FUNCKEY_KEYCODE_TO_LABEL.get(`${fk}:${kc}`) || `未知(${fk},${kc})`;
+    return lookupLogitechActionLabel(fk, kc) || `未知(${fk},${kc})`;
   };
 
   ProtocolApi.listKeyActionsByType = function listKeyActionsByType() {
     const buckets = Object.create(null);
-    for (const [label, a] of Object.entries(KEYMAP_ACTIONS)) {
-      const t = String(a.type || "system");
-      if (!buckets[t]) buckets[t] = [];
-      buckets[t].push(label);
+    for (const [label, action] of Object.entries(KEYMAP_ACTIONS)) {
+      const type = String(action.type || "system");
+      if (!buckets[type]) buckets[type] = [];
+      buckets[type].push(label);
     }
     return Object.entries(buckets).map(([type, items]) => ({ type, items }));
   };
@@ -2115,24 +2545,14 @@
     async setButtonMappingBySelect(btnId, labelOrObj) {
       const b = clampInt(assertFiniteNumber(btnId, "btnId"), 1, 6);
 
-      let action;
-      if (typeof labelOrObj === "string") {
-        const raw = labelOrObj.trim();
-        const alias = KEYMAP_LABEL_ALIASES[raw.toLowerCase()] || raw;
-        action = LABEL_TO_PROTOCOL_ACTION[alias];
-        if (!action) throw new ProtocolError(`未知的按键动作: ${labelOrObj}`, "BAD_PARAM");
-      } else if (isObject(labelOrObj)) {
-        action = {
-          funckey: Number(labelOrObj.funckey ?? labelOrObj.func ?? 0),
-          keycode: Number(labelOrObj.keycode ?? labelOrObj.code ?? 0),
-        };
-      } else {
-        throw new ProtocolError("不支持的参数类型，必须为 label 或对象", "BAD_PARAM");
+      const action = normalizeLogitechButtonMappingEntry(labelOrObj, { strictLabel: true });
+      if (!action) {
+        throw new ProtocolError(`未知或不支持的按键动作: ${String(labelOrObj ?? "")}`, "BAD_PARAM");
       }
 
       const next = Array.isArray(this._cfg.buttonMappings) ? this._cfg.buttonMappings.slice(0) : [];
-      while (next.length < 6) next.push({ funckey: 0, keycode: 0 });
-      next[b - 1] = { funckey: toU8(action.funckey), keycode: clampInt(action.keycode ?? 0, 0, 0xffff) };
+      while (next.length < 6) next.push(normalizeLogitechButtonMappingEntry(null));
+      next[b - 1] = action;
 
       await this.setBatchFeatures({ buttonMappings: next });
     }
@@ -2780,19 +3200,11 @@
         const base = resolveButtonBaseOffset(i);
         if (base + 3 >= rawData.length) break;
 
-        const type = rawData[base];
-        const subType = rawData[base + 1];
-        const param2 = rawData[base + 3]; // FuncKey
-
-        // 按键映射格式: 0x80 0x01 0x00 [FuncKey]
-        if (type === 0x80 && subType === 0x01) {
-          buttonMappings.push({ funckey: param2, keycode: 0 });
-        } else {
-          buttonMappings.push({ funckey: 0, keycode: 0 });
-        }
+        const bytes4 = rawData.slice(base, base + 4);
+        buttonMappings.push(TRANSFORMERS.keymapActionFromBytes(bytes4));
       }
       while (buttonMappings.length < 6) {
-        buttonMappings.push({ funckey: 0, keycode: 0 });
+        buttonMappings.push(normalizeLogitechButtonMappingEntry(null));
       }
 
       // 解析 BHOP (Chunk 2, Offset 0x25)
@@ -2952,14 +3364,14 @@
       const dpiSlotsX = dpiSlots.slice(0);
       const dpiSlotsY = dpiSlots.slice(0);
 
-      const buttonMappings = [
+      const buttonMappings = normalizeButtonMappings([
         { funckey: 0x01, keycode: 0x0000 },
         { funckey: 0x02, keycode: 0x0000 },
         { funckey: 0x04, keycode: 0x0000 },
         { funckey: 0x10, keycode: 0x0000 },
         { funckey: 0x08, keycode: 0x0000 },
         { funckey: 0x00, keycode: 0x0000 },
-      ];
+      ], 6);
 
       return {
         capabilities: {

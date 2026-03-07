@@ -23,8 +23,8 @@ const MOUSE_HID = {
     [0x1915, 0x550c], // 无线 1K
     [0x1915, 0x550b], // 无线 8K
   ],
-  // WebHID requestDevice 可用的默认过滤器
-  // 1K 设备/有线模式使用 65290，8K 接收器使用 65280
+  // Default filters for WebHID requestDevice.
+  // 1K devices / wired mode use 65290; 8K receivers use 65280.
   defaultFilters: [
     // --- CHAOS M1 ---
     { vendorId: 0x1915, productId: 0x521c, usagePage: 65290 }, // 有线
@@ -74,7 +74,7 @@ const MOUSE_HID = {
 };
 
 // =====================================================================================
-// 设备识别：VendorID/ProductID -> 设备显示名
+// Device identification: VendorID/ProductID -> device display name
 // =====================================================================================
 const MOUSE_DEVICE_DISPLAY_NAME_BY_PID = Object.freeze({
   // CHAOS M1
@@ -96,7 +96,7 @@ const MOUSE_DEVICE_DISPLAY_NAME_BY_PID = Object.freeze({
 });
 
 /**
- * 根据 (vendorId, productId) 获取网页显示的设备名称。
+ * Resolve the web-visible device name from (vendorId, productId).
  * @param {number} vendorId
  * @param {number} productId
  * @param {string} [fallbackName]
@@ -111,11 +111,12 @@ function resolveMouseDisplayName(vendorId, productId, fallbackName = "") {
 }
 
 // =====================================================================================
-// 固件版本解析：Uint8(0~255) -> "Vx.y.z"
+// Firmware version parsing: Uint8(0~255) -> "Vx.y.z"
 // =====================================================================================
 /**
- * 将 0~255 的十进制数转为版本号：padStart(3) 后按 百位.十位.个位 显示。
- * 例：15 -> "015" -> V0.1.5
+ * Convert decimal 0~255 to version string:
+ * after padStart(3), render as hundreds.tens.ones.
+ * Example: 15 -> "015" -> V0.1.5
  * @param {number} n
  */
 function uint8ToVersion(n) {
@@ -124,15 +125,16 @@ function uint8ToVersion(n) {
   return `V${s[0]}.${s[1]}.${s[2]}`;
 }
 
-/** 把 -128..127 的数写入 Uint8（补码） */
+/** Write a -128..127 value into Uint8 (two's complement). */
 function int8ToUint8(v) {
-  // 直接利用补码：对 JS 来说，(n & 0xFF) 等价于“转换为无符号字节”
+  // Use two's complement directly: in JS, (n & 0xFF) is equivalent to casting to an unsigned byte.
   return (Number(v) | 0) & 0xff;
 }
 
 /**
- * 设备侧对 Angle / Feel 的“有符号值”编码在不同固件里存在差异：
- * 这里保留通用补码解码（uint8ToInt8），并提供 angle/feel 专用解码以兼容工程语义。
+ * Device-side signed encoding for Angle / Feel differs across firmware versions.
+ * Keep generic two's-complement decoding (uint8ToInt8), and provide
+ * angle/feel-specific decoding for project-level semantic compatibility.
  */
 function uint8ToInt8(u) {
   const n = u & 0xff;
@@ -147,13 +149,13 @@ function decodeSensorAngleRaw(raw) {
 function decodeSensorFeelRaw(raw) {
   const n = raw & 0xff;
   if (n <= 127) return n > 65 ? n - 128 : n;
-  // 兜底：若有固件使用标准补码，则回退
+  // Fallback: if firmware uses standard two's complement, fall back to generic decoding.
   return uint8ToInt8(n);
 }
 
 /**
- * HID：编码 DPI 写入/切换
- * 固件使用的 DPI 单位：50（index = dpi/50）
+ * HID: encode DPI write/switch operations.
+ * Firmware DPI unit is 50 (index = dpi / 50).
  * payload:
  *   b1 = (index>>8) | (slot<<5)   // slot: 1..6
  *   b2 = index & 0xFF
@@ -164,14 +166,14 @@ function sanitizeDpiInput(dpi, { min = 50, max = 30000, step = 50 } = {}) {
   const n = Number(dpi);
   if (!Number.isFinite(n)) return null;
 
-  // 1. 范围限制
+  // 1) Range clamp
   const clamped = Math.max(min, Math.min(max, n));
   
-  // 2. 步进对齐 (四舍五入到最近的 step 倍数)
-  // 避免浮点数除法残差，先除后乘
+  // 2) Step alignment (round to nearest step multiple)
+  // Divide first, then multiply, to avoid floating-point residual errors.
   const stepped = Math.round(clamped / step) * step;
 
-  // 3. 再次夹紧 (防止 round 导致极其接近 max 时溢出)
+  // 3) Clamp again to avoid near-max overflow caused by rounding.
   return Math.max(min, Math.min(max, stepped));
 }
 
@@ -179,14 +181,14 @@ function sanitizeDpiInput(dpi, { min = 50, max = 30000, step = 50 } = {}) {
 
 function encodeSetDpi(slot1to6, dpi, { select = false } = {}) {
   const slot = Math.max(1, Math.min(6, Number(slot1to6) | 0));
-  // 调用工具函数清洗数据 (默认 50-30000, 步进 50)
+  // Normalize input with utility function (default 50-30000, step 50).
   const safeDpi = sanitizeDpiInput(dpi);
-  // 如果清洗结果为 null (无效输入)，则抛出异常，防止写入错误指令
+  // If normalized result is null (invalid input), throw to prevent writing invalid commands.
   if (safeDpi === null) {
     throw new TypeError(`Invalid DPI value: ${dpi}`);
   }
-  // 固件单位通常为 50（index = dpi/50）
-  // 注意：safeDpi 已经是 50 的倍数，直接除即可
+  // Firmware unit is usually 50 (index = dpi/50).
+  // safeDpi is already aligned to multiples of 50, so direct division is safe.
   const index = (safeDpi / 50) & 0xffff;
 
   const b1 = ((index >> 8) & 0x1f) | ((slot & 0x07) << 5);
@@ -206,7 +208,7 @@ function encodeSetPollingRateHz(hz) {
 }
 
 function encodeSetSleepSeconds(seconds) {
-  // 反查最接近的 code；若 UI 只用枚举，建议直接用 code
+  // Reverse-map nearest code; if UI is enum-only, using code directly is recommended.
   const sec = Number(seconds) | 0;
   let bestCode = 1;
   let bestDist = Infinity;
@@ -227,7 +229,7 @@ function encodeSetModeByte(modeByte) {
 }
 
 
-// ====== 语义化状态 <-> modeByte（协议层负责位运算，UI 层不碰） ======
+// ====== Semantic state <-> modeByte (bit operations belong to protocol layer, not UI) ======
 function decodeModeByteToState(modeByte) {
   const mb = Number(modeByte) & 0xff;
 
@@ -256,10 +258,10 @@ function decodeModeByteToState(modeByte) {
 function encodeModeByteFromState(stateLike) {
   const s = stateLike && typeof stateLike === "object" ? stateLike : {};
 
-  // - 支持“增量更新”。
-  // - 如果调用方提供了 modeByte/mode_byte 作为 base，则先以 base 为起点。
-  // - 仅当 payload 中“明确出现某字段”时，才更新对应 bit。
-  // 这样可以避免 UI 只改一个开关时，其他 bit 被默认值覆盖（刷新页误开/误关）。
+  // - Supports incremental updates.
+  // - If caller provides modeByte/mode_byte as base, start from that base.
+  // - Update a bit only when the corresponding field is explicitly present in payload.
+  // This avoids overriding unrelated bits when UI changes only one switch.
 
   const baseRaw = s.modeByte ?? s.mode_byte;
   let mb = Number.isFinite(Number(baseRaw)) ? (Number(baseRaw) & 0xff) : 0;
@@ -310,7 +312,7 @@ function encodeModeByteFromState(stateLike) {
   if (hasAny(["performanceMode", "performance_mode"])) {
     const perf = String(pick(["performanceMode", "performance_mode"]) ?? "low").toLowerCase();
 
-    // 先清空性能位
+    // Clear performance bits first.
     mb &= ~((1 << 7) | (1 << 5) | (1 << 4));
 
     if (perf === "oc") mb |= (1 << 7);
@@ -334,18 +336,18 @@ function encodeSetSensorAngle(angle) {
 
 function encodeSetSensorFeel(feel) {
   const v = Number(feel) | 0;
-  // 优先按 7-bit 规则编码（兼容面更广）
+  // Prefer 7-bit rule encoding first (broader compatibility).
   const f = Math.max(-62, Math.min(65, v));
   const raw = f < 0 ? (128 + f) & 0x7f : (f & 0x7f);
   return Uint8Array.from([MOUSE_HID.cmds.SET_SENSOR_FEEL, raw]);
 }
 
 /**
- * 归一化按钮 ID：
- * - UI/逻辑里 ButtonId 语义通常是 1..6（人类可读）
- * - 固件侧通常是 0..5
+ * Normalize button ID:
+ * - In UI/logic, ButtonId semantics are usually 1..6 (human-readable)
+ * - On firmware side, IDs are usually 0..5
  *
- * 这里做“尽量不抛异常”的归一化：任何异常输入都会被夹到 0..5，避免 UI 崩溃。
+ * Use non-throw normalization: clamp abnormal input to 0..5 to avoid UI crashes.
  * @param {number} btnId
  */
 function normalizeButtonId(btnId) {
@@ -354,12 +356,12 @@ function normalizeButtonId(btnId) {
   const i = n | 0;
   if (i >= 1 && i <= 6) return i - 1;
   if (i >= 0 && i <= 5) return i;
-  // 兜底：夹紧到合法范围，避免抛错导致 UI 直接崩
+  // Fallback: clamp to valid range to avoid throw-driven UI crashes.
   return Math.max(0, Math.min(5, i));
 }
 
 /**
- * 按键映射 payload
+ * Key mapping payload
  * [0]=0x21, [1]=btnId(0..5), [2]=funckey, [3]=keycode
  */
 function encodeButtonMapping(btnId1to6, funckey, keycode) {
@@ -374,15 +376,16 @@ function encodeButtonMapping(btnId1to6, funckey, keycode) {
 
 
 /* =====================================================================================
- * 2) 按键映射：Select 字符串 → (funckey, keycode)
+ * 2) Key mapping: Select string -> (funckey, keycode)
  * =====================================================================================
  *
- * 核心规则：
- * - 默认 funckey=0x60（键盘类）；bit0/1/2/3 分别代表 Ctrl/Shift/Alt/Win 修饰键。
- * - 鼠标基础功能：funckey=0x20，keycode 对应 左/右/中/后退/前进/DPI循环/禁用。
- * - 多媒体/系统功能：funckey=0x40，keycode 对应 音量/播放/亮度 等。
- * - 部分“常用快捷”在原工程里会直接写死 funckey（如 0x61=Ctrl, 0x62=Shift, 0x65=Ctrl+Alt），
- *   这类条目会覆盖 UI 勾选的修饰键。
+ * Core rules:
+ * - Default funckey=0x60 (keyboard class); bits 0/1/2/3 map to Ctrl/Shift/Alt/Win modifiers.
+ * - Basic mouse actions: funckey=0x20, keycode maps to left/right/middle/back/forward/DPI cycle/disable.
+ * - Multimedia/system actions: funckey=0x40, keycode maps to volume/playback/brightness, etc.
+ * - Some common shortcuts hardcode funckey in legacy behavior
+ *   (for example 0x61=Ctrl, 0x62=Shift, 0x65=Ctrl+Alt),
+ *   and those entries override UI-selected modifier bits.
  */
 
 const KEYBOARD_MOD_BITS = Object.freeze({
@@ -394,32 +397,32 @@ const KEYBOARD_MOD_BITS = Object.freeze({
 
 const KEYMAP_ACTIONS = Object.freeze({
   "MODIFIER_ONLY": { type: "keyboard", special: "MODIFIER_ONLY", keycode: 0, allowModifiers: true },
-  "禁用按键": { type: "mouse", funckey: 0x20, keycode: 255, fixedFunckey: true, allowModifiers: false },
+  "禁止按键": { type: "mouse", funckey: 0x20, keycode: 255, fixedFunckey: true, allowModifiers: false },
   "左键": { type: "mouse", funckey: 0x20, keycode: 0, fixedFunckey: true, allowModifiers: false },
   "右键": { type: "mouse", funckey: 0x20, keycode: 1, fixedFunckey: true, allowModifiers: false },
   "中键": { type: "mouse", funckey: 0x20, keycode: 2, fixedFunckey: true, allowModifiers: false },
   "后退": { type: "mouse", funckey: 0x20, keycode: 3, fixedFunckey: true, allowModifiers: false },
   "前进": { type: "mouse", funckey: 0x20, keycode: 4, fixedFunckey: true, allowModifiers: false },
   "DPI循环": { type: "mouse", funckey: 0x20, keycode: 5, fixedFunckey: true, allowModifiers: false },
-  "音量上": { type: "system", funckey: 0x40, keycode: 0, fixedFunckey: true, allowModifiers: false },
-  "音量下": { type: "system", funckey: 0x40, keycode: 1, fixedFunckey: true, allowModifiers: false },
+  "音量加": { type: "system", funckey: 0x40, keycode: 0, fixedFunckey: true, allowModifiers: false },
+  "音量减": { type: "system", funckey: 0x40, keycode: 1, fixedFunckey: true, allowModifiers: false },
   "静音": { type: "system", funckey: 0x40, keycode: 2, fixedFunckey: true, allowModifiers: false },
-  "打开播放器": { type: "system", funckey: 0x40, keycode: 3, fixedFunckey: true, allowModifiers: false },
+  "媒体播放器": { type: "system", funckey: 0x40, keycode: 3, fixedFunckey: true, allowModifiers: false },
   "播放/暂停": { type: "system", funckey: 0x40, keycode: 4, fixedFunckey: true, allowModifiers: false },
   "下一曲": { type: "system", funckey: 0x40, keycode: 5, fixedFunckey: true, allowModifiers: false },
   "上一曲": { type: "system", funckey: 0x40, keycode: 6, fixedFunckey: true, allowModifiers: false },
   "停止播放": { type: "system", funckey: 0x40, keycode: 7, fixedFunckey: true, allowModifiers: false },
   "屏幕亮度增加": { type: "system", funckey: 0x40, keycode: 8, fixedFunckey: true, allowModifiers: false },
   "屏幕亮度减少": { type: "system", funckey: 0x40, keycode: 9, fixedFunckey: true, allowModifiers: false },
-  "复制": { type: "keyboard", funckey: 0x61, keycode: 6, fixedFunckey: true, allowModifiers: false },
-  "粘贴": { type: "keyboard", funckey: 0x61, keycode: 25, fixedFunckey: true, allowModifiers: false },
-  "剪切": { type: "keyboard", funckey: 0x61, keycode: 27, fixedFunckey: true, allowModifiers: false },
-  "撤销": { type: "keyboard", funckey: 0x61, keycode: 29, fixedFunckey: true, allowModifiers: false },
+  "复制 Ctrl + C": { type: "keyboard", funckey: 0x61, keycode: 6, fixedFunckey: true, allowModifiers: false },
+  "粘贴 Ctrl + V": { type: "keyboard", funckey: 0x61, keycode: 25, fixedFunckey: true, allowModifiers: false },
+  "剪切 Ctrl + X": { type: "keyboard", funckey: 0x61, keycode: 27, fixedFunckey: true, allowModifiers: false },
+  "撤销 Ctrl + Z": { type: "keyboard", funckey: 0x61, keycode: 29, fixedFunckey: true, allowModifiers: false },
   "打开Linux终端": { type: "keyboard", funckey: 0x65, keycode: 23, fixedFunckey: true, allowModifiers: false },
-  "复制(Ctrl+Insert)": { type: "keyboard", funckey: 0x61, keycode: 73, fixedFunckey: true, allowModifiers: false },
-  "粘贴(Shift+Insert)": { type: "keyboard", funckey: 0x62, keycode: 73, fixedFunckey: true, allowModifiers: false },
-  "移动到回收站(Delete)": { type: "keyboard", funckey: 0x60, keycode: 76, fixedFunckey: true, allowModifiers: false },
-  "强制删除文件(Shift+Delete)": { type: "keyboard", funckey: 0x62, keycode: 76, fixedFunckey: true, allowModifiers: false },
+  "复制 Ctrl + Insert": { type: "keyboard", funckey: 0x61, keycode: 73, fixedFunckey: true, allowModifiers: false },
+  "粘贴 Shift + Insert": { type: "keyboard", funckey: 0x62, keycode: 73, fixedFunckey: true, allowModifiers: false },
+  "移动到回收站 Delete": { type: "keyboard", funckey: 0x60, keycode: 76, fixedFunckey: true, allowModifiers: false },
+  "强制删除文件 Shift + Delete": { type: "keyboard", funckey: 0x62, keycode: 76, fixedFunckey: true, allowModifiers: false },
   "A": { type: "keyboard", keycode: 4, allowModifiers: true },
   "B": { type: "keyboard", keycode: 5, allowModifiers: true },
   "C": { type: "keyboard", keycode: 6, allowModifiers: true },
@@ -457,22 +460,22 @@ const KEYMAP_ACTIONS = Object.freeze({
   "9": { type: "keyboard", keycode: 38, allowModifiers: true },
   "0": { type: "keyboard", keycode: 39, allowModifiers: true },
   "Enter": { type: "keyboard", keycode: 40, allowModifiers: true },
-  "ESC": { type: "keyboard", keycode: 41, allowModifiers: true },
-  "Back": { type: "keyboard", keycode: 42, allowModifiers: true },
-  "TAB": { type: "keyboard", keycode: 43, allowModifiers: true },
+  "Esc": { type: "keyboard", keycode: 41, allowModifiers: true },
+  "Backspace": { type: "keyboard", keycode: 42, allowModifiers: true },
+  "Tab": { type: "keyboard", keycode: 43, allowModifiers: true },
   "Space": { type: "keyboard", keycode: 44, allowModifiers: true },
-  "-": { type: "keyboard", keycode: 45, allowModifiers: true },
-  "=": { type: "keyboard", keycode: 46, allowModifiers: true },
-  "[": { type: "keyboard", keycode: 47, allowModifiers: true },
-  "]": { type: "keyboard", keycode: 48, allowModifiers: true },
-  "\\": { type: "keyboard", keycode: 49, allowModifiers: true },
-  ";": { type: "keyboard", keycode: 51, allowModifiers: true },
-  "'": { type: "keyboard", keycode: 52, allowModifiers: true },
-  "`": { type: "keyboard", keycode: 53, allowModifiers: true },
-  ",": { type: "keyboard", keycode: 54, allowModifiers: true },
-  ".": { type: "keyboard", keycode: 55, allowModifiers: true },
-  "/": { type: "keyboard", keycode: 56, allowModifiers: true },
-  "CapsLock": { type: "keyboard", keycode: 57, allowModifiers: true },
+  "- _": { type: "keyboard", keycode: 45, allowModifiers: true },
+  "= +": { type: "keyboard", keycode: 46, allowModifiers: true },
+  "[ {": { type: "keyboard", keycode: 47, allowModifiers: true },
+  "] }": { type: "keyboard", keycode: 48, allowModifiers: true },
+  "\\ |": { type: "keyboard", keycode: 49, allowModifiers: true },
+  "; :": { type: "keyboard", keycode: 51, allowModifiers: true },
+  "' \"": { type: "keyboard", keycode: 52, allowModifiers: true },
+  "` ~": { type: "keyboard", keycode: 53, allowModifiers: true },
+  ", <": { type: "keyboard", keycode: 54, allowModifiers: true },
+  ". >": { type: "keyboard", keycode: 55, allowModifiers: true },
+  "/ ?": { type: "keyboard", keycode: 56, allowModifiers: true },
+  "Caps Lock": { type: "keyboard", keycode: 57, allowModifiers: true },
   "F1": { type: "keyboard", keycode: 58, allowModifiers: true },
   "F2": { type: "keyboard", keycode: 59, allowModifiers: true },
   "F3": { type: "keyboard", keycode: 60, allowModifiers: true },
@@ -485,37 +488,38 @@ const KEYMAP_ACTIONS = Object.freeze({
   "F10": { type: "keyboard", keycode: 67, allowModifiers: true },
   "F11": { type: "keyboard", keycode: 68, allowModifiers: true },
   "F12": { type: "keyboard", keycode: 69, allowModifiers: true },
-  "Print": { type: "keyboard", keycode: 70, allowModifiers: true },
-  "Scroll": { type: "keyboard", keycode: 71, allowModifiers: true },
+  "Print Screen": { type: "keyboard", keycode: 70, allowModifiers: true },
+  "Scroll Lock": { type: "keyboard", keycode: 71, allowModifiers: true },
   "Pause": { type: "keyboard", keycode: 72, allowModifiers: true },
-  "INS": { type: "keyboard", keycode: 73, allowModifiers: true },
-  "HOME": { type: "keyboard", keycode: 74, allowModifiers: true },
-  "PGUP": { type: "keyboard", keycode: 75, allowModifiers: true },
-  "DEL": { type: "keyboard", keycode: 76, allowModifiers: true },
-  "END": { type: "keyboard", keycode: 77, allowModifiers: true },
-  "PGDN": { type: "keyboard", keycode: 78, allowModifiers: true },
-  "→": { type: "keyboard", keycode: 79, allowModifiers: true },
-  "←": { type: "keyboard", keycode: 80, allowModifiers: true },
-  "↓": { type: "keyboard", keycode: 81, allowModifiers: true },
-  "↑": { type: "keyboard", keycode: 82, allowModifiers: true },
-  "NumLock": { type: "keyboard", keycode: 83, allowModifiers: true },
+  "Insert": { type: "keyboard", keycode: 73, allowModifiers: true },
+  "Home": { type: "keyboard", keycode: 74, allowModifiers: true },
+  "Page Up": { type: "keyboard", keycode: 75, allowModifiers: true },
+  "Delete": { type: "keyboard", keycode: 76, allowModifiers: true },
+  "End": { type: "keyboard", keycode: 77, allowModifiers: true },
+  "Page Down": { type: "keyboard", keycode: 78, allowModifiers: true },
+  "Right Arrow": { type: "keyboard", keycode: 79, allowModifiers: true },
+  "Left Arrow": { type: "keyboard", keycode: 80, allowModifiers: true },
+  "Down Arrow": { type: "keyboard", keycode: 81, allowModifiers: true },
+  "Up Arrow": { type: "keyboard", keycode: 82, allowModifiers: true },
+  "Num Lock": { type: "keyboard", keycode: 83, allowModifiers: true },
 
 });
 
 /**
- * 把 Select + 修饰键 解析为固件可识别的 (funckey, keycode)。
+ * Parse Select + modifiers into firmware-recognized (funckey, keycode).
  * @param {string} selectLabel
  * @param {{ctrl?:boolean,shift?:boolean,alt?:boolean,win?:boolean}} [mod]
  * @returns {{funckey:number,keycode:number, meta:object}}
  */
 function resolveKeyAction(selectLabel, mod = {}) {
-  // 兼容旧数据：历史上部分按键标签“多写了反斜杠”（如 "\\["），这里做一次归一化
+  // Legacy compatibility: some historical key labels had extra backslashes (for example "\\[").
+  // Normalize once here.
   const normalizedLabel = (() => {
     if (typeof selectLabel !== "string") return String(selectLabel);
     if (KEYMAP_ACTIONS[selectLabel]) return selectLabel;
-    // 单字符转义："\\[" -> "["、"\\;" -> ";"、"\\'" -> "'" 等
+    // Single-character escapes: "\\[" -> "[", "\\;" -> ";", "\\'" -> "'", etc.
     if (selectLabel.length === 2 && selectLabel[0] === "\\") return selectLabel[1];
-    // 反斜杠本身："\\\\"(两字符) -> "\\"(一字符)
+    // Backslash itself: "\\\\" (two chars) -> "\\" (one char)
     if (selectLabel === "\\\\") return "\\";
     return selectLabel;
   })();
@@ -525,25 +529,25 @@ function resolveKeyAction(selectLabel, mod = {}) {
     throw new Error(`Unknown Select label: ${selectLabel}`);
   }
 
-  // 非键盘类（鼠标/媒体）
+  // Non-keyboard classes (mouse/media)
   if (meta.type !== "keyboard" || meta.fixedFunckey) {
     return { funckey: meta.funckey ?? 0x60, keycode: meta.keycode ?? 0, meta };
   }
 
-  // 键盘类：基底 0x60 + UI 修饰键位
+  // Keyboard class: base 0x60 + UI modifier bits
   let funckey = 0x60;
   if (mod.ctrl) funckey |= KEYBOARD_MOD_BITS.ctrl;
   if (mod.shift) funckey |= KEYBOARD_MOD_BITS.shift;
   if (mod.alt) funckey |= KEYBOARD_MOD_BITS.alt;
   if (mod.win) funckey |= KEYBOARD_MOD_BITS.win;
 
-  // MODIFIER_ONLY：只下发修饰键，不附带普通键码
+  // MODIFIER_ONLY: send only modifiers, without a normal keycode.
   const keycode = meta.special === "MODIFIER_ONLY" ? 0 : (meta.keycode ?? 0);
   return { funckey, keycode, meta };
 }
 
 
-// (funckey, keycode) -> label（用于 UI 从设备回包同步显示）
+// (funckey, keycode) -> label (for UI sync from device readback)
 const __KEYMAP_REVERSE = (() => {
   const rev = new Map();
   for (const [label, info] of Object.entries(KEYMAP_ACTIONS || {})) {
@@ -563,24 +567,24 @@ function labelFromFunckeyKeycode(funckey, keycode) {
   const kc = Number(keycode) & 0xff;
   const exact = __KEYMAP_REVERSE.get(`${fk}-${kc}`);
   if (exact) return exact;
-  // 忽略键盘修饰位（0x60..0x6F）
+  // Ignore keyboard modifier bits (0x60..0x6F).
   if ((fk & 0xF0) === 0x60) return __KEYMAP_REVERSE.get(`${0x60}-${kc}`) || null;
   return null;
 }
 
 
 /**
- * 便于 UI 做下拉框：按 type 返回可选项（保持表内顺序）。
- * - 仅支持三类：mouse / keyboard / system
- * - 懒加载缓存：避免重复遍历大对象
- * - 返回值被冻结：请把它当成只读数据
+ * UI dropdown helper: return options by type while preserving table order.
+ * - Supports only three types: mouse / keyboard / system
+ * - Lazy-load cache to avoid repeated traversal of large objects
+ * - Return value is frozen; treat it as read-only data
  * @returns {{type:string, items:string[]}[]}
  */
 const _listKeyActionsByTypeCache = { value: null };
 function listKeyActionsByType() {
   if (_listKeyActionsByTypeCache.value) return _listKeyActionsByTypeCache.value;
 
-  // 固定顺序：与 UI Tab 对齐
+  // Fixed order aligned with UI tabs.
   const order = ["mouse", "keyboard", "system"];
   const map = new Map(order.map((t) => [t, []]));
 
@@ -595,8 +599,8 @@ function listKeyActionsByType() {
 }
 
 /**
- * 兼容旧调用：历史上这里按 category 分组；现在统一按 type。
- * @deprecated 请使用 listKeyActionsByType()
+ * Legacy-call compatibility: this used to be grouped by category; now unified by type.
+ * @deprecated Use listKeyActionsByType()
  */
 function listKeyActionsByCategory() {
   return listKeyActionsByType().map((g) => ({ category: g.type, items: g.items }));
@@ -614,19 +618,19 @@ function encodeRequestBattery() {
 }
 
 // =====================================================================================
-// Input Report 解析（DataView 优先；支持旧签名 Uint8Array）
+// Input Report parsing (DataView preferred; legacy Uint8Array signature supported)
 // =====================================================================================
 function _asDataView(report) {
   if (!report) return null;
   if (report instanceof DataView) return report;
 
-  // 兼容：Uint8Array / ArrayBuffer
+  // Compatibility: Uint8Array / ArrayBuffer
   if (report instanceof Uint8Array) {
     return new DataView(report.buffer, report.byteOffset, report.byteLength);
   }
   if (report instanceof ArrayBuffer) return new DataView(report);
 
-  // 兜底：只要长得像 {buffer, byteOffset, byteLength} 的都试着包一层
+  // Fallback: if input looks like {buffer, byteOffset, byteLength}, try wrapping it.
   if (report.buffer instanceof ArrayBuffer) {
     const byteOffset = Number(report.byteOffset) || 0;
     const byteLength = Number(report.byteLength) || report.buffer.byteLength;
@@ -636,14 +640,14 @@ function _asDataView(report) {
 }
 
 /**
- * 解析 Input Report
- * @param {DataView|Uint8Array|ArrayBuffer} report - 推荐直接传 event.data(DataView)
+ * Parse Input Report.
+ * @param {DataView|Uint8Array|ArrayBuffer} report - Prefer passing event.data (DataView) directly.
  */
 function parseInputReport(report, { reportId = null } = {}) {
   const dv = _asDataView(report);
   if (!dv || dv.byteLength < 1) return { type: "unknown", rawType: -1, raw: null };
 
-  // 结构化校验：ReportID 必须命中（若调用方提供）
+  // Structured validation: ReportID must match when caller provides it.
   if (reportId != null && Number(reportId) !== MOUSE_HID.reportId) {
     const raw = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
     return { type: "unknown", rawType: -1, raw, error: "UNEXPECTED_REPORT_ID", reportId: Number(reportId) };
@@ -666,8 +670,9 @@ function parseInputReport(report, { reportId = null } = {}) {
     return { type: "unknown", rawType: type, raw };
   }
 
-  // Config 包至少要能覆盖：dpi(1..12) + slotInfo(13..14)
-  // 实际 WebHID 传输中，OS 往往把 report data 补齐到固定长度（例如 32），但仍要兼容短包。
+  // Config packet should at least cover dpi(1..12) + slotInfo(13..14).
+  // In real WebHID transport, OS often pads report data to fixed length (for example 32),
+  // but short packets must still be handled.
   const MIN_CONFIG_LEN = 15;
   if (dv.byteLength < MIN_CONFIG_LEN) {
     return { type: "unknown", rawType: type, raw, error: "CONFIG_REPORT_TOO_SHORT", expectedMin: MIN_CONFIG_LEN };
@@ -690,7 +695,7 @@ function parseInputReport(report, { reportId = null } = {}) {
   const currentSlotCountRaw = slotInfo & 0x00ff;
   const currentDpiIndexRaw = (slotInfo >> 8) & 0x00ff;
 
-  // 语义校验（不抛异常）：避免异常值直接污染 UI / 写回逻辑
+  // Semantic validation (non-throwing): avoid letting bad values pollute UI/writeback logic.
   const currentSlotCount = (currentSlotCountRaw >= 1 && currentSlotCountRaw <= 6) ? currentSlotCountRaw : null;
   const currentDpiIndex = (currentDpiIndexRaw >= 0 && currentDpiIndexRaw <= 5) ? currentDpiIndexRaw : null;
 
@@ -707,7 +712,7 @@ function parseInputReport(report, { reportId = null } = {}) {
   const sensorAngleRaw = getU8(23, 0);
   const sensorFeelRaw = getU8(24, 0);
 
-  // 若固件在 config 包尾部携带按键映射(6组 funckey/keycode)，则一并解析
+  // If firmware appends key mappings at config-tail (6 groups of funckey/keycode), parse them as well.
   let buttonMappings = null;
   if (dv.byteLength >= 25 + 12) {
     const out = [];
@@ -722,7 +727,7 @@ function parseInputReport(report, { reportId = null } = {}) {
     dpiSlots,
     currentSlotCount,
     currentDpiIndex,
-    // 保留 raw 值，方便调试/兼容
+    // Keep raw value for debugging and compatibility.
     currentSlotCountRaw,
     currentDpiIndexRaw,
     pollingCode,
@@ -752,7 +757,7 @@ function parseInputReport(report, { reportId = null } = {}) {
 }
 
 // ============================================================
-// 0) 错误类型与基础工具函数
+// 0) Error types and foundational utility functions
 // ============================================================
 class ProtocolError extends Error {
   constructor(message, code = "UNKNOWN", detail = null) {
@@ -789,7 +794,7 @@ function toI8(n) {
 }
 
 // ============================================================
-// 1) 传输层：UniversalHidDriver
+// 1) Transport layer: UniversalHidDriver
 // ============================================================
 class SendQueue {
   constructor() {
@@ -864,7 +869,7 @@ class UniversalHidDriver {
 }
 
 // ============================================================
-// 2) 编码层：ProtocolCodec（Chaos 32 bytes）
+// 2) Encoding layer: ProtocolCodec (Chaos 32 bytes)
 // ============================================================
 const ProtocolCodec = Object.freeze({
   pack({ cmd, dataBytes = [], reportSize = MOUSE_HID.reportSize }) {
@@ -881,7 +886,7 @@ const ProtocolCodec = Object.freeze({
 });
 
 // ============================================================
-// 3) Profile / 字段适配
+// 3) Profile / field adaptation
 // ============================================================
 const DEFAULT_PROFILE = Object.freeze({
   id: "chaos",
@@ -975,7 +980,7 @@ function normalizePayload(payload) {
 }
 
 // ============================================================
-// 4) 转换器：语义 -> 协议字节
+// 4) Transformers: semantics -> protocol bytes
 // ============================================================
 const TRANSFORMERS = Object.freeze({
   pollingCode(hzOrCode) {
@@ -1036,7 +1041,7 @@ const TRANSFORMERS = Object.freeze({
 });
 
 // ============================================================
-// 5) 语义规范表：SPEC
+// 5) Semantic specification table: SPEC
 // ============================================================
 const MODEBYTE_FIELDS = Object.freeze([
   "modeByte",
@@ -1052,10 +1057,10 @@ function planModeByteWrite(patch, nextState, ctx) {
   if (ctx._modeBytePlanned) return [];
   ctx._modeBytePlanned = true;
 
-  // 关键点：modeByte 的合并写入
-  // - 只读取本地快照 ctx.prevState（即 this._cfg）作为 base，避免覆盖其他 bit
-  // - 仅当 patch 中显式出现的字段才修改相应 bit，实现“增量更新”
-  // - 最终生成 SET_MODE_BYTE 指令，UI 无需关心位运算细节
+  // Key point: merged write of modeByte
+  // - Read only local snapshot ctx.prevState (this._cfg) as base to avoid overriding other bits.
+  // - Modify a bit only when its field is explicitly present in patch for incremental updates.
+  // - Generate final SET_MODE_BYTE command; UI does not need to handle bitwise details.
   const prev = ctx.prevState || {};
   const base = Object.prototype.hasOwnProperty.call(patch, "modeByte")
     ? (Number(patch.modeByte) & 0xff)
@@ -1247,7 +1252,7 @@ const SPEC = Object.freeze({
     },
   },
 
-  // modeByte 相关（compound）
+  // modeByte-related entries (compound)
   performanceMode: { key: "performanceMode", kind: "compound", priority: 30, triggers: ["performanceMode"], plan: planModeByteWrite },
   lodHeight: { key: "lodHeight", kind: "compound", priority: 30, triggers: ["lodHeight"], plan: planModeByteWrite },
   motionSync: { key: "motionSync", kind: "compound", priority: 30, triggers: ["motionSync"], plan: planModeByteWrite },
@@ -1258,7 +1263,7 @@ const SPEC = Object.freeze({
 });
 
 // ============================================================
-// 6) 计划器：CommandPlanner
+// 6) Planner: CommandPlanner
 // ============================================================
 class CommandPlanner {
   constructor(profile) {
@@ -1444,9 +1449,9 @@ class CommandPlanner {
 }
 
 /**
- * WebHID 高层封装：把“发命令/收回包”封装成 UI 友好的方法。
+ * High-level WebHID wrapper: expose send-command/readback as UI-friendly methods.
  *
- * 用法示例：
+ * Usage example:
  *   const api = new MouseMouseHidApi();
  *   await api.requestDevice();
  *   await api.open();
@@ -1465,23 +1470,24 @@ function normalizeCapabilities(cap) {
 }
 
 /**
- * 获取设备的默认能力配置（DPI 档位数、回报率列表）
- * 删除不稳定的 usagePage 检测，改为根据 PID 白名单直接判定
+ * Get default capability configuration for the device
+ * (DPI stage count, polling-rate list).
+ * Remove unstable usagePage detection and switch to direct PID-whitelist checks.
  */
 function defaultCapabilitiesForDevice(dev) {
-  // 1. 基础默认配置（适用于：有线模式、普通 1K 接收器）
-  // 通常支持：125, 250, 500, 1000
+  // 1) Base default config (for wired mode and standard 1K receivers)
+  // Typically supports: 125, 250, 500, 1000
   const base = { 
     dpiSlotCount: 6, 
     maxDpi: 26000, 
     pollingRates: [125, 250, 500, 1000] 
   };
 
-  // 如果没有设备信息，直接返回默认值
+  // If device info is unavailable, return defaults directly.
   if (!dev) return base;
 
-  // 2. 定义 8K 接收器的 PID 白名单
-  // 依据 MOUSE_HID.vendorProductIds 中的定义，结尾为 0x...0b 的均为 8K 接收器
+  // 2) Define PID whitelist for 8K receivers.
+  // Per MOUSE_HID.vendorProductIds definitions, IDs ending with 0x...0b are 8K receivers.
   const PIDS_8K = [
     0x520b, // CHAOS M1 无线 8K
     0x530b, // CHAOS M1 PRO 无线 8K
@@ -1489,7 +1495,7 @@ function defaultCapabilitiesForDevice(dev) {
     0x550b  // CHAOS M3 PRO / VT0 Air Max 无线 8K
   ];
 
-  // 3. 新策略：如果 PID 在白名单中，强制覆盖为 8K 回报率列表
+  // 3) New strategy: if PID is in whitelist, force 8K polling-rate list.
   if (PIDS_8K.includes(dev.productId)) {
     base.pollingRates = [125, 250, 500, 1000, 2000, 4000, 8000];
   }
@@ -1619,7 +1625,8 @@ class MouseMouseHidApi {
     this._bindInputReport();
   }
 
-  // 统一会话引导入口：open -> 首读 -> 超时/重试 -> 缓存回退，并保证至少一次 _emitConfig。
+  // Unified session bootstrap entry: open -> initial read -> timeout/retry -> cache fallback,
+  // while guaranteeing at least one _emitConfig() call.
   async bootstrapSession(opts = {}) {
     const options = isObject(opts) ? opts : {};
     const {
@@ -1640,7 +1647,7 @@ class MouseMouseHidApi {
     const maxReadAttempts = clampInt(readRetry, 1, 10);
     const openDelayMs = clampInt(openRetryDelayMs, 0, 5000);
     const readDelayMs = clampInt(readRetryDelayMs, 0, 5000);
-    // Chaos 协议会消费 readTimeoutMs，并映射为 waitForConfig 的 responseTimeoutMs。
+    // Chaos protocol consumes readTimeoutMs and maps it to waitForConfig responseTimeoutMs.
     const responseTimeoutMs = clampInt(readTimeoutMs, 100, 10_000);
 
     let openAttempts = 0;
@@ -1801,7 +1808,8 @@ class MouseMouseHidApi {
     return this.waitForBattery(responseTimeoutMs);
   }
 
-  // 非队列直连回读：用于写失败后的纠偏，避免在 _opQueue 内部发生重入等待。
+  // Direct non-queued readback: used for reconciliation after write failures,
+  // avoiding re-entrant waits inside _opQueue.
   async _requestConfigAndWaitDirect({ responseTimeoutMs = 1200 } = {}) {
     if (!this.device) throw new ProtocolError("requestConfig() ?????? hidApi.device", "NO_DEVICE");
     if (!this.device.opened) await this.open();
@@ -1867,7 +1875,8 @@ class MouseMouseHidApi {
       try {
         await this._driver.runSequence(commands);
       } catch (err) {
-        // 写失败时在协议层执行一次回读纠偏，确保 UI 缓存与设备真实状态重新对齐。
+        // On write failure, execute one protocol-level readback reconciliation
+        // to realign UI cache with the device's actual state.
         try {
           await this._reconcileConfigAfterWriteFailure({ responseTimeoutMs: 1200 });
         } catch (reconcileErr) {
