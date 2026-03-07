@@ -203,6 +203,10 @@ Click Sync is a WebHID-based multi-brand mouse web driver console. Its goal is t
 
 Supported brands in the current code: `Razer`, `Logitech`, `Rapoo`, `ATK`, `Ninjutso`, `Chaos`.
 
+## 🔗 Experience link
+- 🌐 **Website**:  (https://nuitfanee.github.io/ClickSync.github.io/) 
+- 🌐 **Beta Website**:  (https://xn--i8s54d9wak75j.xyz/)
+  
 ### Features
 
 - Single-page frontend application, pure static resources, no build dependencies.
