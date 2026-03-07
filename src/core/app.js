@@ -2321,24 +2321,48 @@ function lockEl(el) {
 
 
   const THEME_KEY = "mouse_console_theme";
+  const __themeColorSchemeMeta = document.querySelector('meta[name="color-scheme"]');
   let __currentTheme = "light";
+  let __themeOverride = null;
+  let __themeMediaQuery = null;
 
   function normalizeTheme(rawTheme) {
     return String(rawTheme || "").trim().toLowerCase() === "dark" ? "dark" : "light";
   }
 
-  function readStoredTheme() {
+  function normalizeThemeOverride(rawTheme) {
+    const theme = String(rawTheme || "").trim().toLowerCase();
+    return theme === "dark" || theme === "light" ? theme : null;
+  }
+
+  function readStoredThemeOverride() {
     try {
-      return normalizeTheme(localStorage.getItem(THEME_KEY));
+      return normalizeThemeOverride(localStorage.getItem(THEME_KEY));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function persistThemeOverride(theme) {
+    try {
+      const normalized = normalizeThemeOverride(theme);
+      if (normalized) localStorage.setItem(THEME_KEY, normalized);
+      else localStorage.removeItem(THEME_KEY);
+    } catch (_) {}
+  }
+
+  function getSystemTheme() {
+    try {
+      return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
     } catch (_) {
       return "light";
     }
   }
 
-  function persistTheme(theme) {
-    try {
-      localStorage.setItem(THEME_KEY, normalizeTheme(theme));
-    } catch (_) {}
+  function resolveTheme() {
+    return normalizeTheme(__themeOverride || getSystemTheme());
   }
 
   function syncThemeToggleUi(theme) {
@@ -2366,6 +2390,8 @@ function lockEl(el) {
     __currentTheme = normalized;
     const dark = normalized === "dark";
     document.body.classList.toggle("dark", dark);
+    document.documentElement.style.colorScheme = normalized;
+    __themeColorSchemeMeta?.setAttribute("content", normalized);
 
     themePath?.setAttribute(
       "d",
@@ -2377,13 +2403,33 @@ function lockEl(el) {
   }
 
 
-  function toggleTheme() {
-    const nextTheme = __currentTheme === "dark" ? "light" : "dark";
-    applyTheme(nextTheme);
-    persistTheme(nextTheme);
+  function applyResolvedTheme() {
+    applyTheme(resolveTheme());
   }
 
-  applyTheme(readStoredTheme());
+  function handleSystemThemeChange() {
+    if (__themeOverride) return;
+    applyResolvedTheme();
+  }
+
+
+  function toggleTheme() {
+    const nextTheme = __currentTheme === "dark" ? "light" : "dark";
+    __themeOverride = nextTheme;
+    applyTheme(nextTheme);
+    persistThemeOverride(nextTheme);
+  }
+
+  __themeOverride = readStoredThemeOverride();
+  __themeMediaQuery = window.matchMedia
+    ? window.matchMedia("(prefers-color-scheme: dark)")
+    : null;
+  if (__themeMediaQuery?.addEventListener) {
+    __themeMediaQuery.addEventListener("change", handleSystemThemeChange);
+  } else if (__themeMediaQuery?.addListener) {
+    __themeMediaQuery.addListener(handleSystemThemeChange);
+  }
+  applyResolvedTheme();
   themeBtn?.addEventListener("click", toggleTheme);
   __overrideThemeBtn?.addEventListener("click", toggleTheme);
 

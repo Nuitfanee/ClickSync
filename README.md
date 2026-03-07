@@ -5,11 +5,6 @@
 
 [简体中文](#简体中文) | [English](#english)
 
-
-## 🔗 体验链接
-- 🌐 **网站**:  (https://nuitfanee.github.io/ClickSync.github.io/) 
-- 🌐 **Beta网站**:  (https://xn--i8s54d9wak75j.xyz/)
-
 ---
 
 ## 简体中文
@@ -176,7 +171,7 @@ npx http-server . -p 8000
 - WebHID 依赖浏览器与系统权限，不支持所有浏览器/平台。
 - 不同设备固件能力差异较大，UI 会按 profile 与回读能力裁剪。
 - Ninjutso 识别对 `productName` 有严格匹配要求（`ninjutso sora v3`）。
-- 语言与主题切换按钮在当前实现中已固定（语言固定 `zh`，主题固定 `light`）。
+- 语言切换当前仍固定为 `zh`；主题默认跟随系统，并会在用户手动选择亮/暗色后持久化该覆盖设置。
 - 仓库当前未提供完整自动化测试流水线（以手动连接与实机验证为主）。
 
 ### 贡献
@@ -203,10 +198,6 @@ Click Sync is a WebHID-based multi-brand mouse web driver console. Its goal is t
 
 Supported brands in the current code: `Razer`, `Logitech`, `Rapoo`, `ATK`, `Ninjutso`, `Chaos`.
 
-## 🔗 Experience link
-- 🌐 **Website**:  (https://nuitfanee.github.io/ClickSync.github.io/) 
-- 🌐 **Beta Website**:  (https://xn--i8s54d9wak75j.xyz/)
-  
 ### Features
 
 - Single-page frontend application, pure static resources, no build dependencies.
@@ -365,7 +356,7 @@ The script `@match` defaults to include:
 - WebHID relies on browser and system permissions, and is not supported by all browsers/platforms.
 - Device firmware capabilities vary greatly; the UI will tailor itself according to the profile and readback capabilities.
 - Ninjutso recognition requires a strict `productName` match (`ninjutso sora v3`).
-- Language and theme toggle buttons are currently fixed (language fixed to `zh`, theme fixed to `light`).
+- Language toggle is currently fixed to `zh`; theme now follows the system by default and persists a manual light/dark override once selected.
 - The repository currently lacks a complete automated testing pipeline (relies mainly on manual connection and real device verification).
 
 ### Contributing
