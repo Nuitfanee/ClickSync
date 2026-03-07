@@ -5,6 +5,11 @@
 
 [简体中文](#简体中文) | [English](#english)
 
+
+## 🔗 体验链接
+- 🌐 **网站**:  (https://nuitfanee.github.io/ClickSync.github.io/) 
+- 🌐 **Beta网站**:  (https://xn--i8s54d9wak75j.xyz/)
+
 ---
 
 ## 简体中文
