@@ -194,9 +194,10 @@
 
   function readStoredUiLang() {
     try {
-      return normalizeUiLang(localStorage.getItem(LANG_KEY));
+      const storedLang = localStorage.getItem(LANG_KEY);
+      return storedLang == null ? "zh" : normalizeUiLang(storedLang);
     } catch (_) {
-      return "en";
+      return "zh";
     }
   }
 
