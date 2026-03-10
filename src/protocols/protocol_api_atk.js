@@ -1290,6 +1290,7 @@ _makeDefaultCfg() {
   // 这里提供一份"稳定默认配置"作为兜底（后续补全读取能力后可再收敛）。
   const dpiDefaults = [400, 800, 1600, 3200, 6400, 12800];
   return {
+    capabilities: this.capabilities,
     // DPI
     dpiSlotsX: dpiDefaults.slice(0),
     dpiSlotsY: dpiDefaults.slice(0),

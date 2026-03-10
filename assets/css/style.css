@@ -1485,6 +1485,11 @@ body.dark .pill:hover {
   pointer-events: none;
 }
 
+.kmCanvas[data-keymap-ready="0"] .kmImg,
+.kmCanvas[data-keymap-ready="0"] .kmPoint {
+  visibility: hidden;
+}
+
 .kmPoint {
   position: absolute;
   left: calc(var(--x) * 1%);

@@ -1710,9 +1710,9 @@
 
             <!-- Key-mapping canvas area -->
             <div class="kmStage" id="kmStage">
-              <div class="kmCanvas" id="kmCanvas" aria-label="Mouse map">
+              <div class="kmCanvas" id="kmCanvas" aria-label="Mouse map" data-keymap-ready="0">
                 <!-- Mouse illustration -->
-                <img class="kmImg" src="./assets/images/default.png" alt="mouse" />
+                <img class="kmImg" alt="mouse" decoding="async" fetchpriority="high" />
 
                 <!-- Key mapping points: each button's location and function on the mouse image -->
                 <!-- Key 1: left button (left side, coordinates 42%, 24%) -->

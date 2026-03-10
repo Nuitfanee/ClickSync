@@ -868,6 +868,106 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
     return null;
   }
 
+  const ADVANCED_PANEL_REGIONS = Object.freeze(["dual-left", "dual-right", "single"]);
+  const ADVANCED_PANEL_REGION_SET = new Set(ADVANCED_PANEL_REGIONS);
+  const ADVANCED_PANEL_RULE_DEFAULTS = Object.freeze({
+    sleepSeconds: Object.freeze({ regions: Object.freeze(["dual-left", "single"]), requiresFeatures: Object.freeze([]), requiresCapabilities: Object.freeze([]) }),
+    debounceMs: Object.freeze({ regions: Object.freeze(["dual-left"]), requiresFeatures: Object.freeze([]), requiresCapabilities: Object.freeze([]) }),
+    sensorAngle: Object.freeze({ regions: Object.freeze(["dual-left", "single"]), requiresFeatures: Object.freeze(["hasSensorAngle"]), requiresCapabilities: Object.freeze([]) }),
+    surfaceFeel: Object.freeze({ regions: Object.freeze(["dual-left"]), requiresFeatures: Object.freeze(["hasSurfaceFeel"]), requiresCapabilities: Object.freeze([]) }),
+    motionSync: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasMotionSync"]), requiresCapabilities: Object.freeze([]) }),
+    linearCorrection: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasLinearCorrection"]), requiresCapabilities: Object.freeze([]) }),
+    rippleControl: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasRippleControl"]), requiresCapabilities: Object.freeze([]) }),
+    secondarySurfaceToggle: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasSecondarySurfaceToggle"]), requiresCapabilities: Object.freeze([]) }),
+    keyScanningRate: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasKeyScanRate"]), requiresCapabilities: Object.freeze([]) }),
+    surfaceModePrimary: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasPrimarySurfaceToggle"]), requiresCapabilities: Object.freeze([]) }),
+    primaryLedFeature: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasPrimaryLedFeature"]), requiresCapabilities: Object.freeze([]) }),
+    dpiLightEffect: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasDpiLightCycle"]), requiresCapabilities: Object.freeze([]) }),
+    receiverLightEffect: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasReceiverLightCycle"]), requiresCapabilities: Object.freeze([]) }),
+    longRangeMode: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasLongRange"]), requiresCapabilities: Object.freeze([]) }),
+    onboardMemory: Object.freeze({ regions: Object.freeze(["single"]), requiresFeatures: Object.freeze(["hasOnboardMemoryMode"]), requiresCapabilities: Object.freeze([]) }),
+    lightforceSwitch: Object.freeze({ regions: Object.freeze(["single"]), requiresFeatures: Object.freeze(["hasLightforceSwitch"]), requiresCapabilities: Object.freeze([]) }),
+    surfaceMode: Object.freeze({ regions: Object.freeze(["single"]), requiresFeatures: Object.freeze(["hasSurfaceMode"]), requiresCapabilities: Object.freeze([]) }),
+    bhopToggle: Object.freeze({ regions: Object.freeze(["single"]), requiresFeatures: Object.freeze(["hasBhopDelay"]), requiresCapabilities: Object.freeze([]) }),
+    bhopDelay: Object.freeze({ regions: Object.freeze(["single"]), requiresFeatures: Object.freeze(["hasBhopDelay"]), requiresCapabilities: Object.freeze([]) }),
+    dynamicSensitivityComposite: Object.freeze({ regions: Object.freeze(["single"]), requiresFeatures: Object.freeze([]), requiresCapabilities: Object.freeze([]) }),
+    smartTrackingComposite: Object.freeze({ regions: Object.freeze(["single"]), requiresFeatures: Object.freeze([]), requiresCapabilities: Object.freeze([]) }),
+    lowPowerThresholdPercent: Object.freeze({ regions: Object.freeze(["single"]), requiresFeatures: Object.freeze([]), requiresCapabilities: Object.freeze([]) }),
+    hyperpollingIndicator: Object.freeze({ regions: Object.freeze(["single"]), requiresFeatures: Object.freeze([]), requiresCapabilities: Object.freeze([]) }),
+  });
+
+  function isPlainObject(v) {
+    return !!v && typeof v === "object" && !Array.isArray(v);
+  }
+
+  function normalizeAdvancedPanelKeyList(raw) {
+    if (!Array.isArray(raw)) return Object.freeze([]);
+    return Object.freeze(raw.map((value) => String(value || "").trim()).filter(Boolean));
+  }
+
+  function normalizeAdvancedPanelRegions(raw) {
+    const next = Array.isArray(raw)
+      ? raw.map((value) => String(value || "").trim().toLowerCase()).filter((value) => ADVANCED_PANEL_REGION_SET.has(value))
+      : [];
+    return Object.freeze(next);
+  }
+
+  function normalizeAdvancedPanelRule(itemKey, baseRule, overrideRule) {
+    const base = isPlainObject(baseRule) ? baseRule : {};
+    const override = isPlainObject(overrideRule) ? overrideRule : {};
+    const enabled = Object.prototype.hasOwnProperty.call(override, "enabled")
+      ? override.enabled
+      : base.enabled;
+    const regions = normalizeAdvancedPanelRegions(
+      Object.prototype.hasOwnProperty.call(override, "regions") ? override.regions : base.regions
+    );
+    const requiresFeatures = normalizeAdvancedPanelKeyList(
+      Object.prototype.hasOwnProperty.call(override, "requiresFeatures") ? override.requiresFeatures : base.requiresFeatures
+    );
+    const requiresCapabilities = normalizeAdvancedPanelKeyList(
+      Object.prototype.hasOwnProperty.call(override, "requiresCapabilities") ? override.requiresCapabilities : base.requiresCapabilities
+    );
+    const order = Object.prototype.hasOwnProperty.call(override, "order") ? override.order : base.order;
+    return Object.freeze({
+      itemKey: String(itemKey || "").trim(),
+      enabled: enabled === undefined ? undefined : !!enabled,
+      regions,
+      requiresFeatures,
+      requiresCapabilities,
+      order,
+    });
+  }
+
+  function mergeAdvancedPanelRules(baseRules, profileRules) {
+    const base = isPlainObject(baseRules) ? baseRules : {};
+    const profile = isPlainObject(profileRules) ? profileRules : {};
+    const keys = Array.from(new Set([...Object.keys(base), ...Object.keys(profile)]));
+    const next = {};
+    keys.forEach((itemKey) => {
+      next[itemKey] = normalizeAdvancedPanelRule(itemKey, base[itemKey], profile[itemKey]);
+    });
+    return Object.freeze(next);
+  }
+
+  function resolveAdvancedPanelRegistry(adapter) {
+    const profileRules = isPlainObject(adapter?.ui?.advancedPanels) ? adapter.ui.advancedPanels : {};
+    return mergeAdvancedPanelRules(ADVANCED_PANEL_RULE_DEFAULTS, profileRules);
+  }
+
+  function evaluateAdvancedPanelVisibility(rule, ctx = {}) {
+    const nextRule = isPlainObject(rule) ? rule : {};
+    const features = isPlainObject(ctx?.features) ? ctx.features : {};
+    const capabilities = isPlainObject(ctx?.capabilities) ? ctx.capabilities : {};
+    const enabledPass = nextRule.enabled !== false;
+    const featurePass = !Array.isArray(nextRule.requiresFeatures) || !nextRule.requiresFeatures.length
+      ? true
+      : nextRule.requiresFeatures.every((key) => !!features[key]);
+    const capabilityPass = !Array.isArray(nextRule.requiresCapabilities) || !nextRule.requiresCapabilities.length
+      ? true
+      : nextRule.requiresCapabilities.every((key) => !!capabilities[key]);
+    return enabledPass && featurePass && capabilityPass;
+  }
+
   // ============================================================
   // Exports
   // ============================================================
@@ -909,6 +1009,11 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
     toNinjutsoLedBrightness,
     fromNinjutsoLedBrightness,
     normalizeHexColor,
+    ADVANCED_PANEL_REGIONS,
+    ADVANCED_PANEL_RULE_DEFAULTS,
+    mergeAdvancedPanelRules,
+    evaluateAdvancedPanelVisibility,
+    resolveAdvancedPanelRegistry,
   };
 
   window.DeviceWriter = { writePatch };

@@ -126,6 +126,7 @@
         perfMode: rapooTexts.perfMode,
         lights: rapooTexts.lights,
         advancedPanelDensity: "default",
+        advancedPanels: {},
         advancedSingleOrders: {},
         advancedSourceRegionByStdKey: { ...ADVANCED_SOURCE_REGION_DEFAULTS },
       },
@@ -213,7 +214,6 @@
         showHeightViz: true,
         hideSportPerfMode: false,
         advancedLayout: "dual",
-        advancedSingleItems: [],
         hasOnboardMemoryMode: false,
         warnOnDisableOnboardMemoryMode: false,
         autoEnableOnboardMemoryOnConnect: false,
@@ -302,7 +302,7 @@
   //     // Optional action overrides.
   //   },
   //   features: {
-  //     // Feature toggles and advancedLayout/advancedSingleItems.
+  //     // Feature toggles and advancedLayout.
   //   },
   // });
 
@@ -442,7 +442,6 @@
       showHeightViz: false,
       hideSportPerfMode: false,
       advancedLayout: "dual",
-      advancedSingleItems: [],
       hasOnboardMemoryMode: false,
       warnOnDisableOnboardMemoryMode: false,
       autoEnableOnboardMemoryOnConnect: false,
@@ -483,6 +482,26 @@
     ui: {
       landingReadyText: "LOGITECH READY",
       pollingThemeByWirelessHz: LOGITECH_POLLING_THEME_BY_HZ,
+      advancedPanels: {
+        sleepSeconds: {
+          enabled: false,
+        },
+        sensorAngle: {
+          enabled: false,
+        },
+        dynamicSensitivityComposite: {
+          enabled: false,
+        },
+        smartTrackingComposite: {
+          enabled: false,
+        },
+        lowPowerThresholdPercent: {
+          enabled: false,
+        },
+        hyperpollingIndicator: {
+          enabled: false,
+        },
+      },
       basicModeTypography: {
         columnsOffsetX: -120,
       },
@@ -628,13 +647,6 @@
     },
     features: {
       advancedLayout: "single",
-      advancedSingleItems: [
-        "onboardMemory",
-        "lightforceSwitch",
-        "surfaceMode",
-        "bhopToggle",
-        "bhopDelay",
-      ],
       hasPerformanceMode: false,
       hasConfigSlots: true,
       hasDualPollingRates: true,
@@ -845,6 +857,27 @@
         columnsOffsetX: -60,
       },
       advancedPanelDensity: "compact",
+      advancedPanels: {
+        dynamicSensitivityComposite: {
+          requiresCapabilities: ["dynamicSensitivity"],
+        },
+        sensorAngle: {
+          requiresFeatures: ["hasSensorAngle"],
+          requiresCapabilities: ["sensorAngle"],
+        },
+        smartTrackingComposite: {
+          requiresCapabilities: ["smartTracking"],
+        },
+        lowPowerThresholdPercent: {
+          requiresCapabilities: ["lowPowerThresholdPercent"],
+        },
+        hyperpollingIndicator: {
+          requiresCapabilities: ["hyperpollingIndicatorMode"],
+        },
+        sleepSeconds: {
+          enabled: true,
+        },
+      },
       advancedSingleOrders: {
         hyperpollingIndicator: 10,
         dynamicSensitivityComposite: 20,
@@ -1087,14 +1120,6 @@
     dpiSnapper: defaultDpiSnapper,
     features: {
       advancedLayout: "single",
-      advancedSingleItems: [
-        "dynamicSensitivityComposite",
-        "sensorAngle",
-        "smartTrackingComposite",
-        "lowPowerThresholdPercent",
-        "sleepSeconds",
-        "hyperpollingIndicator",
-      ],
       hasPrimarySurfaceToggle: false,
       hasSecondarySurfaceToggle: false,
       hasPrimaryLedFeature: false,

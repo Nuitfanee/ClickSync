@@ -893,6 +893,7 @@ const DEFAULT_PROFILE = Object.freeze({
   capabilities: Object.freeze({
     dpiSlotCount: 6,
     maxDpi: 26000,
+    dpiStep: 50,
     pollingRates: Object.freeze([125, 250, 500, 1000]),
   }),
   timings: Object.freeze({
@@ -1463,10 +1464,11 @@ function normalizeCapabilities(cap) {
   const c = (cap && typeof cap === "object") ? cap : {};
   const dpiSlotCount = Number.isFinite(Number(c.dpiSlotCount)) ? Math.max(1, Math.trunc(Number(c.dpiSlotCount))) : 6;
   const maxDpi = Number.isFinite(Number(c.maxDpi)) ? Math.max(1, Math.trunc(Number(c.maxDpi))) : 26000;
+  const dpiStep = Number.isFinite(Number(c.dpiStep)) ? Math.max(1, Math.trunc(Number(c.dpiStep))) : 50;
   const pollingRates = Array.isArray(c.pollingRates)
     ? c.pollingRates.map(Number).filter(Number.isFinite)
     : null;
-  return { dpiSlotCount, maxDpi, pollingRates };
+  return { dpiSlotCount, maxDpi, dpiStep, pollingRates };
 }
 
 /**
@@ -1479,7 +1481,8 @@ function defaultCapabilitiesForDevice(dev) {
   // Typically supports: 125, 250, 500, 1000
   const base = { 
     dpiSlotCount: 6, 
-    maxDpi: 26000, 
+    maxDpi: 26000,
+    dpiStep: 50,
     pollingRates: [125, 250, 500, 1000] 
   };
 

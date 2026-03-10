@@ -2101,9 +2101,31 @@
       return this._device;
     }
 
+    _capabilitiesSnapshot(cap = this._profile?.capabilities ?? {}) {
+      const wiredRates = (Array.isArray(cap.pollingRatesWired) ? cap.pollingRatesWired : [])
+        .map(Number)
+        .filter(Number.isFinite);
+      const wirelessRates = (Array.isArray(cap.pollingRatesWireless) ? cap.pollingRatesWireless : [])
+        .map(Number)
+        .filter(Number.isFinite);
+      const nextWiredRates = wiredRates.length ? wiredRates : [125, 250, 500, 1000];
+      const nextWirelessRates = wirelessRates.length ? wirelessRates : [125, 250, 500, 1000, 2000, 4000, 8000];
+      return {
+        dpiSlotCount: clampInt(cap.dpiSlotMax ?? 5, 1, 10),
+        maxDpi: cap.dpiMax ?? 44000,
+        dpiStep: cap.dpiStep ?? 1,
+        dpiSegments: Array.isArray(cap.dpiSegments) ? cap.dpiSegments.slice(0) : LOGITECH_DPI_STEP_SEGMENTS,
+        dpiPolicy: (cap.dpiPolicy && typeof cap.dpiPolicy === "object")
+          ? JSON.parse(JSON.stringify(cap.dpiPolicy))
+          : { mode: "segmented", step: 1, stepSegments: LOGITECH_DPI_STEP_SEGMENTS },
+        pollingRates: nextWirelessRates.slice(0),
+        pollingRatesWired: nextWiredRates.slice(0),
+        pollingRatesWireless: nextWirelessRates.slice(0),
+      };
+    }
+
     get capabilities() {
-      const cap = this._profile?.capabilities ?? {};
-      return JSON.parse(JSON.stringify(cap));
+      return this._capabilitiesSnapshot();
     }
 
     getCachedConfig() {
@@ -3374,17 +3396,11 @@
       ], 6);
 
       return {
-        capabilities: {
-          dpiSlotCount: maxDpiSlots,
-          maxDpi: cap.dpiMax ?? 44000,
-          dpiStep: cap.dpiStep ?? 1,
-          dpiSegments: Array.isArray(cap.dpiSegments) ? cap.dpiSegments.slice(0) : LOGITECH_DPI_STEP_SEGMENTS,
-          dpiPolicy: (cap.dpiPolicy && typeof cap.dpiPolicy === "object")
-            ? JSON.parse(JSON.stringify(cap.dpiPolicy))
-            : { mode: "segmented", step: 1, stepSegments: LOGITECH_DPI_STEP_SEGMENTS },
-          pollingRatesWired: [...wiredRates],
-          pollingRatesWireless: [...wirelessRates],
-        },
+        capabilities: this._capabilitiesSnapshot({
+          ...cap,
+          pollingRatesWired: wiredRates,
+          pollingRatesWireless: wirelessRates,
+        }),
         deviceName: "",
 
         lightforceSwitch: "optical",

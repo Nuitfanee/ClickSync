@@ -412,6 +412,7 @@
       dpiSlotMax: 6,
       dpiMin: 50,
       dpiMax: 26000,
+      dpiStep: 10,
       pollingRates: Object.freeze([125, 250, 500, 1000, 2000, 4000, 8000]),
       performanceModes: Object.freeze(["low", "hp", "sport", "oc"]),
       // 明确声明每个 polling 下允许的 performanceMode（防止无效下发）
@@ -1920,9 +1921,20 @@
     }
 
     // 对外暴露能力信息（供 UI 决定显示哪些选项）
+    _capabilitiesSnapshot(cap = this._profile?.capabilities ?? {}) {
+      const pollingRates = Array.isArray(cap.pollingRates)
+        ? cap.pollingRates.slice(0).map(Number).filter(Number.isFinite)
+        : [125, 250, 500, 1000];
+      return {
+        dpiSlotCount: clampInt(Number(cap.dpiSlotMax ?? 6), 1, 12),
+        maxDpi: clampInt(Number(cap.dpiMax ?? 26000), 1, 65535),
+        dpiStep: clampInt(Number(cap.dpiStep ?? 10), 1, 65535),
+        pollingRates,
+      };
+    }
+
     get capabilities() {
-      const cap = this._profile?.capabilities ?? {};
-      return JSON.parse(JSON.stringify(cap));
+      return this._capabilitiesSnapshot();
     }
 
     getCachedConfig() {
@@ -2604,11 +2616,7 @@
       const pollingRates = cap.pollingRates?.length ? cap.pollingRates : [125, 250, 500, 1000];
 
       return {
-        capabilities: {
-          dpiSlotCount: cap.dpiSlotMax,
-          maxDpi: cap.dpiMax,
-          pollingRates: [...pollingRates],
-        },
+        capabilities: this._capabilitiesSnapshot(cap),
 
         dpiSlotsX: [800, 1200, 1600, 2400, 3200, 4800].slice(0, cap.dpiSlotMax),
         dpiSlotsY: [800, 1200, 1600, 2400, 3200, 4800].slice(0, cap.dpiSlotMax),

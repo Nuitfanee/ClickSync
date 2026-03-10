@@ -64,7 +64,7 @@
   //   3) No cross-region event forwarding/fallback for value mapping.
   // - If a new advanced control is added, update:
   //   1) index.html data-adv-* markup
-  //   2) refactor.profiles.js features/advancedSingleItems
+  //   2) refactor.profiles.js ui.advancedPanels / features
   //   3) refactor.ui.js visibility/order/meta logic
   //   4) app.js semantic binding + applyConfigToUi sync
   const ADV_REGION_DUAL_LEFT = "dual-left";
@@ -722,7 +722,6 @@
         root: document,
         deviceName: String(deviceName || cfg?.deviceName || "").trim(),
         keymapOnly: !!keymapOnly,
-        capabilities: cfg?.capabilities || null,
       });
     } catch (err) {
       console.warn("[variant] apply failed", err);
@@ -4841,6 +4840,7 @@ function lockEl(el) {
     __resetDeviceScopedTransientState();
     await __ensureProtocolBinding(nextDeviceId, { recreateHidApi: true });
     try { __applyDeviceVariantOnce({ keymapOnly: false }); } catch (_) {}
+    try { applyCapabilityStateToRuntime(getCapabilities(), { preserveDpiMax: true }); } catch (_) {}
     try { __refreshKeymapActionCatalog?.(); } catch (_) {}
     try { initKeyScanningRateCycle(); } catch (_) {}
     try { initAdvancedLightCycles(); } catch (_) {}
@@ -5065,6 +5065,21 @@ function getCapabilities() {
   return __capabilities || {};
 }
 
+function applyCapabilityStateToRuntime(cap, opts = {}) {
+  try { applyCapabilitiesToUi(cap, opts); } catch (_) {}
+  try {
+    const runtimeDeviceId = window.DeviceRuntime?.getSelectedDevice?.() || DEVICE_ID;
+    const runtimeAdapter = window.DeviceAdapters.getAdapter(runtimeDeviceId);
+    window.DeviceUI?.applyAdvancedRuntime?.({
+      adapter: runtimeAdapter,
+      root: document,
+      capabilities: getCapabilities(),
+    });
+  } catch (_) {}
+}
+
+applyCapabilityStateToRuntime(getCapabilities(), { preserveDpiMax: true });
+
 function resolveRuntimeDpiAdapter() {
   const runtimeDeviceId = window.DeviceRuntime?.getSelectedDevice?.() || DEVICE_ID;
   return window.DeviceAdapters.getAdapter(runtimeDeviceId);
@@ -5246,9 +5261,7 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   const resolvedMaxDpi = Number.isFinite(incomingMax)
     ? (preserveDpiMax ? Math.max(incomingMax, rememberedMax) : incomingMax)
     : rememberedMax;
-
-
-  const next = {
+  const normalizedBase = {
     dpiSlotCount: Number.isFinite(Number(incoming.dpiSlotCount)) ? Math.trunc(Number(incoming.dpiSlotCount)) : (prevCap.dpiSlotCount ?? 6),
     maxDpi: resolvedMaxDpi,
     dpiStep,
@@ -5266,6 +5279,10 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       ? incoming.pollingRates.map(Number).filter(Number.isFinite)
       : (prevCap.pollingRates ?? null),
   };
+
+  const next = sameDevice
+    ? { ...prevCap, ...incoming, ...normalizedBase }
+    : { ...incoming, ...normalizedBase };
 
   __capabilities = next;
   __capabilitiesDeviceId = runtimeDeviceId;
@@ -8207,16 +8224,7 @@ function openDrawer(btn) {
   // - Never bypass this function with ad-hoc DOM writes from polling/read paths.
   function applyConfigToUi(cfg) {
 
-    try { applyCapabilitiesToUi(cfg?.capabilities, { preserveDpiMax: true }); } catch (_) {}
-    try {
-      const runtimeDeviceId = window.DeviceRuntime?.getSelectedDevice?.() || DEVICE_ID;
-      const runtimeAdapter = window.DeviceAdapters.getAdapter(runtimeDeviceId);
-      window.DeviceUI?.applyAdvancedRuntime?.({
-        adapter: runtimeAdapter,
-        root: document,
-        capabilities: cfg?.capabilities || null,
-      });
-    } catch (_) {}
+    applyCapabilityStateToRuntime(cfg?.capabilities, { preserveDpiMax: true });
     __cleanupExpiredIntents();
     const hasActiveDpiSwitchIntent = !!__getWriteIntent("activeDpiSlotIndex");
     const readMerged = (key) => readStandardValueWithIntent(cfg, key);
@@ -8728,8 +8736,7 @@ function openDrawer(btn) {
         } catch (_) {}
 
         hidApi.device = targetDev;
-        try { applyCapabilitiesToUi(hidApi.capabilities); } catch {}
-
+        applyCapabilityStateToRuntime(hidApi.capabilities);
         let displayName = ProtocolApi.resolveMouseDisplayName(targetDev.vendorId, targetDev.productId, targetDev.productName || "HID Device");
         console.log("HID Open, Handshaking:", displayName);
 

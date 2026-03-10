@@ -48,7 +48,7 @@
   const NINJUTSO_PRODUCT_ID = 0xeb02;
   const NINJUTSO_ALLOWED_NAME = "ninjutso sora v3";
   const RAZER_VENDOR_ID = 0x1532;
-  const RAZER_SUPPORTED_PIDS = new Set([0x00c0, 0x00c1, 0x00c2, 0x00c3, 0x00c4, 0x00c5]);
+  const RAZER_SUPPORTED_PIDS = new Set([0x00b3, 0x00b6, 0x00b7, 0x00c0, 0x00c1, 0x00c2, 0x00c3, 0x00c4, 0x00c5]);
 
   function _isRapooDevice(d) {
     return (

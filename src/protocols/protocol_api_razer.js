@@ -95,6 +95,9 @@
   const RAZER_POST_OPEN_SETTLE_MS = 60;
 
   const PID = Object.freeze({
+    HYPERPOLLING_WIRELESS_DONGLE: 0x00b3,
+    DEATHADDER_V3_PRO_WIRED: 0x00b6,
+    DEATHADDER_V3_PRO_WIRELESS: 0x00b7,
     VIPER_V3_PRO_WIRED: 0x00c0,
     VIPER_V3_PRO_WIRELESS: 0x00c1,
     DEATHADDER_V3_PRO_WIRED_ALT: 0x00c2,
@@ -102,29 +105,6 @@
     DEATHADDER_V3_HYPERSPEED_WIRED: 0x00c4,
     DEATHADDER_V3_HYPERSPEED_WIRELESS: 0x00c5,
   });
-
-  const PID_NAME = Object.freeze({
-    [PID.VIPER_V3_PRO_WIRED]: "Razer Viper V3 Pro (Wired)",
-    [PID.VIPER_V3_PRO_WIRELESS]: "Razer Viper V3 Pro (Wireless)",
-    [PID.DEATHADDER_V3_PRO_WIRED_ALT]: "Razer DeathAdder V3 Pro (Wired Alt)",
-    [PID.DEATHADDER_V3_PRO_WIRELESS_ALT]: "Razer DeathAdder V3 Pro (Wireless Alt)",
-    [PID.DEATHADDER_V3_HYPERSPEED_WIRED]: "Razer DeathAdder V3 HyperSpeed (Wired)",
-    [PID.DEATHADDER_V3_HYPERSPEED_WIRELESS]: "Razer DeathAdder V3 HyperSpeed (Wireless)",
-  });
-
-  // OpenRazer driver (driver/razermouse_driver.c) uses report index 0x00 for this PID family.
-  // Keep it hardcoded to avoid interface/report-id probing guesses.
-  const PID_FEATURE_REPORT_ID = Object.freeze({
-    [PID.VIPER_V3_PRO_WIRED]: 0x00,
-    [PID.VIPER_V3_PRO_WIRELESS]: 0x00,
-    [PID.DEATHADDER_V3_PRO_WIRED_ALT]: 0x00,
-    [PID.DEATHADDER_V3_PRO_WIRELESS_ALT]: 0x00,
-    [PID.DEATHADDER_V3_HYPERSPEED_WIRED]: 0x00,
-    [PID.DEATHADDER_V3_HYPERSPEED_WIRELESS]: 0x00,
-  });
-
-  const SUPPORTED_PIDS = Object.freeze(Object.values(PID));
-  const SUPPORTED_PID_SET = new Set(SUPPORTED_PIDS);
 
   const REPORT_STATUS = Object.freeze({
     NEW_COMMAND: 0x00,
@@ -147,55 +127,112 @@
     TX_DEFAULT: 0x1f,
   });
 
-  const PID_POLLING_V2 = new Set([PID.VIPER_V3_PRO_WIRELESS]);
+  function buildPidMatrixRow(pid, name, overrides = null) {
+    return Object.freeze(Object.assign({
+      pid,
+      name,
+      featureReportId: 0x00,
+      pollingMode: "legacy",
+      battery: true,
+      hyperpollingIndicatorMode: false,
+      dynamicSensitivity: false,
+      smartTracking: true,
+      sensorAngle: false,
+      lowThresholdTx: null,
+      hyperIndicatorTx: null,
+      defaultTx: RAZER_CONST.TX_DEFAULT,
+    }, overrides || {}));
+  }
 
-  const PID_BATTERY = new Set([
-    PID.VIPER_V3_PRO_WIRED,
-    PID.VIPER_V3_PRO_WIRELESS,
-    PID.DEATHADDER_V3_PRO_WIRED_ALT,
-    PID.DEATHADDER_V3_PRO_WIRELESS_ALT,
-    PID.DEATHADDER_V3_HYPERSPEED_WIRED,
-    PID.DEATHADDER_V3_HYPERSPEED_WIRELESS,
+  /*
+   * Razer PID capability matrix (single source of truth)
+   *
+   * pid     rpt  polling  battery  hyperIM  dynamic  tracking  angle  name
+   * 0x00b3  00   v2       Y        Y        -        Y         -      HyperPolling Wireless Dongle
+   * 0x00b6  00   legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wired)
+   * 0x00b7  00   legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wireless)
+   * 0x00c0  00   legacy   Y        -        Y        Y         Y      Viper V3 Pro (Wired)
+   * 0x00c1  00   v2       Y        Y        Y        Y         Y      Viper V3 Pro (Wireless)
+   * 0x00c2  00   legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wired Alt)
+   * 0x00c3  00   legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wireless Alt)
+   * 0x00c4  00   legacy   Y        -        -        Y         -      DeathAdder V3 HyperSpeed (Wired)
+   * 0x00c5  00   legacy   Y        -        -        Y         -      DeathAdder V3 HyperSpeed (Wireless)
+   */
+  const PID_CAPABILITY_MATRIX = Object.freeze([
+    buildPidMatrixRow(PID.HYPERPOLLING_WIRELESS_DONGLE, "Razer HyperPolling Wireless Dongle", {
+      pollingMode: "v2",
+      hyperpollingIndicatorMode: true,
+      hyperIndicatorTx: 0xff,
+    }),
+    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRED, "Razer DeathAdder V3 Pro (Wired)"),
+    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRELESS, "Razer DeathAdder V3 Pro (Wireless)"),
+    buildPidMatrixRow(PID.VIPER_V3_PRO_WIRED, "Razer Viper V3 Pro (Wired)", {
+      dynamicSensitivity: true,
+      sensorAngle: true,
+    }),
+    buildPidMatrixRow(PID.VIPER_V3_PRO_WIRELESS, "Razer Viper V3 Pro (Wireless)", {
+      pollingMode: "v2",
+      hyperpollingIndicatorMode: true,
+      dynamicSensitivity: true,
+      sensorAngle: true,
+      hyperIndicatorTx: 0xff,
+    }),
+    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRED_ALT, "Razer DeathAdder V3 Pro (Wired Alt)"),
+    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRELESS_ALT, "Razer DeathAdder V3 Pro (Wireless Alt)"),
+    buildPidMatrixRow(PID.DEATHADDER_V3_HYPERSPEED_WIRED, "Razer DeathAdder V3 HyperSpeed (Wired)"),
+    buildPidMatrixRow(PID.DEATHADDER_V3_HYPERSPEED_WIRELESS, "Razer DeathAdder V3 HyperSpeed (Wireless)"),
   ]);
 
-  const PID_HYPER_INDICATOR = new Set([PID.VIPER_V3_PRO_WIRELESS]);
+  const PID_CAPABILITY_MATRIX_BY_PID = Object.freeze(
+    Object.fromEntries(PID_CAPABILITY_MATRIX.map((row) => [row.pid, row]))
+  );
 
-  const PID_LOW_THRESHOLD_TX_FF = new Set([]);
+  const PID_NAME = Object.freeze(
+    Object.fromEntries(PID_CAPABILITY_MATRIX.map((row) => [row.pid, row.name]))
+  );
+
+  // OpenRazer driver (driver/razermouse_driver.c) uses report index 0x00 for this PID family.
+  // Keep it hardcoded to avoid interface/report-id probing guesses.
+  const PID_FEATURE_REPORT_ID = Object.freeze(
+    Object.fromEntries(PID_CAPABILITY_MATRIX.map((row) => [row.pid, row.featureReportId]))
+  );
+
+  const SUPPORTED_PIDS = Object.freeze(PID_CAPABILITY_MATRIX.map((row) => row.pid));
+  const SUPPORTED_PID_SET = new Set(SUPPORTED_PIDS);
 
   function getWaitMsForPid(pid) {
-    // Mirrors razer_get_report() wait groups in razermouse_driver.c.
-    if (pid === PID.VIPER_V3_PRO_WIRELESS) return 60;
-    return 31;
+    void pid;
+    return 60;
   }
 
   function buildCapabilities(pid) {
+    const matrixRow = PID_CAPABILITY_MATRIX_BY_PID[pid] || null;
     return {
-      supported: SUPPORTED_PID_SET.has(pid),
+      supported: !!matrixRow,
       polling: true,
-      pollingMode: PID_POLLING_V2.has(pid) ? "v2" : "legacy",
+      pollingMode: matrixRow?.pollingMode || "legacy",
       dpi: true,
       dpiStages: true,
-      battery: PID_BATTERY.has(pid),
-      charging: PID_BATTERY.has(pid),
-      idle: PID_BATTERY.has(pid),
-      lowBatteryThreshold: PID_BATTERY.has(pid),
-      lowPowerThresholdPercent: PID_BATTERY.has(pid),
-      hyperpollingIndicatorMode: PID_HYPER_INDICATOR.has(pid),
-      dynamicSensitivity: SUPPORTED_PID_SET.has(pid),
-      smartTracking: SUPPORTED_PID_SET.has(pid),
-      sensorAngle: SUPPORTED_PID_SET.has(pid),
+      battery: !!matrixRow?.battery,
+      charging: !!matrixRow?.battery,
+      idle: !!matrixRow?.battery,
+      lowBatteryThreshold: !!matrixRow?.battery,
+      lowPowerThresholdPercent: !!matrixRow?.battery,
+      hyperpollingIndicatorMode: !!matrixRow?.hyperpollingIndicatorMode,
+      dynamicSensitivity: !!matrixRow?.dynamicSensitivity,
+      smartTracking: !!matrixRow?.smartTracking,
+      sensorAngle: !!matrixRow?.sensorAngle,
     };
   }
 
   function txForField(pid, field) {
-    if (field === "chargeLowThreshold" && PID_LOW_THRESHOLD_TX_FF.has(pid)) return 0xff;
-    if (field === "lowPowerThresholdPercent" && PID_LOW_THRESHOLD_TX_FF.has(pid)) return 0xff;
-    if (field === "hyperpollingIndicatorMode" && pid === PID.VIPER_V3_PRO_WIRELESS) return 0xff;
-    if (field === "dynamicSensitivity") return RAZER_CONST.TX_DEFAULT;
-    if (field === "smartTracking") return RAZER_CONST.TX_DEFAULT;
-    if (field === "sensorAngle") return RAZER_CONST.TX_DEFAULT;
-    if (field === "buttonMapping") return RAZER_CONST.TX_DEFAULT;
-    return RAZER_CONST.TX_DEFAULT;
+    const matrixRow = PID_CAPABILITY_MATRIX_BY_PID[pid] || null;
+    if (
+      (field === "chargeLowThreshold" || field === "lowPowerThresholdPercent")
+      && matrixRow?.lowThresholdTx === 0xff
+    ) return 0xff;
+    if (field === "hyperpollingIndicatorMode" && matrixRow?.hyperIndicatorTx === 0xff) return 0xff;
+    return matrixRow?.defaultTx ?? RAZER_CONST.TX_DEFAULT;
   }
 
   function normalizePid(device) {
@@ -378,7 +415,8 @@
             const isPermissionPathErr = isNotAllowed || isFeatureWriteErr || isFeatureReadErr;
 
             if (isPermissionPathErr) {
-              if (attempt < Math.min(busyRetry, RAZER_NOT_ALLOWED_SAME_ID_RETRY)) {
+              const permissionRetryBudget = Math.min(busyRetry, RAZER_NOT_ALLOWED_SAME_ID_RETRY);
+              if (attempt < permissionRetryBudget) {
                 if (RAZER_RETRY_BACKOFF_MS > 0) await sleep(RAZER_RETRY_BACKOFF_MS);
                 continue;
               }
@@ -2045,6 +2083,7 @@
 
       if (device) this.device = device;
       this._cfg = this._makeDefaultCfg();
+      this._syncCapabilitiesSnapshot();
     }
 
     set device(dev) {
@@ -2056,6 +2095,7 @@
       this._planner.setProductId(pid);
       this._driver.setDevice(this._device, pid);
       this._cfg = this._makeDefaultCfg();
+      this._syncCapabilitiesSnapshot();
     }
 
     get device() {
@@ -2101,16 +2141,24 @@
       };
     }
 
+    _syncCapabilitiesSnapshot(caps = this._caps()) {
+      this.capabilities = this._capabilitiesSnapshot(caps);
+      return this.capabilities;
+    }
+
     _snapshotForUi() {
       const cfg = deepClone(this._cfg || {});
       if (!isObject(cfg.capabilities)) {
-        cfg.capabilities = this._capabilitiesSnapshot(this._caps());
+        cfg.capabilities = isObject(this.capabilities)
+          ? deepClone(this.capabilities)
+          : this._syncCapabilitiesSnapshot();
       }
       return cfg;
     }
 
     _emitConfig() {
       if (this._closed) return;
+      this._syncCapabilitiesSnapshot();
       const cfg = this._snapshotForUi();
       for (const cb of Array.from(this._onConfigCbs)) {
         try {

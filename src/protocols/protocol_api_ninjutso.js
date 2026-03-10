@@ -1613,7 +1613,6 @@
     get capabilities() {
       const cap = this._profile?.capabilities || {};
       return deepClone({
-        ...cap,
         dpiSlotCount: cap.dpiSlotMax ?? 4,
         maxDpi: cap.dpiMax ?? 26000,
         dpiStep: cap.dpiStep ?? 1,
