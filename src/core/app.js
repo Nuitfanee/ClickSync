@@ -292,8 +292,27 @@
   //   not by adding device-specific branches in app.js.
   // - app.js only consumes adapter features/ui metadata and standard keys.
   const DeviceRuntime = window.DeviceRuntime;
-  let DEVICE_ID = DeviceRuntime.getSelectedDevice();
-  let adapter = window.DeviceAdapters.getAdapter(DEVICE_ID);
+  const DEFAULT_DEVICE_ID = String(DeviceRuntime?.DEFAULT_DEVICE_ID || "chaos").trim().toLowerCase() || "chaos";
+
+  function normalizeRuntimeDeviceId(deviceId = undefined) {
+    let raw = deviceId;
+    if (raw == null || raw === "") raw = DeviceRuntime?.getSelectedDevice?.();
+    if (raw == null || raw === "") raw = DEFAULT_DEVICE_ID;
+    const runtimeNormalize = DeviceRuntime?.normalizeDeviceId;
+    if (typeof runtimeNormalize === "function") {
+      const normalized = String(runtimeNormalize(raw) || "").trim().toLowerCase();
+      if (normalized) return normalized;
+    }
+    const fallback = String(raw || DEFAULT_DEVICE_ID).trim().toLowerCase();
+    return fallback || DEFAULT_DEVICE_ID;
+  }
+
+  function getRuntimeAdapter(deviceId = undefined) {
+    return window.DeviceAdapters.getAdapter(normalizeRuntimeDeviceId(deviceId));
+  }
+
+  let DEVICE_ID = normalizeRuntimeDeviceId();
+  let adapter = getRuntimeAdapter(DEVICE_ID);
   let adapterFeatures = adapter?.features || {};
   // Single-source runtime helpers for advanced controls:
   // - Resolve source region from adapter.ui.advancedSourceRegionByStdKey.
@@ -713,9 +732,8 @@
   function __applyDeviceVariantOnce({ deviceName = "", cfg = null, keymapOnly = false } = {}) {
 
     try {
-      const registry = window.DeviceAdapters;
-      const runtimeDeviceId = window.DeviceRuntime.getSelectedDevice();
-      const adapter = registry.getAdapter(runtimeDeviceId);
+      const runtimeDeviceId = normalizeRuntimeDeviceId();
+      const adapter = getRuntimeAdapter(runtimeDeviceId);
       window.DeviceUI?.applyVariant?.({
         deviceId: runtimeDeviceId,
         adapter,
@@ -4833,9 +4851,7 @@ function lockEl(el) {
   }
 
   async function __switchRuntimeDevice(deviceId) {
-    const nextDeviceId = DeviceRuntime?.normalizeDeviceId?.(deviceId)
-      || String(deviceId || "").trim().toLowerCase()
-      || "chaos";
+    const nextDeviceId = normalizeRuntimeDeviceId(deviceId);
     DeviceRuntime?.setSelectedDevice?.(nextDeviceId, { reload: false });
     __resetDeviceScopedTransientState();
     await __ensureProtocolBinding(nextDeviceId, { recreateHidApi: true });
@@ -5015,12 +5031,12 @@ let __capabilities = {
   dpiStep: DPI_STEP,
   pollingRates: null,
 };
-let __capabilitiesDeviceId = String(window.DeviceRuntime?.getSelectedDevice?.() || DEVICE_ID).trim().toLowerCase();
+let __capabilitiesDeviceId = normalizeRuntimeDeviceId();
 
 function __refreshRuntimeDeviceState(deviceId = DeviceRuntime.getSelectedDevice()) {
-  const nextDeviceId = String(deviceId || DeviceRuntime.getSelectedDevice() || DEVICE_ID || "chaos").trim().toLowerCase() || "chaos";
+  const nextDeviceId = normalizeRuntimeDeviceId(deviceId);
   DEVICE_ID = nextDeviceId;
-  adapter = window.DeviceAdapters.getAdapter(DEVICE_ID);
+  adapter = getRuntimeAdapter(DEVICE_ID);
   adapterFeatures = adapter?.features || {};
   hasDpiLightCycle = !!adapterFeatures.hasDpiLightCycle;
   hasReceiverLightCycle = !!adapterFeatures.hasReceiverLightCycle;
@@ -5068,8 +5084,8 @@ function getCapabilities() {
 function applyCapabilityStateToRuntime(cap, opts = {}) {
   try { applyCapabilitiesToUi(cap, opts); } catch (_) {}
   try {
-    const runtimeDeviceId = window.DeviceRuntime?.getSelectedDevice?.() || DEVICE_ID;
-    const runtimeAdapter = window.DeviceAdapters.getAdapter(runtimeDeviceId);
+    const runtimeDeviceId = normalizeRuntimeDeviceId();
+    const runtimeAdapter = getRuntimeAdapter(runtimeDeviceId);
     window.DeviceUI?.applyAdvancedRuntime?.({
       adapter: runtimeAdapter,
       root: document,
@@ -5081,8 +5097,7 @@ function applyCapabilityStateToRuntime(cap, opts = {}) {
 applyCapabilityStateToRuntime(getCapabilities(), { preserveDpiMax: true });
 
 function resolveRuntimeDpiAdapter() {
-  const runtimeDeviceId = window.DeviceRuntime?.getSelectedDevice?.() || DEVICE_ID;
-  return window.DeviceAdapters.getAdapter(runtimeDeviceId);
+  return getRuntimeAdapter();
 }
 
 function normalizeDpiStepSegments(raw) {
@@ -5103,12 +5118,12 @@ function normalizeDpiStepSegments(raw) {
 }
 
 function resolveRuntimeDpiPolicy(fallbackStep = 50) {
-  const runtimeDeviceId = String(window.DeviceRuntime?.getSelectedDevice?.() || DEVICE_ID).trim().toLowerCase();
+  const runtimeDeviceId = normalizeRuntimeDeviceId();
   const runtimeAdapter = resolveRuntimeDpiAdapter();
   const cfg = runtimeAdapter?.ranges?.dpi || {};
   const cfgPolicy = (cfg?.policy && typeof cfg.policy === "object") ? cfg.policy : {};
   const cap = getCapabilities() || {};
-  const sameCapabilitiesDevice = runtimeDeviceId === String(__capabilitiesDeviceId || "").trim().toLowerCase();
+  const sameCapabilitiesDevice = runtimeDeviceId === __capabilitiesDeviceId;
   const capPolicy = (sameCapabilitiesDevice && cap?.dpiPolicy && typeof cap.dpiPolicy === "object")
     ? cap.dpiPolicy
     : {};
@@ -5235,8 +5250,8 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   const incoming = (cap && typeof cap === "object") ? cap : {};
   const preserveDpiMax = !!opts.preserveDpiMax;
   const prevCap = getCapabilities();
-  const runtimeDeviceId = String(window.DeviceRuntime?.getSelectedDevice?.() || DEVICE_ID).trim().toLowerCase();
-  const sameDevice = runtimeDeviceId === String(__capabilitiesDeviceId || "").trim().toLowerCase();
+  const runtimeDeviceId = normalizeRuntimeDeviceId();
+  const sameDevice = runtimeDeviceId === __capabilitiesDeviceId;
   const runtimeAdapter = resolveRuntimeDpiAdapter();
   const adapterDpiCfg = runtimeAdapter?.ranges?.dpi || {};
   const adapterDpiPolicy = (adapterDpiCfg?.policy && typeof adapterDpiCfg.policy === "object")

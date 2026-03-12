@@ -31,9 +31,11 @@
 (function () {
   const { buildSelectOptions } = window.AppConfig?.utils || {};
   const {
+    DEFAULT_DEVICE_ID,
     resolveAdvancedPanelRegistry,
     evaluateAdvancedPanelVisibility,
   } = window.__DeviceRefactorCore || {};
+  const FALLBACK_DEVICE_ID = String(DEFAULT_DEVICE_ID || "chaos").trim().toLowerCase() || "chaos";
   const tr = (zh, en) => (typeof window !== "undefined" && typeof window.tr === "function")
     ? window.tr(zh, en)
     : zh;
@@ -348,6 +350,7 @@
     const keymapScene = resolveKeymapVariant({ ui, deviceName });
     const canvas = doc.getElementById("kmCanvas");
     const img = doc.querySelector("#keys .kmImg");
+    const defaultKeymapSrc = String(doc.querySelector("#keys .kmImg")?.getAttribute("src") || "").trim();
     const setKeymapReady = (ready) => {
       if (canvas) canvas.dataset.keymapReady = ready ? "1" : "0";
     };
@@ -366,10 +369,19 @@
       if (!img.dataset.__variant_load_hooked) {
         img.dataset.__variant_load_hooked = "1";
         img.addEventListener("load", () => {
+          img.removeAttribute("data-keymap-load-failed");
           setKeymapReady(true);
           try { window.dispatchEvent(new Event("resize")); } catch (_) {}
         }, { passive: true });
         img.addEventListener("error", () => {
+          const fallbackSrc = String(img.dataset.__orig_src || defaultKeymapSrc || "").trim();
+          const failedSrc = String(img.getAttribute("src") || "").trim();
+          if (fallbackSrc && failedSrc && failedSrc !== fallbackSrc) {
+            img.dataset.keymapLoadFailed = failedSrc;
+            img.setAttribute("src", fallbackSrc);
+            setKeymapReady(false);
+            return;
+          }
           setKeymapReady(true);
         }, { passive: true });
       }
@@ -1055,7 +1067,7 @@
    */
   function applyVariant({ deviceId, adapter, root, deviceName = "", keymapOnly = false }) {
     const doc = root || document;
-    const cfg = adapter?.ranges || window.AppConfig?.ranges?.chaos;
+    const cfg = adapter?.ranges || window.AppConfig?.ranges?.[FALLBACK_DEVICE_ID];
     const ui = adapter?.ui || {};
     const features = adapter?.features || {};
     applyLandingTexts({ doc, ui });

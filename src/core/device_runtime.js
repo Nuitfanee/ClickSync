@@ -34,7 +34,9 @@
 
   const STORAGE_KEY = "device.selected";
   const LAST_HID_KEY = "mouse.lastHid";
-  const VALID = new Set(["chaos", "rapoo", "atk", "ninjutso", "logitech", "razer"]);
+  const DEFAULT_DEVICE_ID = "chaos";
+  const VALID_DEVICE_IDS = Object.freeze(["chaos", "rapoo", "atk", "ninjutso", "logitech", "razer"]);
+  const VALID = new Set(VALID_DEVICE_IDS);
   const PROTOCOL_SCRIPT_BY_DEVICE = Object.freeze({
     chaos: "./src/protocols/protocol_api_chaos.js",
     rapoo: "./src/protocols/protocol_api_rapoo.js",
@@ -214,8 +216,8 @@
    * @returns {string} Normalized device identifier.
    */
   const normalizeDeviceId = (id) => {
-    const x = String(id || "").toLowerCase();
-    return VALID.has(x) ? x : "chaos";
+    const x = String(id || "").trim().toLowerCase();
+    return VALID.has(x) ? x : DEFAULT_DEVICE_ID;
   };
 
   /**
@@ -225,8 +227,7 @@
    * @returns {string} Device identifier.
    */
   function getSelectedDevice() {
-    const v = (localStorage.getItem(STORAGE_KEY) || "chaos").toLowerCase();
-    return VALID.has(v) ? v : "chaos";
+    return normalizeDeviceId(localStorage.getItem(STORAGE_KEY) || DEFAULT_DEVICE_ID);
   }
 
   /**
@@ -660,6 +661,8 @@
   // 7) Public runtime API
   // ============================================================
   const DeviceRuntime = {
+    DEFAULT_DEVICE_ID,
+    VALID_DEVICE_IDS,
     getSelectedDevice,
     setSelectedDevice,
     normalizeDeviceId,

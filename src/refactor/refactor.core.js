@@ -346,14 +346,24 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
    * @param {string} id - Device identifier.
    * @returns {string} Normalized device identifier.
    */
+  const DEFAULT_DEVICE_ID = String(window.DeviceRuntime?.DEFAULT_DEVICE_ID || "chaos").trim().toLowerCase() || "chaos";
+  const VALID_DEVICE_IDS = Object.freeze(
+    (Array.isArray(window.DeviceRuntime?.VALID_DEVICE_IDS) && window.DeviceRuntime.VALID_DEVICE_IDS.length
+      ? window.DeviceRuntime.VALID_DEVICE_IDS
+      : [DEFAULT_DEVICE_ID, "rapoo", "atk", "ninjutso", "logitech", "razer"])
+      .map((deviceId) => String(deviceId || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const VALID_DEVICE_ID_SET = new Set(VALID_DEVICE_IDS);
+
   const normalizeDeviceId = (id) => {
-    const x = String(id || "").toLowerCase();
-    if (x === "rapoo") return "rapoo";
-    if (x === "atk") return "atk";
-    if (x === "ninjutso") return "ninjutso";
-    if (x === "logitech") return "logitech";
-    if (x === "razer") return "razer";
-    return "atk";
+    const runtimeNormalize = window.DeviceRuntime?.normalizeDeviceId;
+    if (typeof runtimeNormalize === "function") {
+      const normalized = String(runtimeNormalize(id) || "").trim().toLowerCase();
+      return normalized || DEFAULT_DEVICE_ID;
+    }
+    const x = String(id || "").trim().toLowerCase();
+    return VALID_DEVICE_ID_SET.has(x) ? x : DEFAULT_DEVICE_ID;
   };
 
   /**
@@ -974,6 +984,8 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   // Internal shared namespace for split files (core -> profiles).
   window.__DeviceRefactorCore = {
     clamp,
+    DEFAULT_DEVICE_ID,
+    VALID_DEVICE_IDS,
     normalizeDeviceId,
     toNumber,
     readBool,

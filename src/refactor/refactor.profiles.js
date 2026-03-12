@@ -36,6 +36,7 @@
 // ============================================================
 (function () {
   const {
+    DEFAULT_DEVICE_ID,
     clamp,
     normalizeDeviceId,
     toNumber,
@@ -67,6 +68,7 @@
     fromNinjutsoLedBrightness,
     normalizeHexColor,
   } = window.__DeviceRefactorCore || {};
+  const FALLBACK_DEVICE_ID = String(DEFAULT_DEVICE_ID || "chaos").trim().toLowerCase() || "chaos";
 
   // ============================================================
   // Profile builder functions
@@ -121,6 +123,9 @@
         landingTitle: rapooTexts.landingTitle,
         landingCaption: rapooTexts.landingCaption,
         landingReadyText: "",
+        keymap: {
+          imageSrc: "./assets/images/default.png",
+        },
         lod: rapooTexts.lod,
         led: rapooTexts.led,
         perfMode: rapooTexts.perfMode,
@@ -255,7 +260,7 @@
     dpiSnapper,
     features,
   }) {
-    const profileId = String(id || "").trim().toLowerCase() || "chaos";
+    const profileId = String(id || "").trim().toLowerCase() || FALLBACK_DEVICE_ID;
     const protocolSections = composeProtocolSections(
       BaseCommonProfile,
       { keyMap, transforms, actions, features }
@@ -1184,7 +1189,7 @@
    * - Keep all device differences represented here, not in call sites.
    */
   function createAdapter(profile) {
-    const cfg = profile?.ranges || window.AppConfig?.ranges?.chaos;
+    const cfg = profile?.ranges || window.AppConfig?.ranges?.[FALLBACK_DEVICE_ID];
     return {
       id: profile.id,
       ui: profile.ui || {},
@@ -1207,7 +1212,7 @@
      * This is the only adapter lookup entrypoint used by app.js and refactor.ui.js.
      */
     getAdapter(id) {
-      return adapters[normalizeDeviceId(id)];
+      return adapters[normalizeDeviceId(id)] || adapters[FALLBACK_DEVICE_ID];
     },
   };
 })();
