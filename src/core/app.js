@@ -734,7 +734,7 @@
     try {
       const runtimeDeviceId = normalizeRuntimeDeviceId();
       const adapter = getRuntimeAdapter(runtimeDeviceId);
-      window.DeviceUI?.applyVariant?.({
+      return window.DeviceUI?.applyVariant?.({
         deviceId: runtimeDeviceId,
         adapter,
         root: document,
@@ -744,6 +744,7 @@
     } catch (err) {
       console.warn("[variant] apply failed", err);
     }
+    return undefined;
   }
 
   __applyDeviceVariantOnce();
@@ -1043,6 +1044,40 @@
 
 
   let __landingClickOrigin = null;
+  let __landingEnterGateSeq = 0;
+
+  function __createStaleLandingEnterGateError() {
+    const err = new Error("Landing enter gate is stale");
+    err.code = "STALE_LANDING_ENTER_GATE";
+    return err;
+  }
+
+  function __clearLandingEnterGate() {
+    __landingEnterGateSeq += 1;
+    window.__LANDING_ENTER_GATE_PROMISE__ = null;
+  }
+
+  function __prepareLandingEnterGate({ deviceName = "", cfg = null } = {}) {
+    const runtimeDeviceId = normalizeRuntimeDeviceId();
+    const nextAdapter = getRuntimeAdapter(runtimeDeviceId);
+    const gateSeq = (++__landingEnterGateSeq);
+    const gatePromise = Promise.resolve().then(() =>
+      window.DeviceUI?.prepareEnterAssets?.({
+        deviceId: runtimeDeviceId,
+        adapter: nextAdapter,
+        root: document,
+        deviceName: String(deviceName || cfg?.deviceName || "").trim(),
+        guard: () => gateSeq === __landingEnterGateSeq,
+      })
+    ).then((value) => {
+      if (gateSeq !== __landingEnterGateSeq) {
+        throw __createStaleLandingEnterGateError();
+      }
+      return value;
+    });
+    window.__LANDING_ENTER_GATE_PROMISE__ = gatePromise;
+    return gatePromise;
+  }
 
 
   let __autoDetectedDevice = null;
@@ -1104,6 +1139,7 @@
 function showLanding(reason = "") {
     if (!__landingLayer) return;
 
+    __clearLandingEnterGate();
 
     document.body.classList.remove("landing-cover", "landing-reveal", "landing-covered", "landing-hovering", "landing-drop");
     document.body.classList.remove("landing-precharge", "landing-charging", "landing-system-ready", "landing-ready-zoom", "landing-ready-out", "landing-holding");
@@ -1132,23 +1168,26 @@ function showLanding(reason = "") {
  * @param {any} origin - Transition origin.
  * @returns {any} Transition result.
  */
-function enterAppWithLiquidTransition(origin = null) {
+async function enterAppWithLiquidTransition(origin = null) {
     if (!__landingLayer) return;
     if (__landingLayer.getAttribute("aria-hidden") === "true") return;
 
-
     if (document.body.classList.contains("landing-system-ready")) return;
 
+    const gateP = window.__LANDING_ENTER_GATE_PROMISE__;
+    const waitP = (gateP && typeof gateP.then === "function") ? gateP : Promise.resolve();
+    await waitP;
+
+    if (!__landingLayer || __landingLayer.getAttribute("aria-hidden") === "true") return;
+    if (document.body.classList.contains("landing-system-ready")) return;
 
     if (__triggerZone) __triggerZone.style.pointerEvents = "none";
-
 
     document.body.classList.remove("landing-ready-zoom", "landing-ready-out");
     document.body.classList.add("landing-system-ready", "landing-reveal");
     document.body.classList.remove("landing-precharge", "landing-charging", "landing-holding");
 
     __setLandingCaption(__getLandingReadyText());
-
 
     __setAppInert(true);
 
@@ -1181,6 +1220,7 @@ function enterAppWithLiquidTransition(origin = null) {
       if (__triggerZone) __triggerZone.style.pointerEvents = "";
 
       __landingClickOrigin = null;
+      window.__LANDING_ENTER_GATE_PROMISE__ = null;
     };
 
     /**
@@ -1188,8 +1228,7 @@ function enterAppWithLiquidTransition(origin = null) {
      * Purpose: centralize transition flow and keep behavior consistent.
      * @returns {any} Timeline result.
      */
-    const runTransition = () => {
-
+    return new Promise((resolve) => {
       window.setTimeout(() => {
         try { document.body.classList.add("landing-ready-zoom"); } catch (_) {}
       }, 720);
@@ -1202,17 +1241,11 @@ function enterAppWithLiquidTransition(origin = null) {
         try { document.body.classList.add("landing-drop"); } catch (_) {}
       }, 1500);
 
-      window.setTimeout(finish, 2140);
-    };
-
-
-    const gateP = window.__LANDING_ENTER_GATE_PROMISE__;
-    const waitP = (gateP && typeof gateP.then === "function") ? gateP : Promise.resolve();
-
-    Promise.race([
-      waitP.catch(() => {}),
-      new Promise((r) => setTimeout(r, 6000)),
-    ]).then(runTransition, runTransition);
+      window.setTimeout(() => {
+        finish();
+        resolve();
+      }, 2140);
+    });
   }
 
 
@@ -1658,6 +1691,7 @@ function enterAppWithLiquidTransition(origin = null) {
     if (!__landingLayer) return;
     if (__landingLayer.getAttribute("aria-hidden") === "true") return;
 
+    __clearLandingEnterGate();
 
     document.body.classList.remove(
       "landing-precharge",
@@ -4850,13 +4884,60 @@ function lockEl(el) {
     writeDebouncers.clear();
   }
 
+  function __resetDeviceScopedUiState() {
+    uiCurrentDpiSlot = 1;
+    dpiAdvancedEnabled = false;
+    dpiAdvancedToggleBusy = false;
+    dpiSyncingToSingleMode = false;
+    uiDpiSlotsX = [];
+    uiDpiSlotsY = [];
+    uiDpiLods = [];
+    dpiAnimReady = false;
+    dpiDraggingSlot = null;
+    dpiDraggingEl = null;
+    if (dpiHoverRafId) {
+      try { cancelAnimationFrame(dpiHoverRafId); } catch (_) {}
+    }
+    dpiHoverRafId = 0;
+    dpiHoverPending = null;
+    dpiRangeSlotCache = new WeakMap();
+    dpiThumbSizeCache = new WeakMap();
+    dpiRowDragState = null;
+    dpiRowDragDirty = false;
+    dpiRowDragBlockClickUntil = 0;
+    __staticLedColorValue = STATIC_LED_COLOR_FALLBACK;
+    __dpiEditorStructureSignature = "";
+    const portals = Array.from(document.body?.querySelectorAll?.(".dpiBubblePortal") || []);
+    portals.forEach((node) => node.remove());
+  }
+
+  function __getDpiEditorStructureSignature() {
+    return [
+      normalizeRuntimeDeviceId(),
+      getDpiSlotCap(),
+      hasFeature("hasDpiLods") ? "lods:1" : "lods:0",
+      hasDpiAdvancedAxis() ? "axis:1" : "axis:0",
+    ].join("|");
+  }
+
+  function __rebuildDeviceScopedUi({ reason = "unknown" } = {}) {
+    void reason;
+    __resetDeviceScopedUiState();
+    buildDpiEditor();
+    applyDpiAdvancedUiState();
+    __applyDeviceVariantOnce({ keymapOnly: false });
+    applyCapabilityStateToRuntime(getCapabilities(), { preserveDpiMax: true });
+    syncAdvancedPanelUi();
+    syncSingleAdvancedUi();
+  }
+
   async function __switchRuntimeDevice(deviceId) {
     const nextDeviceId = normalizeRuntimeDeviceId(deviceId);
+    __clearLandingEnterGate();
     DeviceRuntime?.setSelectedDevice?.(nextDeviceId, { reload: false });
     __resetDeviceScopedTransientState();
     await __ensureProtocolBinding(nextDeviceId, { recreateHidApi: true });
-    try { __applyDeviceVariantOnce({ keymapOnly: false }); } catch (_) {}
-    try { applyCapabilityStateToRuntime(getCapabilities(), { preserveDpiMax: true }); } catch (_) {}
+    try { __rebuildDeviceScopedUi({ reason: "runtime-switch" }); } catch (_) {}
     try { __refreshKeymapActionCatalog?.(); } catch (_) {}
     try { initKeyScanningRateCycle(); } catch (_) {}
     try { initAdvancedLightCycles(); } catch (_) {}
@@ -4865,8 +4946,6 @@ function lockEl(el) {
     try { initSingleAdvancedUi(); } catch (_) {}
     try { renderTopConfigSlots({ slotCount: 1, activeIndex: 0 }); } catch (_) {}
     try { syncBasicMonolithUI(); } catch (_) {}
-    try { syncAdvancedPanelUi(); } catch (_) {}
-    try { syncSingleAdvancedUi(); } catch (_) {}
     return { deviceId: nextDeviceId, ProtocolApi, hidApi };
   }
 
@@ -5081,6 +5160,58 @@ function getCapabilities() {
   return __capabilities || {};
 }
 
+function __getNormalizedDpiUiCapabilities(prevCap, incoming, opts = {}) {
+  const preserveDpiMax = !!opts.preserveDpiMax;
+  const runtimeDeviceId = normalizeRuntimeDeviceId();
+  const sameDevice = runtimeDeviceId === __capabilitiesDeviceId;
+  const runtimeAdapter = resolveRuntimeDpiAdapter();
+  const adapterDpiCfg = runtimeAdapter?.ranges?.dpi || {};
+  const adapterDpiPolicy = (adapterDpiCfg?.policy && typeof adapterDpiCfg.policy === "object")
+    ? adapterDpiCfg.policy
+    : null;
+  const adapterDpiSegments = normalizeDpiStepSegments(
+    (Array.isArray(adapterDpiPolicy?.stepSegments) && adapterDpiPolicy.stepSegments.length ? adapterDpiPolicy.stepSegments : null)
+    || adapterDpiCfg?.stepSegments
+  );
+  const runtimeStep = Number(resolveRuntimeDpiStep(DPI_STEP));
+  const fallbackStep = Number(
+    Number.isFinite(runtimeStep) && runtimeStep > 0
+      ? runtimeStep
+      : (prevCap?.dpiStep ?? DPI_STEP)
+  );
+  const incomingStep = Number(incoming.dpiStep);
+  const dpiStep = Number.isFinite(incomingStep) && incomingStep > 0
+    ? Math.max(1, Math.trunc(incomingStep))
+    : (Number.isFinite(fallbackStep) && fallbackStep > 0 ? Math.max(1, Math.trunc(fallbackStep)) : 50);
+  const incomingMax = toPositiveInt(incoming.maxDpi);
+  const rememberedMax = getRememberedDpiMax(prevCap);
+  const resolvedMaxDpi = Number.isFinite(incomingMax)
+    ? (preserveDpiMax ? Math.max(incomingMax, rememberedMax) : incomingMax)
+    : rememberedMax;
+  const normalizedBase = {
+    dpiSlotCount: Number.isFinite(Number(incoming.dpiSlotCount)) ? Math.trunc(Number(incoming.dpiSlotCount)) : (prevCap.dpiSlotCount ?? 6),
+    maxDpi: resolvedMaxDpi,
+    dpiStep,
+    dpiPolicy: (incoming.dpiPolicy && typeof incoming.dpiPolicy === "object")
+      ? incoming.dpiPolicy
+      : (adapterDpiPolicy
+        || (sameDevice && prevCap?.dpiPolicy && typeof prevCap.dpiPolicy === "object" ? prevCap.dpiPolicy : null)
+        || null),
+    dpiSegments: Array.isArray(incoming.dpiSegments)
+      ? incoming.dpiSegments
+      : ((adapterDpiSegments && adapterDpiSegments.length)
+        ? adapterDpiSegments
+        : (sameDevice && Array.isArray(prevCap.dpiSegments) ? prevCap.dpiSegments : null)),
+    pollingRates: Array.isArray(incoming.pollingRates)
+      ? incoming.pollingRates.map(Number).filter(Number.isFinite)
+      : (prevCap.pollingRates ?? null),
+  };
+  const next = sameDevice
+    ? { ...prevCap, ...incoming, ...normalizedBase }
+    : { ...incoming, ...normalizedBase };
+  return { next, dpiStep };
+}
+
 function applyCapabilityStateToRuntime(cap, opts = {}) {
   try { applyCapabilitiesToUi(cap, opts); } catch (_) {}
   try {
@@ -5250,54 +5381,9 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   const incoming = (cap && typeof cap === "object") ? cap : {};
   const preserveDpiMax = !!opts.preserveDpiMax;
   const prevCap = getCapabilities();
+  const prevDpiEditorStructureSignature = __dpiEditorStructureSignature || __getDpiEditorStructureSignature();
+  const { next, dpiStep } = __getNormalizedDpiUiCapabilities(prevCap, incoming, { preserveDpiMax });
   const runtimeDeviceId = normalizeRuntimeDeviceId();
-  const sameDevice = runtimeDeviceId === __capabilitiesDeviceId;
-  const runtimeAdapter = resolveRuntimeDpiAdapter();
-  const adapterDpiCfg = runtimeAdapter?.ranges?.dpi || {};
-  const adapterDpiPolicy = (adapterDpiCfg?.policy && typeof adapterDpiCfg.policy === "object")
-    ? adapterDpiCfg.policy
-    : null;
-  const adapterDpiSegments = normalizeDpiStepSegments(
-    (Array.isArray(adapterDpiPolicy?.stepSegments) && adapterDpiPolicy.stepSegments.length ? adapterDpiPolicy.stepSegments : null)
-    || adapterDpiCfg?.stepSegments
-  );
-  const runtimeStep = Number(resolveRuntimeDpiStep(DPI_STEP));
-  const fallbackStep = Number(
-    Number.isFinite(runtimeStep) && runtimeStep > 0
-      ? runtimeStep
-      : (prevCap?.dpiStep ?? DPI_STEP)
-  );
-  const incomingStep = Number(incoming.dpiStep);
-  const dpiStep = Number.isFinite(incomingStep) && incomingStep > 0
-    ? Math.max(1, Math.trunc(incomingStep))
-    : (Number.isFinite(fallbackStep) && fallbackStep > 0 ? Math.max(1, Math.trunc(fallbackStep)) : 50);
-  const incomingMax = toPositiveInt(incoming.maxDpi);
-  const rememberedMax = getRememberedDpiMax(prevCap);
-  const resolvedMaxDpi = Number.isFinite(incomingMax)
-    ? (preserveDpiMax ? Math.max(incomingMax, rememberedMax) : incomingMax)
-    : rememberedMax;
-  const normalizedBase = {
-    dpiSlotCount: Number.isFinite(Number(incoming.dpiSlotCount)) ? Math.trunc(Number(incoming.dpiSlotCount)) : (prevCap.dpiSlotCount ?? 6),
-    maxDpi: resolvedMaxDpi,
-    dpiStep,
-    dpiPolicy: (incoming.dpiPolicy && typeof incoming.dpiPolicy === "object")
-      ? incoming.dpiPolicy
-      : (adapterDpiPolicy
-        || (sameDevice && prevCap?.dpiPolicy && typeof prevCap.dpiPolicy === "object" ? prevCap.dpiPolicy : null)
-        || null),
-    dpiSegments: Array.isArray(incoming.dpiSegments)
-      ? incoming.dpiSegments
-      : ((adapterDpiSegments && adapterDpiSegments.length)
-        ? adapterDpiSegments
-        : (sameDevice && Array.isArray(prevCap.dpiSegments) ? prevCap.dpiSegments : null)),
-    pollingRates: Array.isArray(incoming.pollingRates)
-      ? incoming.pollingRates.map(Number).filter(Number.isFinite)
-      : (prevCap.pollingRates ?? null),
-  };
-
-  const next = sameDevice
-    ? { ...prevCap, ...incoming, ...normalizedBase }
-    : { ...incoming, ...normalizedBase };
 
   __capabilities = next;
   __capabilitiesDeviceId = runtimeDeviceId;
@@ -5383,7 +5469,8 @@ function applyCapabilitiesToUi(cap, opts = {}) {
 
 
   if (typeof buildDpiEditor === "function") {
-    const needRebuild = (Number(prevCap?.dpiSlotCount) || 6) !== capSlots;
+    const nextDpiEditorStructureSignature = __getDpiEditorStructureSignature();
+    const needRebuild = prevDpiEditorStructureSignature !== nextDpiEditorStructureSignature;
     if (needRebuild) buildDpiEditor();
   }
   if (!hasDpiAdvancedAxis()) dpiAdvancedEnabled = false;
@@ -5815,6 +5902,7 @@ function applyCapabilitiesToUi(cap, opts = {}) {
   let uiDpiSlotsX = [];
   let uiDpiSlotsY = [];
   let uiDpiLods = [];
+  let __dpiEditorStructureSignature = "";
   let dpiAnimReady = false;
 
 
@@ -6306,12 +6394,10 @@ function applyCapabilitiesToUi(cap, opts = {}) {
     if (!dpiList) return;
     const dpiSlotCap = getDpiSlotCap();
     initDpiRangeControls();
+    dpiAnimReady = false;
 
-
-    for (let i = 1; i <= dpiSlotCap; i++) {
-      const old = document.body.querySelector(`#dpiBubble${i}.dpiBubblePortal`);
-      if (old) old.remove();
-    }
+    const oldPortals = Array.from(document.body?.querySelectorAll?.(".dpiBubblePortal") || []);
+    oldPortals.forEach((node) => node.remove());
 
     dpiList.innerHTML = "";
 
@@ -6955,6 +7041,8 @@ function applyCapabilitiesToUi(cap, opts = {}) {
         true
       );
     }
+
+    __dpiEditorStructureSignature = __getDpiEditorStructureSignature();
 
   }
 
@@ -8631,6 +8719,7 @@ function openDrawer(btn) {
     }
     __connectInFlight = true;
     __clearOnboardMemoryAutoEnableCheck();
+    __clearLandingEnterGate();
     try {
       if (hidConnecting) return;
       if (isHidOpened()) return;
@@ -8803,8 +8892,8 @@ function openDrawer(btn) {
         }
 
         if (document.body.classList.contains("landing-active")) {
-          window.__LANDING_ENTER_GATE_PROMISE__ = Promise.resolve();
-          enterAppWithLiquidTransition(__landingClickOrigin);
+          __prepareLandingEnterGate({ deviceName: displayName, cfg });
+          await enterAppWithLiquidTransition(__landingClickOrigin);
         }
 
         __writesEnabled = true;
@@ -8864,7 +8953,9 @@ function openDrawer(btn) {
       hidConnecting = false;
       currentDeviceName = displayName;
       if (handshakeCfg && typeof handshakeCfg === "object") {
-        __applyDeviceVariantOnce({ deviceName: displayName, cfg: handshakeCfg, keymapOnly: true });
+        if (!document.body.classList.contains("landing-active")) {
+          __applyDeviceVariantOnce({ deviceName: displayName, cfg: handshakeCfg, keymapOnly: true });
+        }
         __tryAutoEnableOnboardMemoryByConfig(handshakeCfg);
       }
 
@@ -8893,6 +8984,7 @@ function openDrawer(btn) {
 
     } catch (err) {
       __clearOnboardMemoryAutoEnableCheck();
+      __clearLandingEnterGate();
       __activeHandshakeSeq = 0;
       hidConnecting = false;
       hidLinked = false;
@@ -8941,6 +9033,7 @@ function openDrawer(btn) {
     try {
 
       __clearOnboardMemoryAutoEnableCheck();
+      __clearLandingEnterGate();
       __activeHandshakeSeq = 0;
       __connectPending = null;
       hidConnecting = false;

@@ -124,7 +124,7 @@
         landingCaption: rapooTexts.landingCaption,
         landingReadyText: "",
         keymap: {
-          imageSrc: "./assets/images/default.png",
+          imageSrc: "./assets/images/default.webp",
         },
         lod: rapooTexts.lod,
         led: rapooTexts.led,
@@ -486,6 +486,7 @@
     id: "logitech",
     ui: {
       landingReadyText: "LOGITECH READY",
+      dpiEditorHint: "光学引擎抬起距离",
       pollingThemeByWirelessHz: LOGITECH_POLLING_THEME_BY_HZ,
       advancedPanels: {
         sleepSeconds: {
@@ -511,11 +512,11 @@
         columnsOffsetX: -120,
       },
       keymap: {
-        imageSrc: "./assets/images/GPW.png",
+        imageSrc: "./assets/images/GPW.webp",
         variants: [
           {
             deviceNames: ["PRO X 2 DEX"],
-            imageSrc: "./assets/images/GPW_DEX.png",
+            imageSrc: "./assets/images/GPW_DEX.webp",
             // Placeholder points: fine-tune against the final device illustration if needed.
             points: {
               1: { x: 32, y: 20, side: "left" },
@@ -681,7 +682,7 @@
       skinClass: "atk",
       landingReadyText: "NINJUTSO READY",
       keymap: {
-        imageSrc: "./assets/images/ninjutso.png",
+        imageSrc: "./assets/images/ninjutso.webp",
         points: {
           1: { x: 30, y: 20, side: "left" },
           2: { x: 70, y: 38, side: "right" },
@@ -845,7 +846,7 @@
     ui: {
       landingReadyText: "RAZER READY",
       keymap: {
-        imageSrc: "./assets/images/VIPER_V3_耿鬼.png",
+        imageSrc: "./assets/images/VIPER_V3_耿鬼.webp",
         points: {
           1: { x: 32, y: 14, side: "left" },
           2: { x: 68, y: 40, side: "right" },

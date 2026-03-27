@@ -306,6 +306,97 @@
 
   const normalizeDeviceDisplayName = (name) =>
     String(name || "").trim().replace(/\s+/g, " ").toUpperCase();
+  const __keymapPreloadCache = new Map();
+  let __enterAssetPrepareSeq = 0;
+
+  function createStaleEnterAssetsError() {
+    const err = new Error("Enter asset preparation is stale");
+    err.code = "STALE_ENTER_ASSETS";
+    return err;
+  }
+
+  function getHostDocument(root) {
+    return root?.nodeType === 9 ? root : (root?.ownerDocument || document);
+  }
+
+  function getKeymapCanvas(doc) {
+    return getHostDocument(doc).getElementById("kmCanvas");
+  }
+
+  function getKeymapImage(doc) {
+    return getHostDocument(doc).querySelector("#keys .kmImg");
+  }
+
+  function setKeymapReady(doc, ready) {
+    const canvas = getKeymapCanvas(doc);
+    if (canvas) canvas.dataset.keymapReady = ready ? "1" : "0";
+  }
+
+  function isImgReadyFor(imageEl, src) {
+    return (
+      !!imageEl
+      && !!src
+      && String(imageEl.getAttribute("src") || "").trim() === String(src || "").trim()
+      && !!imageEl.complete
+      && Number(imageEl.naturalWidth || 0) > 0
+    );
+  }
+
+  function emitKeymapResize() {
+    try { window.dispatchEvent(new Event("resize")); } catch (_) {}
+  }
+
+  function getTemplateKeymapScene(doc) {
+    const hostDoc = getHostDocument(doc);
+    const img = getKeymapImage(hostDoc);
+    if (img && img.dataset.__orig_src == null) {
+      img.dataset.__orig_src = String(img.getAttribute("src") || "").trim();
+    }
+
+    const points = Array.from(hostDoc.querySelectorAll("#keys .kmPoint"));
+    const pointMap = {};
+    points.forEach((point) => {
+      if (point.dataset.__orig_x == null) {
+        point.dataset.__orig_x = String(point.style.getPropertyValue("--x") || "");
+      }
+      if (point.dataset.__orig_y == null) {
+        point.dataset.__orig_y = String(point.style.getPropertyValue("--y") || "");
+      }
+      if (point.dataset.__orig_side == null) {
+        point.dataset.__orig_side = point.classList.contains("bubble-left")
+          ? "left"
+          : (point.classList.contains("bubble-right") ? "right" : "");
+      }
+      const btnId = String(point.getAttribute("data-btn") || "").trim();
+      if (!btnId) return;
+      const x = Number(point.dataset.__orig_x);
+      const y = Number(point.dataset.__orig_y);
+      const side = String(point.dataset.__orig_side || "").trim().toLowerCase();
+      const cfg = {};
+      if (Number.isFinite(x)) cfg.x = x;
+      if (Number.isFinite(y)) cfg.y = y;
+      if (side === "left" || side === "right") cfg.side = side;
+      pointMap[btnId] = cfg;
+    });
+
+    return {
+      imageSrc: String(img?.dataset.__orig_src || img?.getAttribute("src") || "").trim(),
+      points: pointMap,
+    };
+  }
+
+  function normalizeKeymapScene(scene, fallbackScene) {
+    const fallback = (fallbackScene && typeof fallbackScene === "object")
+      ? fallbackScene
+      : { imageSrc: "", points: {} };
+    const points = (scene?.points && typeof scene.points === "object")
+      ? scene.points
+      : {};
+    return {
+      imageSrc: String(scene?.imageSrc || fallback.imageSrc || "").trim(),
+      points,
+    };
+  }
 
   function resolveKeymapVariant({ ui, deviceName }) {
     const keymapCfg = (ui?.keymap && typeof ui.keymap === "object") ? ui.keymap : {};
@@ -346,67 +437,10 @@
     };
   }
 
-  function applyKeymapVariant({ doc, ui, deviceName }) {
-    const keymapScene = resolveKeymapVariant({ ui, deviceName });
-    const canvas = doc.getElementById("kmCanvas");
-    const img = doc.querySelector("#keys .kmImg");
-    const defaultKeymapSrc = String(doc.querySelector("#keys .kmImg")?.getAttribute("src") || "").trim();
-    const setKeymapReady = (ready) => {
-      if (canvas) canvas.dataset.keymapReady = ready ? "1" : "0";
-    };
-    const isImgReadyFor = (imageEl, src) => (
-      !!imageEl
-      && !!src
-      && String(imageEl.getAttribute("src") || "") === src
-      && !!imageEl.complete
-      && Number(imageEl.naturalWidth || 0) > 0
-    );
+  function applyKeymapPointScene(doc, pointMap = {}) {
+    const hostDoc = getHostDocument(doc);
+    const points = Array.from(hostDoc.querySelectorAll("#keys .kmPoint"));
     let changed = false;
-    if (img) {
-      if (img.dataset.__orig_src == null) {
-        img.dataset.__orig_src = String(img.getAttribute("src") || "");
-      }
-      if (!img.dataset.__variant_load_hooked) {
-        img.dataset.__variant_load_hooked = "1";
-        img.addEventListener("load", () => {
-          img.removeAttribute("data-keymap-load-failed");
-          setKeymapReady(true);
-          try { window.dispatchEvent(new Event("resize")); } catch (_) {}
-        }, { passive: true });
-        img.addEventListener("error", () => {
-          const fallbackSrc = String(img.dataset.__orig_src || defaultKeymapSrc || "").trim();
-          const failedSrc = String(img.getAttribute("src") || "").trim();
-          if (fallbackSrc && failedSrc && failedSrc !== fallbackSrc) {
-            img.dataset.keymapLoadFailed = failedSrc;
-            img.setAttribute("src", fallbackSrc);
-            setKeymapReady(false);
-            return;
-          }
-          setKeymapReady(true);
-        }, { passive: true });
-      }
-      const originalSrc = img.dataset.__orig_src || "";
-      const nextSrc = String(keymapScene?.imageSrc || "").trim() || originalSrc;
-      const curSrc = String(img.getAttribute("src") || "");
-      if (!nextSrc) {
-        setKeymapReady(true);
-      } else if (isImgReadyFor(img, nextSrc)) {
-        setKeymapReady(true);
-      } else {
-        setKeymapReady(false);
-        if (curSrc !== nextSrc) {
-          img.setAttribute("src", nextSrc);
-          changed = true;
-        }
-      }
-    } else {
-      setKeymapReady(true);
-    }
-
-    const pointMap = (keymapScene?.points && typeof keymapScene.points === "object")
-      ? keymapScene.points
-      : {};
-    const points = Array.from(doc.querySelectorAll("#keys .kmPoint"));
     points.forEach((point) => {
       if (point.dataset.__orig_x == null) {
         point.dataset.__orig_x = String(point.style.getPropertyValue("--x") || "");
@@ -460,9 +494,252 @@
         changed = true;
       }
     });
-    if (changed) {
-      try { window.dispatchEvent(new Event("resize")); } catch (_) {}
+    return changed;
+  }
+
+  function ensureKeymapVariantHooks(doc) {
+    const hostDoc = getHostDocument(doc);
+    const img = getKeymapImage(hostDoc);
+    if (!img || img.dataset.__variant_load_hooked) return;
+    img.dataset.__variant_load_hooked = "1";
+    img.addEventListener("load", () => {
+      img.removeAttribute("data-keymap-load-failed");
+      setKeymapReady(hostDoc, true);
+      emitKeymapResize();
+    }, { passive: true });
+    img.addEventListener("error", () => {
+      const fallbackScene = getTemplateKeymapScene(hostDoc);
+      const fallbackSrc = String(fallbackScene.imageSrc || "").trim();
+      const failedSrc = String(img.getAttribute("src") || "").trim();
+      if (fallbackSrc && failedSrc && failedSrc !== fallbackSrc) {
+        img.dataset.keymapLoadFailed = failedSrc;
+        applyKeymapSceneSync({ doc: hostDoc, scene: fallbackScene });
+        return;
+      }
+      setKeymapReady(hostDoc, true);
+    }, { passive: true });
+  }
+
+  function resolveActiveKeymapScene({ doc, ui, deviceName }) {
+    const fallbackScene = getTemplateKeymapScene(doc);
+    return normalizeKeymapScene(resolveKeymapVariant({ ui, deviceName }), fallbackScene);
+  }
+
+  function applyKeymapSceneSync({ doc, scene }) {
+    const hostDoc = getHostDocument(doc);
+    const img = getKeymapImage(hostDoc);
+    const nextScene = normalizeKeymapScene(scene, getTemplateKeymapScene(hostDoc));
+    ensureKeymapVariantHooks(hostDoc);
+    let changed = applyKeymapPointScene(hostDoc, nextScene.points);
+
+    if (!img) {
+      setKeymapReady(hostDoc, true);
+      if (changed) emitKeymapResize();
+      return;
     }
+
+    const nextSrc = String(nextScene.imageSrc || "").trim();
+    const curSrc = String(img.getAttribute("src") || "").trim();
+    if (!nextSrc) {
+      setKeymapReady(hostDoc, true);
+    } else if (isImgReadyFor(img, nextSrc)) {
+      setKeymapReady(hostDoc, true);
+    } else {
+      setKeymapReady(hostDoc, false);
+      if (curSrc !== nextSrc) {
+        img.setAttribute("src", nextSrc);
+        changed = true;
+      }
+    }
+
+    if (changed) emitKeymapResize();
+  }
+
+  function preloadImageSource(src) {
+    const nextSrc = String(src || "").trim();
+    if (!nextSrc) return Promise.resolve(nextSrc);
+    const cached = __keymapPreloadCache.get(nextSrc);
+    if (cached) return cached;
+
+    const preloadPromise = new Promise((resolve, reject) => {
+      const probe = new Image();
+      const cleanup = () => {
+        probe.onload = null;
+        probe.onerror = null;
+      };
+      probe.decoding = "async";
+      probe.onload = () => {
+        cleanup();
+        resolve(nextSrc);
+      };
+      probe.onerror = () => {
+        cleanup();
+        __keymapPreloadCache.delete(nextSrc);
+        const err = new Error(`Keymap image failed to preload: ${nextSrc}`);
+        err.code = "KEYMAP_PRELOAD_FAILED";
+        reject(err);
+      };
+      probe.src = nextSrc;
+      if (probe.complete) {
+        if (Number(probe.naturalWidth || 0) > 0) {
+          cleanup();
+          resolve(nextSrc);
+        } else {
+          cleanup();
+          __keymapPreloadCache.delete(nextSrc);
+          const err = new Error(`Keymap image failed to preload: ${nextSrc}`);
+          err.code = "KEYMAP_PRELOAD_FAILED";
+          reject(err);
+        }
+      }
+    });
+
+    __keymapPreloadCache.set(nextSrc, preloadPromise);
+    return preloadPromise;
+  }
+
+  function waitForImageElementReady(imageEl, src) {
+    const nextSrc = String(src || "").trim();
+    if (!imageEl || !nextSrc || isImgReadyFor(imageEl, nextSrc)) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        imageEl.removeEventListener("load", onLoad);
+        imageEl.removeEventListener("error", onError);
+      };
+      const onLoad = () => {
+        if (!isImgReadyFor(imageEl, nextSrc)) return;
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        if (String(imageEl.getAttribute("src") || "").trim() !== nextSrc) return;
+        cleanup();
+        const err = new Error(`Keymap image failed to render: ${nextSrc}`);
+        err.code = "KEYMAP_RENDER_FAILED";
+        reject(err);
+      };
+      imageEl.addEventListener("load", onLoad, { passive: true });
+      imageEl.addEventListener("error", onError, { passive: true });
+    });
+  }
+
+  function isEnterAssetPreparationCurrent(seq, guard = null) {
+    return seq === __enterAssetPrepareSeq && (typeof guard !== "function" || !!guard());
+  }
+
+  async function applyPreparedKeymapScene({ doc, scene, seq, guard = null }) {
+    const hostDoc = getHostDocument(doc);
+    const img = getKeymapImage(hostDoc);
+    const nextScene = normalizeKeymapScene(scene, getTemplateKeymapScene(hostDoc));
+    ensureKeymapVariantHooks(hostDoc);
+
+    if (!isEnterAssetPreparationCurrent(seq, guard)) throw createStaleEnterAssetsError();
+    const pointsChanged = applyKeymapPointScene(hostDoc, nextScene.points);
+
+    if (!img) {
+      setKeymapReady(hostDoc, true);
+      if (pointsChanged) emitKeymapResize();
+      return;
+    }
+
+    const nextSrc = String(nextScene.imageSrc || "").trim();
+    if (!nextSrc) {
+      setKeymapReady(hostDoc, true);
+      if (pointsChanged) emitKeymapResize();
+      return;
+    }
+
+    if (isImgReadyFor(img, nextSrc)) {
+      img.removeAttribute("data-keymap-load-failed");
+      setKeymapReady(hostDoc, true);
+      if (pointsChanged) emitKeymapResize();
+      return;
+    }
+
+    setKeymapReady(hostDoc, false);
+    if (String(img.getAttribute("src") || "").trim() !== nextSrc) {
+      img.setAttribute("src", nextSrc);
+    }
+    await waitForImageElementReady(img, nextSrc);
+    if (!isEnterAssetPreparationCurrent(seq, guard)) throw createStaleEnterAssetsError();
+
+    img.removeAttribute("data-keymap-load-failed");
+    setKeymapReady(hostDoc, true);
+    emitKeymapResize();
+  }
+
+  async function prepareKeymapEnterAsset({ doc, ui, deviceName, seq, guard = null }) {
+    const hostDoc = getHostDocument(doc);
+    const fallbackScene = getTemplateKeymapScene(hostDoc);
+    const targetScene = resolveActiveKeymapScene({ doc: hostDoc, ui, deviceName });
+    const scenes = [targetScene];
+    if (String(targetScene.imageSrc || "").trim() !== String(fallbackScene.imageSrc || "").trim()) {
+      scenes.push(fallbackScene);
+    }
+
+    let finalScene = null;
+    let lastErr = null;
+    for (const scene of scenes) {
+      if (!isEnterAssetPreparationCurrent(seq, guard)) throw createStaleEnterAssetsError();
+      try {
+        const nextSrc = String(scene.imageSrc || "").trim();
+        if (nextSrc) {
+          const img = getKeymapImage(hostDoc);
+          if (!isImgReadyFor(img, nextSrc)) {
+            await preloadImageSource(nextSrc);
+          }
+        }
+        finalScene = scene;
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+
+    if (!finalScene) throw lastErr || new Error("Unable to prepare keymap enter asset");
+    await applyPreparedKeymapScene({ doc: hostDoc, scene: finalScene, seq, guard });
+  }
+
+  function prepareEnterAssets({ deviceId, adapter, root, deviceName = "", guard = null } = {}) {
+    const doc = getHostDocument(root);
+    const ui = adapter?.ui || {};
+    const seq = (++__enterAssetPrepareSeq);
+    const tasks = [];
+    const registerTask = (name, task) => {
+      if (typeof task !== "function") return;
+      tasks.push(
+        Promise.resolve()
+          .then(task)
+          .catch((err) => {
+            if (err && !err.enterAssetName) err.enterAssetName = name;
+            throw err;
+          })
+      );
+    };
+
+    registerTask("keymap", () => prepareKeymapEnterAsset({
+      doc,
+      ui,
+      deviceName,
+      seq,
+      guard,
+      deviceId,
+    }));
+
+    return Promise.all(tasks).then(() => {
+      if (!isEnterAssetPreparationCurrent(seq, guard)) {
+        throw createStaleEnterAssetsError();
+      }
+    });
+  }
+
+  function applyKeymapVariant({ doc, ui, deviceName }) {
+    applyKeymapSceneSync({
+      doc,
+      scene: resolveActiveKeymapScene({ doc, ui, deviceName }),
+    });
   }
 
   // ============================================================
@@ -827,14 +1104,27 @@
     target.style.display = visible ? (target.dataset.__orig_display || "") : "none";
   }
 
-  function applySectionHeaderText(el, text) {
+  function applyTextWithRestore(el, text) {
     if (!el) return;
     if (el.dataset.__orig_text == null) el.dataset.__orig_text = String(el.textContent ?? "");
-    if (text != null && String(text).trim() !== "") {
+    if (text != null) {
       el.textContent = String(text);
       return;
     }
     if (el.dataset.__orig_text != null) el.textContent = el.dataset.__orig_text;
+  }
+
+  function applySectionHeaderText(el, text) {
+    const nextText = (text != null && String(text).trim() !== "") ? String(text) : null;
+    applyTextWithRestore(el, nextText);
+  }
+
+  function applyMetaBlockWithRestore(item, meta) {
+    if (!item) return;
+    const nextMeta = (meta && typeof meta === "object" && !Array.isArray(meta)) ? meta : null;
+    applyTextWithRestore(item.querySelector(".label-code"), nextMeta?.code);
+    applyTextWithRestore(item.querySelector(".label-title"), nextMeta?.title);
+    applyTextWithRestore(item.querySelector(".label-desc"), nextMeta?.desc);
   }
 
   function __setNodeDisplayByFeature(el, hideByFeature) {
@@ -846,13 +1136,7 @@
   }
 
   function applyCycleMeta(item, meta) {
-    if (!item || !meta) return;
-    const title = item.querySelector(".label-title");
-    const desc = item.querySelector(".label-desc");
-    const code = item.querySelector(".label-code");
-    if (title) title.textContent = meta.title || "";
-    if (desc) desc.textContent = meta.desc || "";
-    if (code) code.textContent = meta.code || "";
+    applyMetaBlockWithRestore(item, meta);
   }
 
   const CYCLE_META_FIELD_SPEC = Object.freeze({
@@ -1041,9 +1325,9 @@
     const landingCaptionText = String(ui?.landingCaption || "").trim();
     const landingReadyText = resolveLandingReadyText(ui);
     landingLayer.dataset.readyText = landingReadyText;
-    if (verticalTitle && landingTitle) verticalTitle.textContent = landingTitle;
-    if (landingCaption && landingCaptionText) landingCaption.textContent = landingCaptionText;
-    if (flashText) flashText.textContent = landingReadyText;
+    applyTextWithRestore(verticalTitle, landingTitle || null);
+    applyTextWithRestore(landingCaption, landingCaptionText || null);
+    applyTextWithRestore(flashText, landingReadyText);
   }
 
   // ============================================================
@@ -1174,9 +1458,6 @@
     const heightVizWrap = heightBlock?.closest?.(".height-viz") || heightBlock?.parentElement || null;
 
     const lodItem = queryAdvancedContainer(doc, "surfaceModePrimary", { region: "dual-right", control: "toggle" });
-    const lodCode = lodItem?.querySelector(".label-code");
-    const lodTitle = lodItem?.querySelector(".label-title");
-    const lodDesc = lodItem?.querySelector(".label-desc");
     const dpiEditorHint = doc.querySelector("#dpi .card-dpi-editor .cardhead .sub");
     const ledItem = queryAdvancedContainer(doc, "primaryLedFeature", { region: "dual-right", control: "toggle" });
     const advancedDualLeft = queryAdvancedRegion(doc, "dual-left");
@@ -1190,12 +1471,8 @@
     applySectionHeaderText(legacySectionHeaders[1], sectionHeaders?.sensor);
 
     const b6Item = queryAdvancedContainer(doc, "secondarySurfaceToggle", { region: "dual-right", control: "toggle" });
-    const bit1Item = queryAdvancedContainer(doc, "motionSync", { region: "dual-right", control: "toggle" });
-    const bit2Item = queryAdvancedContainer(doc, "linearCorrection", { region: "dual-right", control: "toggle" });
-    const bit3Item = queryAdvancedContainer(doc, "rippleControl", { region: "dual-right", control: "toggle" });
     const sensorAngleSourceRegion = resolveAdvancedSourceRegion(adapter, "sensorAngle", "dual-left");
     const angleCard = queryAdvancedContainer(doc, "sensorAngle", { region: sensorAngleSourceRegion, control: "range" });
-    const sensorAngleInput = queryAdvancedRangeInput(doc, "sensorAngle", { region: sensorAngleSourceRegion });
     const angleDisp = angleCard?.querySelector(".value-readout");
     const angleName = angleCard?.querySelector(".slider-name");
     const angleSub = angleCard?.querySelector(".slider-sub");
@@ -1243,21 +1520,8 @@
       visible: !!features.showHeightViz,
     });
 
-    if (ui?.lod) {
-      if (lodCode) lodCode.textContent = ui.lod.code || "";
-      if (lodTitle) lodTitle.textContent = ui.lod.title || "";
-      if (lodDesc) lodDesc.textContent = ui.lod.desc || "";
-    }
-
-    if (dpiEditorHint) {
-      if (dpiEditorHint.dataset.__orig_text == null) {
-        dpiEditorHint.dataset.__orig_text = String(dpiEditorHint.textContent ?? "");
-      }
-      const isLogitech = String(adapter?.id || deviceId || "").trim().toLowerCase() === "logitech";
-      dpiEditorHint.textContent = isLogitech
-        ? tr("光学引擎抬起距离", "Optical Engine Lift-off Distance")
-        : tr("在下方面板直接拖动或输入修改DPI", "Drag below or enter values directly to edit DPI");
-    }
+    applyMetaBlockWithRestore(lodItem, ui?.lod);
+    applyTextWithRestore(dpiEditorHint, ui?.dpiEditorHint);
 
     const isRazer = String(adapter?.id || deviceId || "").trim().toLowerCase() === "razer";
     if (isRazer) {
@@ -1271,26 +1535,8 @@
       });
     }
 
-    if (ui?.led) {
-      if (ledItem) {
-        const title = ledItem.querySelector(".label-title");
-        const desc = ledItem.querySelector(".label-desc");
-        const code = ledItem.querySelector(".label-code");
-        if (title) title.textContent = ui.led.title || "";
-        if (desc) desc.textContent = ui.led.desc || "";
-        if (code) code.textContent = ui.led.code || "";
-      }
-    }
-    if (ui?.secondarySurface) {
-      if (b6Item) {
-        const title = b6Item.querySelector(".label-title");
-        const desc = b6Item.querySelector(".label-desc");
-        const code = b6Item.querySelector(".label-code");
-        if (title) title.textContent = ui.secondarySurface.title || "";
-        if (desc) desc.textContent = ui.secondarySurface.desc || "";
-        if (code) code.textContent = ui.secondarySurface.code || "";
-      }
-    }
+    applyMetaBlockWithRestore(ledItem, ui?.led);
+    applyMetaBlockWithRestore(b6Item, ui?.secondarySurface);
 
     __setNodeDisplayByFeature(angleVisualGroup, !!features.hideSensorAngleVisualization);
     __setNodeDisplayByFeature(angleCenterMark, !!features.hideSensorAngleCenterMark);
@@ -1320,7 +1566,6 @@
 
     const dpiLightCycle = queryAdvancedContainer(doc, "dpiLightEffect", { region: "dual-right", control: "cycle" });
     const receiverLightCycle = queryAdvancedContainer(doc, "receiverLightEffect", { region: "dual-right", control: "cycle" });
-    const longRangeItem = queryAdvancedContainer(doc, "longRangeMode", { region: "dual-right", control: "toggle" });
     applyCycleMeta(dpiLightCycle, ui?.lightCycles?.dpi);
     applyCycleMeta(receiverLightCycle, ui?.lightCycles?.receiver);
     applyAdvancedCycleStateMeta({ doc, ui });
@@ -1363,6 +1608,7 @@
       }
       const sleepCard = sleepInput?.closest(".slider-card");
       const sub = sleepCard?.querySelector(".slider-sub");
+      if (sub && sub.dataset.__orig_text == null) sub.dataset.__orig_text = String(sub.textContent ?? "");
       if (sub) {
         const minS = sleepSeconds[0];
         const maxS = sleepSeconds[sleepSeconds.length - 1];
@@ -1372,6 +1618,10 @@
       }
     } else if (sleepSel) {
       restoreInnerHtml(sleepSel, "sleepSelect");
+      const sleepSub = sleepSel?.closest(".slider-card")?.querySelector(".slider-sub");
+      if (sleepSub && sleepSub.dataset.__orig_text != null) {
+        sleepSub.textContent = sleepSub.dataset.__orig_text;
+      }
     }
 
     const debounceMs = cfg?.power?.debounceMs;
@@ -1384,6 +1634,7 @@
       }
       const debCard = debounceInput?.closest(".slider-card");
       const sub = debCard?.querySelector(".slider-sub");
+      if (sub && sub.dataset.__orig_text == null) sub.dataset.__orig_text = String(sub.textContent ?? "");
       if (sub && debounceMs.length > 0) {
         sub.textContent = tr(
           `范围：${debounceMs[0]}ms - ${debounceMs[debounceMs.length - 1]}ms`,
@@ -1392,6 +1643,10 @@
       }
     } else if (debounceSel) {
       restoreInnerHtml(debounceSel, "debounceSelect");
+      const debounceSub = debounceSel?.closest(".slider-card")?.querySelector(".slider-sub");
+      if (debounceSub && debounceSub.dataset.__orig_text != null) {
+        debounceSub.textContent = debounceSub.dataset.__orig_text;
+      }
     }
 
     const angleCfg = cfg?.sensor?.angleDeg;
@@ -1407,20 +1662,18 @@
       const angleName = angleCard?.querySelector(".slider-name");
       const angleSub = angleCard?.querySelector(".slider-sub");
       if (angleName) {
-        if (angleCfg.name != null && String(angleCfg.name).trim() !== "") {
-          angleName.textContent = String(angleCfg.name);
-        } else if (angleName.dataset.__orig_text != null) {
-          angleName.textContent = angleName.dataset.__orig_text;
-        }
+        const angleNameText = (angleCfg.name != null && String(angleCfg.name).trim() !== "")
+          ? String(angleCfg.name)
+          : null;
+        applyTextWithRestore(angleName, angleNameText);
       }
       if (angleSub) {
-        if (angleCfg.sub != null && String(angleCfg.sub).trim() !== "") {
-          angleSub.textContent = String(angleCfg.sub);
-        } else if (angleCfg.hint) {
-          angleSub.textContent = angleCfg.hint;
-        } else if (angleSub.dataset.__orig_text != null) {
-          angleSub.textContent = angleSub.dataset.__orig_text;
-        }
+        const angleSubText = (angleCfg.sub != null && String(angleCfg.sub).trim() !== "")
+          ? String(angleCfg.sub)
+          : ((angleCfg.hint != null && String(angleCfg.hint).trim() !== "")
+            ? String(angleCfg.hint)
+            : null);
+        applyTextWithRestore(angleSub, angleSubText);
       }
       const angleDisp = angleCard?.querySelector(".value-readout");
       if (angleDisp) {
@@ -1430,11 +1683,15 @@
           angleDisp.dataset.unit = angleDisp.dataset.__orig_unit;
         }
       }
+    } else if (angleInput) {
+      applyTextWithRestore(angleName, null);
+      applyTextWithRestore(angleSub, null);
+      if (angleDisp && angleDisp.dataset.__orig_unit != null) angleDisp.dataset.unit = angleDisp.dataset.__orig_unit;
     }
 
     installAutoTrackInterval(doc);
   }
 
-  window.DeviceUI = { applyVariant, applyAdvancedRuntime };
+  window.DeviceUI = { applyVariant, applyAdvancedRuntime, prepareEnterAssets };
 })();
 

@@ -495,7 +495,7 @@ ranges: {
 - `landingTitle`
 - `landingCaption`
 - `landingReadyText`
-- `keymap.imageSrc`
+- `keymap.imageSrc`（默认应指向可部署的 `.webp` 静态资源）
 - `keymap.points`
 - `perfMode`
 - `lights`
@@ -531,6 +531,7 @@ ranges: {
 
 - 当前 `index.html` 只有 `data-btn="1"` 到 `data-btn="6"` 的 6 个点位
 - 当前 `app.js` 用 `features.keymapButtonCount` 隐藏超出数量的点位
+- 当前 landing -> app 入口会先等待 `DeviceUI.prepareEnterAssets()`；当前默认只等待 keymap 目标图或模板回退图 ready
 - 当前 UI 默认把 **左键（按钮 1）锁定为不可修改**
 - 当前动作 tab 只支持三类：`mouse`、`keyboard`、`system`
 
@@ -550,6 +551,12 @@ ranges: {
 - 协议导出 `labelFromFunckeyKeycode(...)`
 - profile 设置 `features.keymapButtonCount`
 - profile 设置 `ui.keymap.imageSrc` 与 `ui.keymap.points`
+- `ui.keymap.imageSrc` 应优先使用可部署的 `.webp` 资源，避免把未提交或大体积 PNG 当作运行时入口图
+
+主页进入资源门槛约束：
+
+- 若新品牌只新增或替换 keymap 图，通常无需改 `app.js`，只需保证 `ui.keymap.imageSrc` 可被 `DeviceUI.prepareEnterAssets()` 预加载
+- 若新品牌要求主页进入前还要等待其他资源，请扩展 `refactor.ui.js` 的 `prepareEnterAssets()` 任务注册，不要在 `app.js` 增加品牌分支或单独等待逻辑
 
 ### 8.2 DPI 面板
 

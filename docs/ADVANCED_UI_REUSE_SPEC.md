@@ -1,4 +1,4 @@
-﻿# Advanced UI Reuse Spec
+# Advanced UI Reuse Spec
 
 适用范围：`advancedPanel` 及其单列 / 双列高级参数区域。  
 目标：建立一套**设备无关**、**协议无关**、**能力驱动**的高级面板复用规范，支持“单一品牌 Profile + 协议层 PID/机型能力矩阵 + 前端动态裁剪 UI”的架构。
@@ -207,6 +207,20 @@ Razer 当前 profile 中应显式声明：
   - `applyCapabilitiesToUi(...)`
   - `DeviceUI.applyAdvancedRuntime(...)`
 
+### 9.1 device-scoped UI surface
+
+- 以下 UI 面必须视为 `device-scoped`：结构、文案、选项、排序、默认值依赖 `adapter.ui`、`adapter.features` 或 `capabilities` 的节点。
+- `device-scoped` UI 不能把旧 DOM 当作新设备真相；切设备后允许复用容器节点，但不能复用上一设备的结构与文本结果。
+- `build` 与 `apply` 分层必须满足可逆性：
+  - 结构层：按当前设备能力重建（或先销毁后重建）。
+  - 文案层：先恢复模板默认，再叠加当前设备 `ui meta`。
+
+### 9.2 切设备重建合同
+
+- 切设备时，`app.js` 必须先执行 device-scoped 本地状态重置，再执行结构重建，再执行 runtime 能力回放。
+- DPI 编辑器重建判定禁止只看 `dpiSlotCount`；至少要包含 `deviceId + slotCap + hasDpiLods + hasDpiAdvancedAxis` 等结构签名。
+- 任何 `adapter.ui` 文案覆盖点都必须支持“无值恢复模板”；禁止“有值才写、无值不还原”。
+- 新增品牌或能力时，若出现串线，优先检查重建合同与可逆渲染链路；禁止先补品牌分支。
 ## 10. 新增高级项时的扩展流程
 
 新增一个高级面板 / 复用项时，按以下顺序执行：
@@ -246,7 +260,9 @@ Razer 当前 profile 中应显式声明：
 - 是否 `getCapabilities()` 能读到完整动态能力键
 - 是否单列 / 双列都能在布局切换和设备切换后正确恢复显示状态
 - 是否 `app.js` 中不再分散写高级面板项的显隐逻辑
-
+- 是否切设备后所有 device-scoped 结构都按新设备重建（而不是复用旧结构）
+- 是否所有 device-scoped 文案都先恢复模板，再应用当前设备 meta
+- 是否不存在仅用 `slot count` 判定结构重建的局部 heuristic
 
 
 

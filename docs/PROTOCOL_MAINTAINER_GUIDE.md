@@ -1,4 +1,4 @@
-﻿# Protocol Maintainer Guide
+# Protocol Maintainer Guide
 
 适用范围：面向当前项目协议体系的维护者总览入口。  
 目标：帮助维护者在阅读大量规范前，先快速判断“我该先看哪一份文档、这个问题属于哪一层、哪些文件应该改、哪些文件不该改”。
@@ -88,6 +88,7 @@
 1. 先读 `ADVANCED_UI_REUSE_SPEC.md`
 2. 对照 `CAPABILITIES_CONTRACT_SPEC.md` 确认动态 gate 的 key、shape、缺失行为
 3. 回到 `NEW_BRAND_PROTOCOL_ONBOARDING_SPEC.md` 检查是否真的需要改 `app.js` / `refactor.ui.js` / `index.html`
+4. 如果问题属于切设备残留，先检查 device-scoped rebuild contract 和 reversible variant render，不要先补品牌分支
 
 ### 6.3 重构协议文件
 

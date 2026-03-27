@@ -1,4 +1,4 @@
-﻿# Device UI Regression Checklist
+# Device UI Regression Checklist
 
 适用范围：当前项目已接入的 6 个设备品牌 UI 回归。  
 目标：在每次修改 `device_runtime.js`、`refactor.core.js`、`refactor.profiles.js`、`refactor.ui.js`、`app.js` 或 keymap 图片资源后，快速确认“主页面、按键映射图、主题类名、高级面板”没有串线或缺失。
@@ -17,6 +17,7 @@
 3. 完成连接后，依次检查：
    - 顶部设备卡片是否显示正确品牌/型号
    - `document.body` 的 `device-*` 类名是否正确
+   - 从 landing 进入主页前，必须等当前设备按键映射示意图或默认回退图完成加载
    - 按键映射页鼠标示意图是否成功加载
    - 按键映射热点数量是否符合当前设备
    - 高级面板布局是否正确
@@ -67,6 +68,7 @@
 | --- | --- |
 | 主页面主题切到别家品牌 | `normalizeDeviceId()`、`DeviceAdapters.getAdapter()`、`__applyDeviceVariantOnce()` |
 | 按键映射图是破图 | `ui.keymap.imageSrc`、图片资源路径、`kmImg` 默认图 |
+| 握手完成后主页迟迟不进入 | `DeviceUI.prepareEnterAssets()`、`window.__LANDING_ENTER_GATE_PROMISE__`、keymap 资源是否返回 200 |
 | 按键热点数量不对 | `features.keymapButtonCount` |
 | 高级面板布局错列 | `features.advancedLayout` |
 | 高级面板项显示过多或过少 | `features.hasXxx`、`ui.advancedPanels`、`cfg.capabilities` |
@@ -79,7 +81,7 @@
 基础预期：
 - `runtimeDevice = "chaos"`
 - `bodyClasses` 只应包含 `device-chaos`
-- 按键映射图应为 `./assets/images/default.png`
+- 按键映射图应为 `./assets/images/default.webp`
 - 按键热点应为 `1,2,3,4,5,6`
 
 主页面预期：
@@ -111,7 +113,7 @@
 基础预期：
 - `runtimeDevice = "rapoo"`
 - `bodyClasses` 只应包含 `device-rapoo`
-- 按键映射图应为 `./assets/images/default.png`
+- 按键映射图应为 `./assets/images/default.webp`
 - 按键热点应为 `1,2,3,4,5,6`
 
 主页面预期：
@@ -144,7 +146,7 @@
 基础预期：
 - `runtimeDevice = "atk"`
 - `bodyClasses` 只应包含 `device-atk`
-- 按键映射图应为 `./assets/images/default.png`
+- 按键映射图应为 `./assets/images/default.webp`
 - 按键热点应为 `1,2,3,4,5,6`
 
 主页面预期：
@@ -178,7 +180,7 @@
 - `bodyClasses` 必须同时包含：
   - `device-ninjutso`
   - `device-atk`
-- 按键映射图应为 `./assets/images/ninjutso.png`
+- 按键映射图应为 `./assets/images/ninjutso.webp`
 - 按键热点应为 `1,2,3,4,5`
 - 按键 `6` 必须隐藏
 
@@ -213,8 +215,8 @@
 基础预期：
 - `runtimeDevice = "logitech"`
 - `bodyClasses` 只应包含 `device-logitech`
-- 按键映射基础图应为 `./assets/images/GPW.png`
-- 若设备名精确匹配 `PRO X 2 DEX`，应切换为 `./assets/images/GPW_DEX.png`
+- 按键映射基础图应为 `./assets/images/GPW.webp`
+- 若设备名精确匹配 `PRO X 2 DEX`，应切换为 `./assets/images/GPW_DEX.webp`
 - 按键热点应为 `1,2,3,4,5`
 - 按键 `6` 必须隐藏
 
@@ -245,7 +247,7 @@
 基础预期：
 - `runtimeDevice = "razer"`
 - `bodyClasses` 只应包含 `device-razer`
-- 按键映射图应为 `./assets/images/VIPER_V3_耿鬼.png`
+- 按键映射图应为 `./assets/images/VIPER_V3_耿鬼.webp`
 - 按键热点应为 `1,2,3,4,5,6`
 
 主页面预期：
@@ -287,14 +289,31 @@
   - 应显示 `smartTrackingComposite`
   - 应显示 `lowPowerThresholdPercent`
   - 应显示 `hyperpollingIndicator`
+### 4.7 跨设备切换矩阵
+
+按以下顺序完成跨设备切换并在 DPI 页停留验证：
+
+1. Logitech -> Chaos / Rapoo / ATK / Ninjutso / Razer
+   - `.dpiLodSwitch` 仅当目标设备 `hasDpiLods = true` 时存在
+   - DPI 副标题必须是通用编辑提示，不能残留 Logitech 文案
+   - DPI 行数、轴模式、范围都按目标设备重建
+2. 任意非 Logitech -> Logitech -> 原设备
+   - LOD 结构可稳定创建、销毁、再创建
+   - 不出现旧 slot 数、旧按钮激活态
+3. Ninjutso / ATK -> Chaos
+   - `surfaceModePrimary`、`primaryLedFeature`、`secondarySurfaceToggle`、`dpiLightEffect`、`receiverLightEffect` 的 code/title/desc 不残留上一设备文案
+4. Chaos / Rapoo / Logitech -> Ninjutso -> 不支持静态颜色面板的设备
+   - 静态颜色面板可创建、移除、再创建，不残留空壳
+5. 有自定义 landing title/caption 的设备 -> 空 title/caption 设备
+   - landing 文案恢复模板默认，不显示前一设备品牌文案
 
 ## 5. 必查的缓存/回退点
 
 每次改完后，至少再确认这几个兜底没有失效：
 
 1. `index.html` 中 `#keys .kmImg` 默认图仍然存在
-2. `BaseCommonProfile.ui.keymap.imageSrc` 仍然指向 `./assets/images/default.png`
-3. `applyKeymapVariant()` 在图片加载失败时，仍会回退到模板默认图
+2. `BaseCommonProfile.ui.keymap.imageSrc` 仍然指向 `./assets/images/default.webp`
+3. `prepareEnterAssets()` 在目标图加载失败时，仍会回退到模板默认图并等待回退图完成加载后再放行主页
 4. `normalizeDeviceId()` 与 `DeviceAdapters.getAdapter()` 没有重新出现品牌级错误回退
 
 ## 6. 最小交付标准
@@ -307,3 +326,4 @@
 4. Ninjutso 同时具备真实设备类和 ATK 皮肤类
 5. Logitech 的单列高级面板与配置槽/双回报率同时正确
 6. Razer 的能力驱动高级面板不会把不支持项误显示出来
+7. 切设备后 device-scoped 结构和文案都已按新设备重建/恢复，不出现跨品牌残留
