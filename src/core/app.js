@@ -192,13 +192,30 @@
     return String(rawLang || "").trim().toLowerCase() === "zh" ? "zh" : "en";
   }
 
+  function detectBrowserUiLang() {
+    const candidates = [];
+    try {
+      if (Array.isArray(navigator.languages)) candidates.push(...navigator.languages);
+      candidates.push(navigator.language, navigator.userLanguage, navigator.browserLanguage);
+    } catch (_) {}
+    for (const rawLang of candidates) {
+      const lang = String(rawLang || "").trim().toLowerCase();
+      if (!lang) continue;
+      if (lang === "zh" || lang.startsWith("zh-")) return "zh";
+    }
+    return "en";
+  }
+
   function readStoredUiLang() {
     try {
       const storedLang = localStorage.getItem(LANG_KEY);
-      return storedLang == null ? "zh" : normalizeUiLang(storedLang);
+      if (storedLang != null && String(storedLang).trim() !== "") {
+        return normalizeUiLang(storedLang);
+      }
     } catch (_) {
-      return "zh";
+      // Fall back to browser language when storage is unavailable.
     }
+    return detectBrowserUiLang();
   }
 
   function persistUiLang(lang) {
