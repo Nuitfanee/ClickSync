@@ -86,13 +86,20 @@
   const RAZER_REPORT_LEN = 0x5a; // 90 bytes, from RAZER_REPORT_LEN/RAZER_USB_REPORT_LEN.
   const RAZER_MAX_DPI_STAGES = 5;
   // Unified retry policy: all commands get the same BUSY retry budget.
-  const RAZER_BUSY_RETRY = 32;
+  const RAZER_BUSY_RETRY = 10;
   // Small backoff reduces transient misalignment loops on some hosts/dongles.
   const RAZER_RETRY_BACKOFF_MS = 16;
   // When only one report-id is available, allow short retry for transient NotAllowedError.
-  const RAZER_NOT_ALLOWED_SAME_ID_RETRY = 2;
+  const RAZER_NOT_ALLOWED_SAME_ID_RETRY = 0;
   // Some wireless paths need a short settle window right after open().
   const RAZER_POST_OPEN_SETTLE_MS = 60;
+  // OBM button I/O is noticeably more timing-sensitive than the rest of the
+  // snapshot traffic, especially on wireless dongle paths.
+  const RAZER_OBM_BUTTON_IO_WAIT_MS = 24;
+  const RAZER_OBM_BUTTON_IO_RETRY = 3;
+  const RAZER_OBM_BUTTON_IO_RETRY_DELAY_MS = 24;
+  // Official Synapse WebHID mouse control path uses Consumer usage page.
+  const RAZER_WEBHID_CONTROL_USAGE_PAGE = 0x0c;
 
   const PID = Object.freeze({
     HYPERPOLLING_WIRELESS_DONGLE: 0x00b3,
@@ -104,12 +111,23 @@
     DEATHADDER_V3_PRO_WIRELESS_ALT: 0x00c3,
     DEATHADDER_V3_HYPERSPEED_WIRED: 0x00c4,
     DEATHADDER_V3_HYPERSPEED_WIRELESS: 0x00c5,
+    VIPER_V4_PRO_WIRED: 0x00e5,
+    VIPER_V4_PRO_WIRELESS: 0x00e6,
+  });
+
+  const TRANSPORT_ROLE = Object.freeze({
+    SINGLE: "single",
+    BODY: "body",
+    DONGLE: "dongle",
+    STANDALONE_DONGLE: "standalone_dongle",
   });
 
   const REPORT_STATUS = Object.freeze({
     NEW_COMMAND: 0x00,
     BUSY: 0x01,
+    SUCCESS: 0x02,
     SUCCESSFUL: 0x02,
+    FAIL: 0x03,
     FAILURE: 0x03,
     TIMEOUT: 0x04,
     NOT_SUPPORTED: 0x05,
@@ -127,11 +145,127 @@
     TX_DEFAULT: 0x1f,
   });
 
+  const OFFICIAL_MOUSE_PROFILE_ID = 0x01;
+  const OFFICIAL_PROXIMITY_CLASS_ID = 0x00;
+  const OFFICIAL_PROXIMITY_SENSOR_ID = 0x04;
+  const DEFAULT_RAZER_SMART_TRACKING_PUBLIC_STATE = Object.freeze({
+    smartTrackingMode: "symmetric",
+    smartTrackingLevel: 1,
+    smartTrackingLiftDistance: 13,
+    smartTrackingLandingDistance: 12,
+  });
+  const DEFAULT_RAZER_SMART_TRACKING_OFFICIAL_MODEL = Object.freeze({
+    isAsymmetric: false,
+    trackingDistance: 2,
+    liftOffDistance: 13,
+    landingDistance: 12,
+  });
+
+  const OFFICIAL_BUTTON_MODE = Object.freeze({
+    NORMAL: 0x00,
+    HYPERSHIFT: 0x01,
+  });
+
+  const OFFICIAL_OBM_SLOT_TO_BUTTON_ID = Object.freeze({
+    1: 0x01,
+    2: 0x02,
+    3: 0x03,
+    4: 0x05,
+    5: 0x04,
+    6: 0x60,
+  });
+
+  const OFFICIAL_OBM_FUNCTION_ID = Object.freeze({
+    OFF: 0x00,
+    BUTTON_CODE: 0x01,
+    KEY_CODE: 0x02,
+    DPI: 0x06,
+    PROFILE: 0x07,
+    POWER_KEYS: 0x09,
+    MEDIA_KEYS: 0x0a,
+    DOUBLE_CLICK: 0x0b,
+    MODE_BUTTON_KEY: 0x0c,
+    TURBO_MODE_KEY: 0x0d,
+    TURBO_MODE_BUTTON: 0x0e,
+    RAZER_KEY: 0x11,
+    SCROLL_WHEEL_MODE: 0x12,
+    WIN8_SHORTCUTS_KEY: 0x15,
+  });
+
+  // Synapse Web mouse OBM button commands use a fixed data_size of 0x50 even
+  // though only the first 3 or 10 argument bytes are semantically populated.
+  const OFFICIAL_OBM_SINGLE_BUTTON_ASSIGNMENT_DATA_SIZE = 0x50;
+
+  const OFFICIAL_OBM_BUTTON_TARGET = Object.freeze({
+    LEFT_BUTTON: 0x01,
+    RIGHT_BUTTON: 0x02,
+    SCROLL_BUTTON: 0x03,
+    BUTTON_4: 0x04,
+    BUTTON_5: 0x05,
+    SCROLL_UP: 0x09,
+    SCROLL_DOWN: 0x0a,
+    DPI_CYCLE_UP: 0x60,
+    DPI_CYCLE_DOWN: 0x61,
+  });
+
+  const OFFICIAL_OBM_DPI_ACTION = Object.freeze({
+    DPI_UP: 0x01,
+    DPI_DOWN: 0x02,
+    DPI_CLUTCH: 0x05,
+    DPI_CYCLE_UP: 0x06,
+    DPI_CYCLE_DOWN: 0x07,
+  });
+
+  const OFFICIAL_MODIFIER_BITS = Object.freeze({
+    LEFT_CTRL: 0x01,
+    LEFT_SHIFT: 0x02,
+    LEFT_ALT: 0x04,
+    LEFT_GUI: 0x08,
+    RIGHT_CTRL: 0x10,
+    RIGHT_SHIFT: 0x20,
+    RIGHT_ALT: 0x40,
+    RIGHT_GUI: 0x80,
+  });
+
+  const OFFICIAL_MEDIA_USAGE = Object.freeze({
+    MUTE_VOLUME: 0x00e2,
+    PREVIOUS_TRACK: 0x00b6,
+    MEDIA_STOP: 0x00b7,
+    NEXT_TRACK: 0x00b5,
+    MEDIA_PLAY_OR_PAUSE: 0x00cd,
+    VOLUME_UP: 0x00e9,
+    VOLUME_DOWN: 0x00ea,
+    CALCULATOR: 0x0192,
+    THIS_PC: 0x0194,
+    WEB_BROWSER: 0x0223,
+    MAIL: 0x018a,
+    MEDIA_PLAYER: 0x0183,
+    WEB_BACK: 0x0224,
+    WEB_FORWARD: 0x0225,
+    WEB_REFRESH: 0x0227,
+    WEB_FAVORITES: 0x022a,
+    WEB_SEARCH: 0x0221,
+  });
+
+  const OFFICIAL_WIN8_SHORTCUT = Object.freeze({
+    SCREENSHOT: 99,
+    XBOX_GAME_BAR: 100,
+    CYCLE_APPS: 101,
+  });
+
   function buildPidMatrixRow(pid, name, overrides = null) {
+    const normalizedPid = clampU16(pid);
     return Object.freeze(Object.assign({
-      pid,
+      pid: normalizedPid,
       name,
+      modelKey: `razer_${normalizedPid.toString(16).padStart(4, "0")}`,
+      transportRole: TRANSPORT_ROLE.SINGLE,
+      bodyPid: normalizedPid,
+      donglePid: normalizedPid,
+      webhidFeatureReportId: 0x00,
       featureReportId: 0x00,
+      eventReportId: 0x00,
+      controlUsagePage: RAZER_WEBHID_CONTROL_USAGE_PAGE,
       pollingMode: "legacy",
       battery: true,
       hyperpollingIndicatorMode: false,
@@ -147,40 +281,109 @@
   /*
    * Razer PID capability matrix (single source of truth)
    *
-   * pid     rpt  polling  battery  hyperIM  dynamic  tracking  angle  name
-   * 0x00b3  00   v2       Y        Y        -        Y         -      HyperPolling Wireless Dongle
-   * 0x00b6  00   legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wired)
-   * 0x00b7  00   legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wireless)
-   * 0x00c0  00   legacy   Y        -        Y        Y         Y      Viper V3 Pro (Wired)
-   * 0x00c1  00   v2       Y        Y        Y        Y         Y      Viper V3 Pro (Wireless)
-   * 0x00c2  00   legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wired Alt)
-   * 0x00c3  00   legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wireless Alt)
-   * 0x00c4  00   legacy   Y        -        -        Y         -      DeathAdder V3 HyperSpeed (Wired)
-   * 0x00c5  00   legacy   Y        -        -        Y         -      DeathAdder V3 HyperSpeed (Wireless)
+   * pid     role      feat evt polling  battery  hyperIM  dynamic  tracking  angle  name
+   * 0x00b3  sdongle   00   00  v2       Y        Y        -        Y         -      HyperPolling Wireless Dongle
+   * 0x00b6  body      00   00  legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wired)
+   * 0x00b7  dongle    00   00  legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wireless)
+   * 0x00c0  body      04   05  legacy   Y        -        Y        Y         Y      Viper V3 Pro (Wired)
+   * 0x00c1  dongle    04   05  v2       Y        Y        Y        Y         Y      Viper V3 Pro (Wireless)
+   * 0x00c2  body      00   00  legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wired Alt)
+   * 0x00c3  dongle    00   00  legacy   Y        -        -        Y         -      DeathAdder V3 Pro (Wireless Alt)
+   * 0x00c4  body      00   00  legacy   Y        -        -        Y         -      DeathAdder V3 HyperSpeed (Wired)
+   * 0x00c5  dongle    00   00  legacy   Y        -        -        Y         -      DeathAdder V3 HyperSpeed (Wireless)
+   * 0x00e5  body      04   05  legacy   Y        -        Y        Y         Y      Viper V4 Pro (Wired)
+   * 0x00e6  dongle    04   05  v2       Y        -        Y        Y         Y      Viper V4 Pro (Wireless)
    */
   const PID_CAPABILITY_MATRIX = Object.freeze([
     buildPidMatrixRow(PID.HYPERPOLLING_WIRELESS_DONGLE, "Razer HyperPolling Wireless Dongle", {
+      modelKey: "hyperpolling_wireless_dongle",
+      transportRole: TRANSPORT_ROLE.STANDALONE_DONGLE,
+      bodyPid: null,
+      donglePid: PID.HYPERPOLLING_WIRELESS_DONGLE,
       pollingMode: "v2",
       hyperpollingIndicatorMode: true,
       hyperIndicatorTx: 0xff,
     }),
-    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRED, "Razer DeathAdder V3 Pro (Wired)"),
-    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRELESS, "Razer DeathAdder V3 Pro (Wireless)"),
+    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRED, "Razer DeathAdder V3 Pro (Wired)", {
+      modelKey: "deathadder_v3_pro",
+      transportRole: TRANSPORT_ROLE.BODY,
+      bodyPid: PID.DEATHADDER_V3_PRO_WIRED,
+      donglePid: PID.DEATHADDER_V3_PRO_WIRELESS,
+    }),
+    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRELESS, "Razer DeathAdder V3 Pro (Wireless)", {
+      modelKey: "deathadder_v3_pro",
+      transportRole: TRANSPORT_ROLE.DONGLE,
+      bodyPid: PID.DEATHADDER_V3_PRO_WIRED,
+      donglePid: PID.DEATHADDER_V3_PRO_WIRELESS,
+    }),
     buildPidMatrixRow(PID.VIPER_V3_PRO_WIRED, "Razer Viper V3 Pro (Wired)", {
+      modelKey: "viper_v3_pro",
+      transportRole: TRANSPORT_ROLE.BODY,
+      bodyPid: PID.VIPER_V3_PRO_WIRED,
+      donglePid: PID.VIPER_V3_PRO_WIRELESS,
+      featureReportId: 0x04,
+      eventReportId: 0x05,
       dynamicSensitivity: true,
       sensorAngle: true,
     }),
     buildPidMatrixRow(PID.VIPER_V3_PRO_WIRELESS, "Razer Viper V3 Pro (Wireless)", {
+      modelKey: "viper_v3_pro",
+      transportRole: TRANSPORT_ROLE.DONGLE,
+      bodyPid: PID.VIPER_V3_PRO_WIRED,
+      donglePid: PID.VIPER_V3_PRO_WIRELESS,
+      featureReportId: 0x04,
+      eventReportId: 0x05,
       pollingMode: "v2",
       hyperpollingIndicatorMode: true,
       dynamicSensitivity: true,
       sensorAngle: true,
       hyperIndicatorTx: 0xff,
     }),
-    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRED_ALT, "Razer DeathAdder V3 Pro (Wired Alt)"),
-    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRELESS_ALT, "Razer DeathAdder V3 Pro (Wireless Alt)"),
-    buildPidMatrixRow(PID.DEATHADDER_V3_HYPERSPEED_WIRED, "Razer DeathAdder V3 HyperSpeed (Wired)"),
-    buildPidMatrixRow(PID.DEATHADDER_V3_HYPERSPEED_WIRELESS, "Razer DeathAdder V3 HyperSpeed (Wireless)"),
+    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRED_ALT, "Razer DeathAdder V3 Pro (Wired Alt)", {
+      modelKey: "deathadder_v3_pro_alt",
+      transportRole: TRANSPORT_ROLE.BODY,
+      bodyPid: PID.DEATHADDER_V3_PRO_WIRED_ALT,
+      donglePid: PID.DEATHADDER_V3_PRO_WIRELESS_ALT,
+    }),
+    buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRELESS_ALT, "Razer DeathAdder V3 Pro (Wireless Alt)", {
+      modelKey: "deathadder_v3_pro_alt",
+      transportRole: TRANSPORT_ROLE.DONGLE,
+      bodyPid: PID.DEATHADDER_V3_PRO_WIRED_ALT,
+      donglePid: PID.DEATHADDER_V3_PRO_WIRELESS_ALT,
+    }),
+    buildPidMatrixRow(PID.DEATHADDER_V3_HYPERSPEED_WIRED, "Razer DeathAdder V3 HyperSpeed (Wired)", {
+      modelKey: "deathadder_v3_hyperspeed",
+      transportRole: TRANSPORT_ROLE.BODY,
+      bodyPid: PID.DEATHADDER_V3_HYPERSPEED_WIRED,
+      donglePid: PID.DEATHADDER_V3_HYPERSPEED_WIRELESS,
+    }),
+    buildPidMatrixRow(PID.DEATHADDER_V3_HYPERSPEED_WIRELESS, "Razer DeathAdder V3 HyperSpeed (Wireless)", {
+      modelKey: "deathadder_v3_hyperspeed",
+      transportRole: TRANSPORT_ROLE.DONGLE,
+      bodyPid: PID.DEATHADDER_V3_HYPERSPEED_WIRED,
+      donglePid: PID.DEATHADDER_V3_HYPERSPEED_WIRELESS,
+    }),
+    buildPidMatrixRow(PID.VIPER_V4_PRO_WIRED, "Razer Viper V4 Pro (Wired)", {
+      modelKey: "viper_v4_pro",
+      transportRole: TRANSPORT_ROLE.BODY,
+      bodyPid: PID.VIPER_V4_PRO_WIRED,
+      donglePid: PID.VIPER_V4_PRO_WIRELESS,
+      featureReportId: 0x04,
+      eventReportId: 0x05,
+      dynamicSensitivity: true,
+      sensorAngle: true,
+    }),
+    buildPidMatrixRow(PID.VIPER_V4_PRO_WIRELESS, "Razer Viper V4 Pro (Wireless)", {
+      modelKey: "viper_v4_pro",
+      transportRole: TRANSPORT_ROLE.DONGLE,
+      bodyPid: PID.VIPER_V4_PRO_WIRED,
+      donglePid: PID.VIPER_V4_PRO_WIRELESS,
+      featureReportId: 0x04,
+      eventReportId: 0x05,
+      pollingMode: "v2",
+      dynamicSensitivity: true,
+      sensorAngle: true,
+    }),
   ]);
 
   const PID_CAPABILITY_MATRIX_BY_PID = Object.freeze(
@@ -191,18 +394,71 @@
     Object.fromEntries(PID_CAPABILITY_MATRIX.map((row) => [row.pid, row.name]))
   );
 
-  // OpenRazer driver (driver/razermouse_driver.c) uses report index 0x00 for this PID family.
-  // Keep it hardcoded to avoid interface/report-id probing guesses.
+  const PID_TRANSPORT_META = Object.freeze(
+    Object.fromEntries(PID_CAPABILITY_MATRIX.map((row) => [row.pid, Object.freeze({
+      pid: row.pid,
+      name: row.name,
+      modelKey: row.modelKey,
+      transportRole: row.transportRole,
+      bodyPid: row.bodyPid,
+      donglePid: row.donglePid,
+      webhidFeatureReportId: row.webhidFeatureReportId,
+      featureReportId: row.featureReportId,
+      eventReportId: row.eventReportId,
+      controlUsagePage: row.controlUsagePage,
+    })]))
+  );
+
   const PID_FEATURE_REPORT_ID = Object.freeze(
     Object.fromEntries(PID_CAPABILITY_MATRIX.map((row) => [row.pid, row.featureReportId]))
+  );
+
+  const PID_WEBHID_FEATURE_REPORT_ID = Object.freeze(
+    Object.fromEntries(PID_CAPABILITY_MATRIX.map((row) => [row.pid, row.webhidFeatureReportId]))
+  );
+
+  const PID_EVENT_REPORT_ID = Object.freeze(
+    Object.fromEntries(PID_CAPABILITY_MATRIX.map((row) => [row.pid, row.eventReportId]))
   );
 
   const SUPPORTED_PIDS = Object.freeze(PID_CAPABILITY_MATRIX.map((row) => row.pid));
   const SUPPORTED_PID_SET = new Set(SUPPORTED_PIDS);
 
+  const SNAPSHOT_READ_MODE = Object.freeze({
+    CONNECT_FULL: "connect_full",
+    REFRESH_FULL: "refresh_full",
+  });
+
   function getWaitMsForPid(pid) {
     void pid;
-    return 60;
+    return 0;
+  }
+
+  function isPermissionPathError(err) {
+    const name = String(err?.name || "");
+    const msg = String(err?.message || "").toLowerCase();
+    return (
+      name === "NotAllowedError"
+      || msg.includes("notallowederror")
+      || msg.includes("failed to write the feature report")
+      || msg.includes("failed to receive the feature report")
+      || msg.includes("failed to read the feature report")
+    );
+  }
+
+  function shouldRetryOfficialObmButtonIoError(err) {
+    if (isPermissionPathError(err)) return true;
+    const code = String(err?.code || "");
+    return (
+      code === "IO_READ_TIMEOUT"
+      || code === "IO_WRITE_TIMEOUT"
+      || code === "DEVICE_COMMAND_NEW_COMMAND"
+      || code === "DEVICE_BUSY"
+      || code === "DEVICE_COMMAND_FAILURE"
+      || code === "DEVICE_COMMAND_TIMEOUT"
+      || code === "RESPONSE_MISMATCH"
+      || code === "RESPONSE_VALIDATION_FAILED"
+    );
   }
 
   function buildCapabilities(pid) {
@@ -239,8 +495,22 @@
     return Number(device?.productId ?? device?.productID ?? 0);
   }
 
+  function getTransportMetaForPid(pid) {
+    return PID_TRANSPORT_META[Number(pid)] || null;
+  }
+
   function getFeatureReportIdForPid(pid) {
     const rid = PID_FEATURE_REPORT_ID[Number(pid)];
+    return Number.isFinite(rid) ? clampU8(rid) : 0x00;
+  }
+
+  function getWebHidFeatureReportIdForPid(pid) {
+    const rid = PID_WEBHID_FEATURE_REPORT_ID[Number(pid)];
+    return Number.isFinite(rid) ? clampU8(rid) : 0x00;
+  }
+
+  function getEventReportIdForPid(pid) {
+    const rid = PID_EVENT_REPORT_ID[Number(pid)];
     return Number.isFinite(rid) ? clampU8(rid) : 0x00;
   }
 
@@ -279,12 +549,14 @@
       this.sendTimeoutMs = 1500;
       this.readTimeoutMs = 1500;
       this._featureReportIds = [0];
+      this._transactionId = 0;
     }
 
     setDevice(device, productId = 0) {
       this.device = device || null;
       this.productId = Number(productId || 0);
       this._featureReportIds = this._collectFeatureReportIds();
+      this._transactionId = 0;
     }
 
     _requireOpenDevice() {
@@ -293,8 +565,26 @@
     }
 
     _collectFeatureReportIds() {
-      // No report-id probing. Use the OpenRazer-aligned fixed report index.
-      return [getFeatureReportIdForPid(this.productId)];
+      // Official Synapse WebHID mouse path uses reportId 0 for feature I/O.
+      // The model-level feature/event report ids remain available as semantic metadata.
+      return [getWebHidFeatureReportIdForPid(this.productId)];
+    }
+
+    _nextTransactionId() {
+      // Match rzDevice25: return current counter, then increment, and wrap before 31.
+      if (this._transactionId === 31) this._transactionId = 0;
+      const tx = this._transactionId;
+      this._transactionId += 1;
+      return clampU8(tx);
+    }
+
+    _prepareRequestBytes(packet) {
+      const raw = packet instanceof Uint8Array
+        ? ProtocolCodec.fitReport(packet)
+        : ProtocolCodec.encodeRazerReport(packet || {});
+      const currentTx = clampU8(raw[1] ?? 0);
+      if (currentTx === 0xff) return new Uint8Array(raw);
+      return ProtocolCodec.withTransactionId(raw, this._nextTransactionId());
     }
 
     async _withTimeout(promise, timeoutMs, code, message) {
@@ -328,22 +618,19 @@
     }
 
     /**
-     * Send one command packet and wait for a matching response.
-     * Matching rule follows openrazer: remainingPackets + class + commandId.
+     * Send one official Razer command frame and wait for a matching response.
+     * Matching rule follows Synapse Web: transactionId + commandClass + commandId.
      */
     async sendAndWait(packet, opts = {}) {
       return this.queue.enqueue(async () => {
         this._requireOpenDevice();
 
-        const requestBytes = packet instanceof Uint8Array
-          ? ProtocolCodec.fitReport(packet)
-          : ProtocolCodec.encodeRazerReport(packet || {});
-
+        const requestBytes = this._prepareRequestBytes(packet);
         const request = ProtocolCodec.parseRazerReport(requestBytes);
 
-        const reportId = Number(this._featureReportIds[0] ?? getFeatureReportIdForPid(this.productId));
+        const reportId = Number(this._featureReportIds[0] ?? getWebHidFeatureReportIdForPid(this.productId));
 
-        const busyRetry = RAZER_BUSY_RETRY;
+        const retryBudget = RAZER_BUSY_RETRY;
         const waitMs = Number.isFinite(Number(opts.waitMs)) ? Number(opts.waitMs) : getWaitMsForPid(this.productId);
         const responseValidator = typeof opts.responseValidator === "function"
           ? opts.responseValidator
@@ -351,7 +638,7 @@
 
         let lastErr = null;
 
-        for (let attempt = 0; attempt <= busyRetry; attempt++) {
+        for (let attempt = 0; attempt <= retryBudget; attempt++) {
           try {
             await this._sendFeature(reportId, requestBytes);
             if (waitMs > 0) await sleep(waitMs);
@@ -364,12 +651,12 @@
               throw new ProtocolError("Response does not match request", "RESPONSE_MISMATCH", {
                 reportId,
                 expected: {
-                  remainingPackets: request.remainingPackets,
+                  transactionId: request.transactionId,
                   commandClass: request.commandClass,
                   commandId: request.commandId,
                 },
                 got: {
-                  remainingPackets: response.remainingPackets,
+                  transactionId: response.transactionId,
                   commandClass: response.commandClass,
                   commandId: response.commandId,
                 },
@@ -384,53 +671,77 @@
               });
             }
 
-            if (response.status === REPORT_STATUS.BUSY) {
-              if (attempt < busyRetry) continue;
-              throw new ProtocolError("Razer device stayed busy", "DEVICE_BUSY", { reportId, attempts: attempt + 1 });
+            switch (response.status) {
+              case REPORT_STATUS.SUCCESS:
+              case REPORT_STATUS.SUCCESSFUL:
+                return response;
+              case REPORT_STATUS.NEW_COMMAND:
+                throw new ProtocolError("Razer device returned NEW_COMMAND", "DEVICE_COMMAND_NEW_COMMAND", {
+                  reportId,
+                  response,
+                });
+              case REPORT_STATUS.BUSY:
+                throw new ProtocolError("Razer device returned BUSY", "DEVICE_BUSY", {
+                  reportId,
+                  response,
+                  attempts: attempt + 1,
+                });
+              case REPORT_STATUS.FAIL:
+              case REPORT_STATUS.FAILURE:
+                throw new ProtocolError("Razer command failed", "DEVICE_COMMAND_FAILURE", {
+                  reportId,
+                  response,
+                });
+              case REPORT_STATUS.TIMEOUT:
+                throw new ProtocolError("Razer command timeout status", "DEVICE_COMMAND_TIMEOUT", {
+                  reportId,
+                  response,
+                });
+              case REPORT_STATUS.NOT_SUPPORTED:
+                throw new ProtocolError("Razer command not supported", "DEVICE_COMMAND_NOT_SUPPORTED", {
+                  reportId,
+                  response,
+                });
+              default:
+                throw new ProtocolError("Unknown Razer command status", "DEVICE_COMMAND_UNKNOWN_STATUS", {
+                  reportId,
+                  response,
+                });
             }
-
-            if (response.status === REPORT_STATUS.FAILURE) {
-              throw new ProtocolError("Razer command failed", "DEVICE_COMMAND_FAILURE", { reportId, response });
-            }
-            if (response.status === REPORT_STATUS.TIMEOUT) {
-              throw new ProtocolError("Razer command timeout status", "DEVICE_COMMAND_TIMEOUT", { reportId, response });
-            }
-            if (response.status === REPORT_STATUS.NOT_SUPPORTED) {
-              throw new ProtocolError("Razer command not supported", "DEVICE_COMMAND_NOT_SUPPORTED", { reportId, response });
-            }
-
-            return response;
           } catch (err) {
             lastErr = err;
             const name = String(err?.name || "");
             const msg = String(err?.message || "").toLowerCase();
             const code = String(err?.code || "");
 
-            // Keep retries on the same fixed report-id; never switch IDs.
-            const isNotAllowed = name === "NotAllowedError" || msg.includes("notallowederror");
-            const isFeatureWriteErr = msg.includes("failed to write the feature report");
-            const isFeatureReadErr = msg.includes("failed to receive the feature report")
-              || msg.includes("failed to read the feature report");
+            if (
+              code === "DEVICE_COMMAND_NOT_SUPPORTED"
+              || code === "DEVICE_COMMAND_UNKNOWN_STATUS"
+            ) {
+              throw err;
+            }
 
-            const isPermissionPathErr = isNotAllowed || isFeatureWriteErr || isFeatureReadErr;
+            const isPermissionPathErr = isPermissionPathError(err);
 
             if (isPermissionPathErr) {
-              const permissionRetryBudget = Math.min(busyRetry, RAZER_NOT_ALLOWED_SAME_ID_RETRY);
-              if (attempt < permissionRetryBudget) {
-                if (RAZER_RETRY_BACKOFF_MS > 0) await sleep(RAZER_RETRY_BACKOFF_MS);
-                continue;
-              }
-              throw err;
+              const permissionRetryBudget = Math.min(retryBudget, RAZER_NOT_ALLOWED_SAME_ID_RETRY);
+              if (attempt >= permissionRetryBudget) throw err;
             }
 
             if (
               code === "IO_READ_TIMEOUT"
+              || code === "DEVICE_COMMAND_NEW_COMMAND"
+              || code === "DEVICE_BUSY"
+              || code === "DEVICE_COMMAND_FAILURE"
+              || code === "DEVICE_COMMAND_TIMEOUT"
               || code === "RESPONSE_MISMATCH"
               || code === "RESPONSE_VALIDATION_FAILED"
+              || isPermissionPathErr
             ) {
               if (RAZER_RETRY_BACKOFF_MS > 0) await sleep(RAZER_RETRY_BACKOFF_MS);
+              if (attempt < retryBudget) continue;
             }
-            if (attempt >= busyRetry) throw err;
+            throw err;
           }
         }
 
@@ -464,9 +775,19 @@
   const ProtocolCodec = Object.freeze({
     fitReport(raw) {
       const src = toDataViewU8(raw);
+      if (src.byteLength === RAZER_REPORT_LEN + 1) {
+        return src.slice(1, RAZER_REPORT_LEN + 1);
+      }
       if (src.byteLength === RAZER_REPORT_LEN) return src;
       const out = new Uint8Array(RAZER_REPORT_LEN);
-      out.set(src.subarray(0, RAZER_REPORT_LEN));
+      out.set(src.subarray(0, Math.min(src.byteLength, RAZER_REPORT_LEN)));
+      return out;
+    },
+
+    withTransactionId(reportBytes, transactionId) {
+      const out = new Uint8Array(ProtocolCodec.fitReport(reportBytes));
+      out[1] = clampU8(transactionId);
+      out[88] = ProtocolCodec.calcChecksum(out);
       return out;
     },
 
@@ -544,7 +865,7 @@
       const req = request?.raw ? request : ProtocolCodec.parseRazerReport(request);
       const res = response?.raw ? response : ProtocolCodec.parseRazerReport(response);
       return (
-        req.remainingPackets === res.remainingPackets &&
+        req.transactionId === res.transactionId &&
         req.commandClass === res.commandClass &&
         req.commandId === res.commandId
       );
@@ -587,14 +908,14 @@
         });
       },
 
-      setDpiXY(tx, dpiX, dpiY) {
+      setDpiXY(tx, dpiX, dpiY, profileId = OFFICIAL_MOUSE_PROFILE_ID) {
         return ProtocolCodec.encodeRazerReport({
           transactionId: tx,
           commandClass: 0x04,
           commandId: 0x05,
           dataSize: 0x07,
           arguments: [
-            RAZER_CONST.VARSTORE,
+            clampU8(profileId),
             (clampU16(dpiX) >> 8) & 0xff,
             clampU16(dpiX) & 0xff,
             (clampU16(dpiY) >> 8) & 0xff,
@@ -605,23 +926,30 @@
         });
       },
 
-      getDpiXY(tx, variableStorage = RAZER_CONST.NOSTORE) {
+      getDpiXY(tx, profileId = OFFICIAL_MOUSE_PROFILE_ID) {
         return ProtocolCodec.encodeRazerReport({
           transactionId: tx,
           commandClass: 0x04,
           commandId: 0x85,
           dataSize: 0x07,
-          arguments: [clampU8(variableStorage)],
+          arguments: [clampU8(profileId)],
         });
       },
 
-      setDpiStages(tx, stages, activeStageOneBased) {
+      setDpiStages(tx, stages, activeStageIndex, profileId = OFFICIAL_MOUSE_PROFILE_ID, stageIds = null) {
         const count = clampInt(stages.length, 1, RAZER_MAX_DPI_STAGES);
         const argsLen = 3 + count * 7;
-
         const args = new Uint8Array(argsLen);
-        args[0] = RAZER_CONST.VARSTORE;
-        args[1] = clampInt(activeStageOneBased, 1, count);
+        args[0] = clampU8(profileId);
+        const ids = Array.isArray(stageIds) ? stageIds : [];
+        const resolvedStageIds = [];
+        for (let i = 0; i < count; i++) {
+          const fallbackId = i + 1;
+          const stageId = clampU8(ids[i] ?? fallbackId);
+          resolvedStageIds.push(stageId);
+        }
+        const activeIdx = clampInt(activeStageIndex, 0, count - 1);
+        args[1] = resolvedStageIds[activeIdx] ?? resolvedStageIds[0] ?? 0x01;
         args[2] = count;
 
         let offset = 3;
@@ -629,7 +957,7 @@
           const stage = stages[i] || { x: 800, y: 800 };
           const x = clampU16(stage.x);
           const y = clampU16(stage.y);
-          args[offset++] = i;
+          args[offset++] = resolvedStageIds[i];
           args[offset++] = (x >> 8) & 0xff;
           args[offset++] = x & 0xff;
           args[offset++] = (y >> 8) & 0xff;
@@ -650,67 +978,54 @@
       },
 
 
-      getDpiStages(tx, variableStorage = RAZER_CONST.VARSTORE) {
+      getDpiStages(tx, profileId = OFFICIAL_MOUSE_PROFILE_ID) {
         return ProtocolCodec.encodeRazerReport({
           transactionId: tx,
           commandClass: 0x04,
           commandId: 0x86,
           dataSize: 0x26,
-          arguments: [clampU8(variableStorage)],
+          arguments: [clampU8(profileId)],
         });
       },
 
-      setButtonMappingRep4(tx, sourceCode, actionQuad) {
-        const src = clampU16(sourceCode);
-        const action = Array.isArray(actionQuad) ? actionQuad.slice(0, 4) : [];
-        if (action.length !== 4) {
-          throw new ProtocolError("REP4 actionQuad must be [act0,act1,act2,act3]", "BAD_PARAM", {
-            actionQuad,
-          });
-        }
-        return ProtocolCodec.encodeRazerReport({
-          transactionId: tx,
-          commandClass: 0x02,
-          commandId: 0x0c,
-          dataSize: 0x0a,
-          // Synapse capture layout:
-          // [01, src_lo, src_hi, act0, act1, act2, act3, 00, 00, 00]
-          arguments: [
-            0x01,
-            src & 0xff,
-            (src >> 8) & 0xff,
-            clampU8(action[0]),
-            clampU8(action[1]),
-            clampU8(action[2]),
-            clampU8(action[3]),
-            0x00,
-            0x00,
-            0x00,
-          ],
-        });
-      },
-
-      getButtonMappingRep4(tx, sourceCode) {
-        const src = clampU16(sourceCode);
+      getSingleButtonAssignment(
+        tx,
+        profileId = OFFICIAL_MOUSE_PROFILE_ID,
+        buttonId = 0x01,
+        mode = OFFICIAL_BUTTON_MODE.NORMAL
+      ) {
         return ProtocolCodec.encodeRazerReport({
           transactionId: tx,
           commandClass: 0x02,
           commandId: 0x8c,
-          dataSize: 0x0a,
-          // Readback keeps the same payload envelope as write:
-          // [01, src_lo, src_hi, 00, 00, 00, 00, 00, 00, 00]
-          arguments: [
-            0x01,
-            src & 0xff,
-            (src >> 8) & 0xff,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-          ],
+          dataSize: OFFICIAL_OBM_SINGLE_BUTTON_ASSIGNMENT_DATA_SIZE,
+          arguments: [clampU8(profileId), clampU8(buttonId), clampU8(mode)],
+        });
+      },
+
+      setSingleButtonAssignment(
+        tx,
+        profileId = OFFICIAL_MOUSE_PROFILE_ID,
+        buttonId = 0x01,
+        mode = OFFICIAL_BUTTON_MODE.NORMAL,
+        functionId = OFFICIAL_OBM_FUNCTION_ID.OFF,
+        fnDataByteSize = 0,
+        fnDataByte = null
+      ) {
+        const dataArray = fnDataByte instanceof Uint8Array ? fnDataByte : new Uint8Array(fnDataByte || []);
+        const out = new Uint8Array(10);
+        out[0] = clampU8(profileId);
+        out[1] = clampU8(buttonId);
+        out[2] = clampU8(mode);
+        out[3] = clampU8(functionId);
+        out[4] = clampInt(fnDataByteSize, 0, 5);
+        out.set(dataArray.subarray(0, 5), 5);
+        return ProtocolCodec.encodeRazerReport({
+          transactionId: tx,
+          commandClass: 0x02,
+          commandId: 0x0c,
+          dataSize: OFFICIAL_OBM_SINGLE_BUTTON_ASSIGNMENT_DATA_SIZE,
+          arguments: out,
         });
       },
 
@@ -751,47 +1066,47 @@
         });
       },
 
-      setDynamicSensitivityEnabled(tx, enabled) {
+      setProximitySensorAccelerationState(tx, enabled, profileId = OFFICIAL_MOUSE_PROFILE_ID) {
         return ProtocolCodec.encodeRazerReport({
           transactionId: tx,
           commandClass: 0x0b,
           commandId: 0x10,
           dataSize: 0x02,
-          arguments: [0x01, enabled ? 0x01 : 0x00],
+          arguments: [clampU8(profileId), enabled ? 0x01 : 0x00],
         });
       },
 
-      getDynamicSensitivityEnabled(tx) {
+      getProximitySensorAccelerationState(tx, profileId = OFFICIAL_MOUSE_PROFILE_ID) {
         return ProtocolCodec.encodeRazerReport({
           transactionId: tx,
           commandClass: 0x0b,
           commandId: 0x90,
           dataSize: 0x02,
-          arguments: [0x01, 0x00],
+          arguments: [clampU8(profileId)],
         });
       },
 
-      setDynamicSensitivityMode(tx, mode) {
+      setProximitySensorAccelerationMode(tx, mode, profileId = OFFICIAL_MOUSE_PROFILE_ID) {
         return ProtocolCodec.encodeRazerReport({
           transactionId: tx,
           commandClass: 0x0b,
           commandId: 0x11,
           dataSize: 0x02,
-          arguments: [0x01, clampInt(mode, 0, 2)],
+          arguments: [clampU8(profileId), clampInt(mode, 0, 3)],
         });
       },
 
-      getDynamicSensitivityMode(tx) {
+      getProximitySensorAccelerationMode(tx, profileId = OFFICIAL_MOUSE_PROFILE_ID) {
         return ProtocolCodec.encodeRazerReport({
           transactionId: tx,
           commandClass: 0x0b,
           commandId: 0x91,
           dataSize: 0x02,
-          arguments: [0x01, 0x00],
+          arguments: [clampU8(profileId)],
         });
       },
 
-      setSensorAngle(tx, angle) {
+      setSensorAngle(tx, angle, profileId = OFFICIAL_MOUSE_PROFILE_ID, state = 0x01) {
         const a = clampInt(angle, -44, 44);
         const raw = a < 0 ? (0x100 + a) & 0xff : a & 0xff;
         return ProtocolCodec.encodeRazerReport({
@@ -799,94 +1114,96 @@
           commandClass: 0x0b,
           commandId: 0x14,
           dataSize: 0x03,
-          arguments: [0x01, 0x01, raw],
+          arguments: [clampU8(profileId), clampU8(state), raw],
         });
       },
 
-      getSensorAngle(tx) {
+      getSensorAngle(tx, profileId = OFFICIAL_MOUSE_PROFILE_ID) {
         return ProtocolCodec.encodeRazerReport({
           transactionId: tx,
           commandClass: 0x0b,
           commandId: 0x94,
           dataSize: 0x03,
-          arguments: [0x01, 0x01, 0x00],
+          arguments: [clampU8(profileId)],
         });
       },
 
-      setSmartTrackingPrelude(tx) {
+      setProximitySensorState(
+        tx,
+        classId = OFFICIAL_PROXIMITY_CLASS_ID,
+        sensorId = OFFICIAL_PROXIMITY_SENSOR_ID,
+        state = true
+      ) {
         return ProtocolCodec.encodeRazerReport({
           transactionId: tx,
           commandClass: 0x0b,
           commandId: 0x03,
           dataSize: 0x03,
-          arguments: [0x00, 0x04, 0x01],
+          arguments: [clampU8(classId), clampU8(sensorId), state ? 0x01 : 0x00],
         });
       },
 
-      setSmartTrackingModeSymmetric(tx, level) {
-        return ProtocolCodec.encodeRazerReport({
-          transactionId: tx,
-          commandClass: 0x0b,
-          commandId: 0x0b,
-          dataSize: 0x04,
-          arguments: [0x00, 0x04, 0x01, clampInt(level, 0, 2)],
-        });
-      },
-
-      setSmartTrackingModeAsymmetric(tx) {
-        return ProtocolCodec.encodeRazerReport({
-          transactionId: tx,
-          commandClass: 0x0b,
-          commandId: 0x0b,
-          dataSize: 0x04,
-          arguments: [0x00, 0x04, 0x04, 0x00],
-        });
-      },
-
-      getSmartTrackingMode(tx) {
-        return ProtocolCodec.encodeRazerReport({
-          transactionId: tx,
-          commandClass: 0x0b,
-          commandId: 0x8b,
-          dataSize: 0x04,
-          arguments: [0x00, 0x04, 0x00, 0x00],
-        });
-      },
-
-      setSmartTrackingAsymmetricDistances(tx, liftDistance, landingDistance) {
-        let lift = clampInt(liftDistance, 2, 26);
-        let landing = clampInt(landingDistance, 1, 25);
-        if (landing >= lift) {
-          lift = Math.min(26, landing + 1);
-          if (landing >= lift) landing = Math.max(1, lift - 1);
-        }
-        return ProtocolCodec.encodeRazerReport({
-          transactionId: tx,
-          commandClass: 0x0b,
-          commandId: 0x05,
-          dataSize: 0x0a,
-          arguments: [
-            0x00,
-            0x04,
-            clampU8(lift - 1),
-            clampU8(landing - 1),
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-          ],
-        });
-      },
-
-      getSmartTrackingAsymmetricDistances(tx) {
+      getProximitySensorConfiguration(
+        tx,
+        classId = OFFICIAL_PROXIMITY_CLASS_ID,
+        sensorId = OFFICIAL_PROXIMITY_SENSOR_ID
+      ) {
         return ProtocolCodec.encodeRazerReport({
           transactionId: tx,
           commandClass: 0x0b,
           commandId: 0x85,
           dataSize: 0x0a,
-          arguments: [0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+          arguments: [clampU8(classId), clampU8(sensorId)],
+        });
+      },
+
+      setProximitySensorConfiguration(
+        tx,
+        classId = OFFICIAL_PROXIMITY_CLASS_ID,
+        sensorId = OFFICIAL_PROXIMITY_SENSOR_ID,
+        dataArray = null
+      ) {
+        const payload = dataArray instanceof Uint8Array ? dataArray : new Uint8Array(dataArray || []);
+        const args = new Uint8Array(10);
+        args[0] = clampU8(classId);
+        args[1] = clampU8(sensorId);
+        args.set(payload.subarray(0, 8), 2);
+        return ProtocolCodec.encodeRazerReport({
+          transactionId: tx,
+          commandClass: 0x0b,
+          commandId: 0x05,
+          dataSize: args.length,
+          arguments: args,
+        });
+      },
+
+      getProximitySensorLiftSetting(
+        tx,
+        classId = OFFICIAL_PROXIMITY_CLASS_ID,
+        sensorId = OFFICIAL_PROXIMITY_SENSOR_ID
+      ) {
+        return ProtocolCodec.encodeRazerReport({
+          transactionId: tx,
+          commandClass: 0x0b,
+          commandId: 0x8b,
+          dataSize: 0x04,
+          arguments: [clampU8(classId), clampU8(sensorId)],
+        });
+      },
+
+      setProximitySensorLiftSetting(
+        tx,
+        classId = OFFICIAL_PROXIMITY_CLASS_ID,
+        sensorId = OFFICIAL_PROXIMITY_SENSOR_ID,
+        liftMode = 0x01,
+        liftHeight = 0x00
+      ) {
+        return ProtocolCodec.encodeRazerReport({
+          transactionId: tx,
+          commandClass: 0x0b,
+          commandId: 0x0b,
+          dataSize: 0x04,
+          arguments: [clampU8(classId), clampU8(sensorId), clampU8(liftMode), clampU8(liftHeight)],
         });
       },
 
@@ -1034,22 +1351,34 @@
       const declaredCount = clampInt(args[2] ?? 0, 0, RAZER_MAX_DPI_STAGES);
       const maxByPayload = Math.max(0, Math.floor(Math.max(0, payloadSize - 3) / 7));
       const count = clampInt(Math.min(declaredCount, maxByPayload), 0, RAZER_MAX_DPI_STAGES);
-      const activeOneBased = clampInt(args[1] ?? 1, 1, Math.max(1, count));
+      const activeRaw = clampU8(args[1] ?? 0);
       const stages = [];
+      const stageIds = [];
       let offset = 3;
 
       for (let i = 0; i < count; i++) {
-        const dpiOffset = offset + 1;
-        if (dpiOffset + 4 > payloadSize) break;
+        if (offset + 6 >= payloadSize) break;
+        const stageId = clampU8(args[offset]);
         const x = ((args[offset + 1] << 8) | args[offset + 2]) & 0xffff;
         const y = ((args[offset + 3] << 8) | args[offset + 4]) & 0xffff;
-        stages.push({ x: TRANSFORMERS.clampDpi(x), y: TRANSFORMERS.clampDpi(y) });
+        stages.push({ id: stageId, x: TRANSFORMERS.clampDpi(x), y: TRANSFORMERS.clampDpi(y) });
+        stageIds.push(stageId);
         offset += 7;
       }
 
+      let activeDpiStageIndex = stages.findIndex((stage) => stage.id === activeRaw);
+      if (activeDpiStageIndex < 0 && activeRaw >= 1 && activeRaw <= stages.length) {
+        activeDpiStageIndex = activeRaw - 1;
+      } else if (activeDpiStageIndex < 0 && activeRaw < stages.length) {
+        activeDpiStageIndex = activeRaw;
+      }
+      activeDpiStageIndex = clampInt(activeDpiStageIndex, 0, Math.max(0, stages.length - 1));
+
       return {
-        dpiStages: stages,
-        activeDpiStageIndex: clampInt(activeOneBased - 1, 0, Math.max(0, stages.length - 1)),
+        classId: clampU8(args[0] ?? OFFICIAL_MOUSE_PROFILE_ID),
+        stageIds,
+        dpiStages: stages.map((stage) => ({ x: stage.x, y: stage.y })),
+        activeDpiStageIndex,
       };
     },
 
@@ -1074,7 +1403,7 @@
     },
 
     normalizeDynamicSensitivityMode(v) {
-      return clampInt(v, 0, 2);
+      return clampInt(v, 0, 3);
     },
 
     normalizeSmartTrackingMode(v) {
@@ -1085,6 +1414,18 @@
 
     normalizeSmartTrackingLevel(v) {
       return clampInt(v, 0, 2);
+    },
+
+    normalizeSmartTrackingTrackingDistance(v) {
+      return clampInt(v, 1, 3);
+    },
+
+    smartTrackingLevelToTrackingDistance(v) {
+      return clampInt(v, 0, 2) + 1;
+    },
+
+    trackingDistanceToSmartTrackingLevel(v) {
+      return clampInt(v, 1, 3) - 1;
     },
 
     normalizeSmartTrackingDistances(liftDistance, landingDistance) {
@@ -1128,6 +1469,53 @@
     },
   });
 
+  function normalizePublicSmartTrackingState(raw = null) {
+    const seed = isObject(raw) ? raw : {};
+    const mode = TRANSFORMERS.normalizeSmartTrackingMode(
+      seed.smartTrackingMode ?? DEFAULT_RAZER_SMART_TRACKING_PUBLIC_STATE.smartTrackingMode
+    );
+    const level = TRANSFORMERS.normalizeSmartTrackingLevel(
+      seed.smartTrackingLevel ?? DEFAULT_RAZER_SMART_TRACKING_PUBLIC_STATE.smartTrackingLevel
+    );
+    const dist = TRANSFORMERS.normalizeSmartTrackingDistances(
+      seed.smartTrackingLiftDistance ?? DEFAULT_RAZER_SMART_TRACKING_PUBLIC_STATE.smartTrackingLiftDistance,
+      seed.smartTrackingLandingDistance ?? DEFAULT_RAZER_SMART_TRACKING_PUBLIC_STATE.smartTrackingLandingDistance
+    );
+    return {
+      smartTrackingMode: mode,
+      smartTrackingLevel: level,
+      smartTrackingLiftDistance: dist.lift,
+      smartTrackingLandingDistance: dist.landing,
+    };
+  }
+
+  function buildOfficialSmartTrackingModelFromPublicState(raw = null) {
+    const publicState = normalizePublicSmartTrackingState(raw);
+    return {
+      isAsymmetric: publicState.smartTrackingMode === "asymmetric",
+      trackingDistance: TRANSFORMERS.smartTrackingLevelToTrackingDistance(publicState.smartTrackingLevel),
+      liftOffDistance: publicState.smartTrackingLiftDistance,
+      landingDistance: publicState.smartTrackingLandingDistance,
+    };
+  }
+
+  function buildPublicSmartTrackingStateFromOfficialModel(raw = null) {
+    const seed = isObject(raw) ? raw : {};
+    const trackingDistance = TRANSFORMERS.normalizeSmartTrackingTrackingDistance(
+      seed.trackingDistance ?? DEFAULT_RAZER_SMART_TRACKING_OFFICIAL_MODEL.trackingDistance
+    );
+    const dist = TRANSFORMERS.normalizeSmartTrackingDistances(
+      seed.liftOffDistance ?? DEFAULT_RAZER_SMART_TRACKING_OFFICIAL_MODEL.liftOffDistance,
+      seed.landingDistance ?? DEFAULT_RAZER_SMART_TRACKING_OFFICIAL_MODEL.landingDistance
+    );
+    return {
+      smartTrackingMode: seed.isAsymmetric ? "asymmetric" : "symmetric",
+      smartTrackingLevel: TRANSFORMERS.trackingDistanceToSmartTrackingLevel(trackingDistance),
+      smartTrackingLiftDistance: dist.lift,
+      smartTrackingLandingDistance: dist.landing,
+    };
+  }
+
   function requireCapability(caps, capKey, featureName, pid) {
     if (!caps?.[capKey]) {
       throw new ProtocolError(
@@ -1169,11 +1557,17 @@
       kind: "virtual",
       priority: 20,
       triggers: ["dpi", "dpiX", "dpiY"],
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, planner }) {
         requireCapability(caps, "dpi", "dpi/dpiX/dpiY", pid);
         const tx = txForField(pid, "dpi");
+        const dpiCtx = planner?.getDpiWriteContext?.() || {};
         return [{
-          packet: ProtocolCodec.commands.setDpiXY(tx, nextState.dpi.x, nextState.dpi.y),
+          packet: ProtocolCodec.commands.setDpiXY(
+            tx,
+            nextState.dpi.x,
+            nextState.dpi.y,
+            dpiCtx.profileId ?? OFFICIAL_MOUSE_PROFILE_ID
+          ),
         }];
       },
     },
@@ -1182,12 +1576,19 @@
       key: "dpiStages",
       kind: "direct",
       priority: 30,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, planner }) {
         requireCapability(caps, "dpiStages", "dpiStages", pid);
         const tx = txForField(pid, "dpiStages");
-        const active = clampInt(nextState.activeDpiStageIndex, 0, Math.max(0, nextState.dpiStages.length - 1)) + 1;
+        const active = clampInt(nextState.activeDpiStageIndex, 0, Math.max(0, nextState.dpiStages.length - 1));
+        const dpiCtx = planner?.getDpiWriteContext?.() || {};
         return [{
-          packet: ProtocolCodec.commands.setDpiStages(tx, nextState.dpiStages, active),
+          packet: ProtocolCodec.commands.setDpiStages(
+            tx,
+            nextState.dpiStages,
+            active,
+            dpiCtx.profileId ?? OFFICIAL_MOUSE_PROFILE_ID,
+            dpiCtx.stageIds ?? []
+          ),
         }];
       },
     },
@@ -1197,12 +1598,19 @@
       kind: "virtual",
       priority: 31,
       triggers: ["activeDpiStageIndex"],
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, planner }) {
         requireCapability(caps, "dpiStages", "activeDpiStageIndex", pid);
         const tx = txForField(pid, "activeDpiStageIndex");
-        const active = clampInt(nextState.activeDpiStageIndex, 0, Math.max(0, nextState.dpiStages.length - 1)) + 1;
+        const active = clampInt(nextState.activeDpiStageIndex, 0, Math.max(0, nextState.dpiStages.length - 1));
+        const dpiCtx = planner?.getDpiWriteContext?.() || {};
         return [{
-          packet: ProtocolCodec.commands.setDpiStages(tx, nextState.dpiStages, active),
+          packet: ProtocolCodec.commands.setDpiStages(
+            tx,
+            nextState.dpiStages,
+            active,
+            dpiCtx.profileId ?? OFFICIAL_MOUSE_PROFILE_ID,
+            dpiCtx.stageIds ?? []
+          ),
         }];
       },
     },
@@ -1247,7 +1655,7 @@
       plan({ pid, caps, nextState }) {
         requireCapability(caps, "dynamicSensitivity", "dynamicSensitivityEnabled", pid);
         const tx = txForField(pid, "dynamicSensitivity");
-        return [{ packet: ProtocolCodec.commands.setDynamicSensitivityEnabled(tx, nextState.dynamicSensitivityEnabled) }];
+        return [{ packet: ProtocolCodec.commands.setProximitySensorAccelerationState(tx, nextState.dynamicSensitivityEnabled) }];
       },
     },
 
@@ -1262,11 +1670,11 @@
           ? !!patch.dynamicSensitivityEnabled
           : true;
         const seq = [
-          { packet: ProtocolCodec.commands.setDynamicSensitivityEnabled(tx, true) },
-          { packet: ProtocolCodec.commands.setDynamicSensitivityMode(tx, nextState.dynamicSensitivityMode) },
+          { packet: ProtocolCodec.commands.setProximitySensorAccelerationState(tx, true) },
+          { packet: ProtocolCodec.commands.setProximitySensorAccelerationMode(tx, nextState.dynamicSensitivityMode) },
         ];
         if (!explicitEnabled) {
-          seq.push({ packet: ProtocolCodec.commands.setDynamicSensitivityEnabled(tx, false) });
+          seq.push({ packet: ProtocolCodec.commands.setProximitySensorAccelerationState(tx, false) });
         }
         return seq;
       },
@@ -1288,28 +1696,39 @@
       kind: "virtual",
       priority: 53,
       triggers: ["smartTrackingMode", "smartTrackingLevel", "smartTrackingLiftDistance", "smartTrackingLandingDistance"],
-      plan({ pid, caps, patch, nextState }) {
+      plan({ pid, caps, nextState }) {
         requireCapability(caps, "smartTracking", "smartTracking", pid);
         const tx = txForField(pid, "smartTracking");
-        const mode = TRANSFORMERS.normalizeSmartTrackingMode(nextState.smartTrackingMode);
-        const shouldWriteAsymmetricDistance = mode === "asymmetric"
-          && (
-            Object.prototype.hasOwnProperty.call(patch, "smartTrackingLiftDistance")
-            || Object.prototype.hasOwnProperty.call(patch, "smartTrackingLandingDistance")
-          );
-
-        const seq = [{ packet: ProtocolCodec.commands.setSmartTrackingPrelude(tx) }];
-        if (mode === "asymmetric") {
-          seq.push({ packet: ProtocolCodec.commands.setSmartTrackingModeAsymmetric(tx) });
-          if (shouldWriteAsymmetricDistance) {
-            const dist = TRANSFORMERS.normalizeSmartTrackingDistances(
-              nextState.smartTrackingLiftDistance,
-              nextState.smartTrackingLandingDistance
-            );
-            seq.push({ packet: ProtocolCodec.commands.setSmartTrackingAsymmetricDistances(tx, dist.lift, dist.landing) });
-          }
+        const officialSmartTracking = buildOfficialSmartTrackingModelFromPublicState(nextState);
+        const seq = [{ packet: ProtocolCodec.commands.setProximitySensorState(tx, OFFICIAL_PROXIMITY_CLASS_ID, OFFICIAL_PROXIMITY_SENSOR_ID, true) }];
+        if (officialSmartTracking.isAsymmetric) {
+          seq.push({
+            packet: ProtocolCodec.commands.setProximitySensorLiftSetting(
+              tx,
+              OFFICIAL_PROXIMITY_CLASS_ID,
+              OFFICIAL_PROXIMITY_SENSOR_ID,
+              0x04,
+              officialSmartTracking.trackingDistance - 1
+            ),
+          });
+          seq.push({
+            packet: ProtocolCodec.commands.setProximitySensorConfiguration(
+              tx,
+              OFFICIAL_PROXIMITY_CLASS_ID,
+              OFFICIAL_PROXIMITY_SENSOR_ID,
+              [officialSmartTracking.liftOffDistance - 1, officialSmartTracking.landingDistance - 1]
+            ),
+          });
         } else {
-          seq.push({ packet: ProtocolCodec.commands.setSmartTrackingModeSymmetric(tx, nextState.smartTrackingLevel) });
+          seq.push({
+            packet: ProtocolCodec.commands.setProximitySensorLiftSetting(
+              tx,
+              OFFICIAL_PROXIMITY_CLASS_ID,
+              OFFICIAL_PROXIMITY_SENSOR_ID,
+              0x01,
+              officialSmartTracking.trackingDistance - 1
+            ),
+          });
         }
         return seq;
       },
@@ -1337,11 +1756,33 @@
     constructor(productId = 0) {
       this.productId = Number(productId || 0);
       this.capabilities = buildCapabilities(this.productId);
+      this._dpiWriteContext = {
+        profileId: OFFICIAL_MOUSE_PROFILE_ID,
+        stageIds: [],
+      };
     }
 
     setProductId(productId) {
       this.productId = Number(productId || 0);
       this.capabilities = buildCapabilities(this.productId);
+      this._dpiWriteContext = {
+        profileId: OFFICIAL_MOUSE_PROFILE_ID,
+        stageIds: [],
+      };
+    }
+
+    setDpiWriteContext({ profileId = OFFICIAL_MOUSE_PROFILE_ID, stageIds = [] } = {}) {
+      this._dpiWriteContext = {
+        profileId: clampU8(profileId),
+        stageIds: Array.isArray(stageIds) ? stageIds.map((v) => clampU8(v)) : [],
+      };
+    }
+
+    getDpiWriteContext() {
+      return {
+        profileId: clampU8(this._dpiWriteContext?.profileId ?? OFFICIAL_MOUSE_PROFILE_ID),
+        stageIds: Array.isArray(this._dpiWriteContext?.stageIds) ? this._dpiWriteContext.stageIds.slice(0) : [],
+      };
     }
 
     /**
@@ -1468,39 +1909,28 @@
         next.sensorAngle = TRANSFORMERS.normalizeSensorAngle(next.sensorAngle ?? 0);
       }
 
-      if (Object.prototype.hasOwnProperty.call(patch, "smartTrackingMode")) {
-        next.smartTrackingMode = TRANSFORMERS.normalizeSmartTrackingMode(patch.smartTrackingMode);
-      } else {
-        next.smartTrackingMode = TRANSFORMERS.normalizeSmartTrackingMode(next.smartTrackingMode ?? "symmetric");
-      }
-
-      if (Object.prototype.hasOwnProperty.call(patch, "smartTrackingLevel")) {
-        next.smartTrackingLevel = TRANSFORMERS.normalizeSmartTrackingLevel(patch.smartTrackingLevel);
-      } else {
-        next.smartTrackingLevel = TRANSFORMERS.normalizeSmartTrackingLevel(next.smartTrackingLevel ?? 2);
-      }
-
+      const hasSmartTrackingMode = Object.prototype.hasOwnProperty.call(patch, "smartTrackingMode");
+      const hasSmartTrackingLevel = Object.prototype.hasOwnProperty.call(patch, "smartTrackingLevel");
       const hasLift = Object.prototype.hasOwnProperty.call(patch, "smartTrackingLiftDistance");
       const hasLanding = Object.prototype.hasOwnProperty.call(patch, "smartTrackingLandingDistance");
-      if (hasLift || hasLanding) {
-        if (!Object.prototype.hasOwnProperty.call(patch, "smartTrackingMode")) {
-          next.smartTrackingMode = "asymmetric";
+      if (hasSmartTrackingMode || hasSmartTrackingLevel || hasLift || hasLanding) {
+        const smartTrackingSeed = {
+          smartTrackingMode: hasSmartTrackingMode ? patch.smartTrackingMode : next.smartTrackingMode,
+          smartTrackingLevel: hasSmartTrackingLevel ? patch.smartTrackingLevel : next.smartTrackingLevel,
+          smartTrackingLiftDistance: hasLift ? patch.smartTrackingLiftDistance : next.smartTrackingLiftDistance,
+          smartTrackingLandingDistance: hasLanding ? patch.smartTrackingLandingDistance : next.smartTrackingLandingDistance,
+        };
+        if ((hasLift || hasLanding) && !hasSmartTrackingMode) {
+          smartTrackingSeed.smartTrackingMode = "asymmetric";
         }
-        if (next.smartTrackingMode === "asymmetric") {
-          const dist = TRANSFORMERS.normalizeSmartTrackingDistances(
-            hasLift ? patch.smartTrackingLiftDistance : (next.smartTrackingLiftDistance ?? 2),
-            hasLanding ? patch.smartTrackingLandingDistance : (next.smartTrackingLandingDistance ?? 1)
-          );
-          next.smartTrackingLiftDistance = dist.lift;
-          next.smartTrackingLandingDistance = dist.landing;
-        }
-      } else {
-        const dist = TRANSFORMERS.normalizeSmartTrackingDistances(
-          next.smartTrackingLiftDistance ?? 2,
-          next.smartTrackingLandingDistance ?? 1
-        );
-        next.smartTrackingLiftDistance = dist.lift;
-        next.smartTrackingLandingDistance = dist.landing;
+        Object.assign(next, normalizePublicSmartTrackingState(smartTrackingSeed));
+      } else if (
+        next.smartTrackingMode != null
+        || next.smartTrackingLevel != null
+        || next.smartTrackingLiftDistance != null
+        || next.smartTrackingLandingDistance != null
+      ) {
+        Object.assign(next, normalizePublicSmartTrackingState(next));
       }
 
       return next;
@@ -1574,6 +2004,7 @@
           patch,
           prevState,
           nextState,
+          planner: this,
         });
         if (Array.isArray(seq) && seq.length) commands.push(...seq);
       }
@@ -1589,16 +2020,6 @@
     4: "前进",
     5: "后退",
     6: "DPI循环",
-  });
-
-  // REP4 source codes captured from Synapse write packets.
-  const REP4_SOURCE_CODE_BY_BUTTON_ID = Object.freeze({
-    1: 0x0001, // 推断：左键源编码，与其他按键编码模式一致
-    2: 0x0002,
-    3: 0x0003,
-    4: 0x0005, // 前进键
-    5: 0x0004, // 后退键
-    6: 0x0060, // DPI 键
   });
 
   const KEYMAP_ACTIONS = (() => {
@@ -1759,132 +2180,11 @@
     return out;
   })();
 
-  const REP4_MOUSE_ACTION_BY_LABEL = Object.freeze({
-    左键: [0x01, 0x01, 0x01, 0x00],
-    右键: [0x01, 0x01, 0x02, 0x00],
-    中键: [0x01, 0x01, 0x03, 0x00],
-    后退: [0x01, 0x01, 0x04, 0x00],
-    前进: [0x01, 0x01, 0x05, 0x00],
-    左键双击: [0x0b, 0x01, 0x01, 0x00],
-    向上滚动: [0x01, 0x01, 0x09, 0x00],
-    向下滚动: [0x01, 0x01, 0x0a, 0x00],
-    禁止按键: [0x01, 0x01, 0x00, 0x00],
-    DPI循环: [0x06, 0x01, 0x06, 0x00],
-  });
-
-  // Moderate inference: keep DPI family writable as 06 01 X to match capture style.
-  const REP4_DPI_ACTION_BY_LABEL = Object.freeze({
-    dpiUp: [0x06, 0x01, 0x01, 0x00],
-    dpiDown: [0x06, 0x01, 0x02, 0x00],
-    tiltLeft: [0x06, 0x01, 0x03, 0x00],
-    tiltRight: [0x06, 0x01, 0x04, 0x00],
-    profile: [0x06, 0x01, 0x05, 0x00],
-    sniper: [0x06, 0x01, 0x06, 0x00],
-  });
-
-  const REP4_MEDIA_ACTION_BY_LABEL = Object.freeze({
-    // Captured media write path uses [0a, 02, 00, consumer_hid].
-    音量加: [0x0a, 0x02, 0x00, 0xe9],
-    音量减: [0x0a, 0x02, 0x00, 0xea],
-    静音: [0x0a, 0x02, 0x00, 0xe2],
-    上一曲: [0x0a, 0x02, 0x00, 0xb6],
-    // Inferred from standard consumer HID set; verify with capture if needed.
-    下一曲: [0x0a, 0x02, 0x00, 0xb5],
-    "播放/暂停": [0x0a, 0x02, 0x00, 0xcd],
-    计算器: [0x0a, 0x02, 0x01, 0x92],    
-    我的电脑: [0x0a, 0x02, 0x01, 0x94],   
-    浏览器: [0x0a, 0x02, 0x02, 0x23],     
-    邮件: [0x0a, 0x02, 0x01, 0x8a],       
-    媒体播放器: [0x0a, 0x02, 0x01, 0x83], 
-    停止播放: [0x0a, 0x02, 0x00, 0xb7],   
-    浏览器后退: [0x0a, 0x02, 0x02, 0x24], 
-    浏览器前进: [0x0a, 0x02, 0x02, 0x25], 
-    刷新页面: [0x0a, 0x02, 0x02, 0x27],   
-    打开收藏夹: [0x0a, 0x02, 0x02, 0x2a], 
-    系统搜索: [0x0a, 0x02, 0x02, 0x21],   
-  });
-
   function normalizeActionLabel(label) {
     const raw = String(label || "").trim();
     if (!raw) return "";
     return raw;
   }
-
-  function resolveRep4ActionFromLabel(label) {
-    const canonical = normalizeActionLabel(label);
-    if (!canonical) return null;
-    const hit = (
-      REP4_MOUSE_ACTION_BY_LABEL[canonical]
-      || REP4_DPI_ACTION_BY_LABEL[canonical]
-      || REP4_MEDIA_ACTION_BY_LABEL[canonical]
-    );
-    if (hit) return hit.slice(0, 4).map((x) => clampU8(x));
-
-    const action = LABEL_TO_PROTOCOL_ACTION[canonical];
-    if (action && clampU8(action.funckey) === 0x02) {
-      const packed = clampInt(action.keycode, 0, 0xffff);
-      return [0x02, 0x02, (packed >> 8) & 0xff, packed & 0xff];
-    }
-    return null;
-  }
-
-  function resolveRep4ActionFromObject(raw) {
-    if (!isObject(raw)) return null;
-    const explicitLabel = String(raw.label ?? raw.source ?? "").trim();
-    if (explicitLabel) {
-      const byLabel = resolveRep4ActionFromLabel(explicitLabel);
-      if (byLabel) return byLabel;
-    }
-    const fk = clampU8(raw.funckey ?? raw.func ?? 0);
-    const kc = clampInt(raw.keycode ?? raw.code ?? 0, 0, 0xffff);
-    if (fk === 0x02) {
-      return [0x02, 0x02, (kc >> 8) & 0xff, kc & 0xff];
-    }
-    const label = FUNCKEY_KEYCODE_TO_LABEL.get(`${fk}:${kc}`);
-    return label ? resolveRep4ActionFromLabel(label) : null;
-  }
-
-  const REP4_WRITABLE_LABELS = Object.freeze(
-    (() => {
-      const labels = new Set([
-        ...Object.keys(REP4_MOUSE_ACTION_BY_LABEL),
-        ...Object.keys(REP4_DPI_ACTION_BY_LABEL),
-        ...Object.keys(REP4_MEDIA_ACTION_BY_LABEL),
-      ]);
-      for (const [label, action] of Object.entries(KEYMAP_ACTIONS)) {
-        if (clampU8(action?.funckey) === 0x02) {
-          labels.add(label);
-        }
-      }
-      return labels;
-    })()
-  );
-
-  const BUTTON_ID_BY_REP4_SOURCE_CODE = (() => {
-    const out = new Map();
-    for (const [btnIdRaw, sourceCode] of Object.entries(REP4_SOURCE_CODE_BY_BUTTON_ID)) {
-      const btnId = clampInt(btnIdRaw, 1, 6);
-      out.set(clampU16(sourceCode), btnId);
-    }
-    return out;
-  })();
-
-  function quadletKey(a0, a1, a2, a3) {
-    return `${clampU8(a0)}:${clampU8(a1)}:${clampU8(a2)}:${clampU8(a3)}`;
-  }
-
-  const REP4_LABEL_BY_ACTION_QUADLET = (() => {
-    const out = new Map();
-    const add = (label, quadlet) => {
-      if (!label || !Array.isArray(quadlet) || quadlet.length < 4) return;
-      const key = quadletKey(quadlet[0], quadlet[1], quadlet[2], quadlet[3]);
-      if (!out.has(key)) out.set(key, label);
-    };
-    for (const [label, quadlet] of Object.entries(REP4_MOUSE_ACTION_BY_LABEL)) add(label, quadlet);
-    for (const [label, quadlet] of Object.entries(REP4_DPI_ACTION_BY_LABEL)) add(label, quadlet);
-    for (const [label, quadlet] of Object.entries(REP4_MEDIA_ACTION_BY_LABEL)) add(label, quadlet);
-    return out;
-  })();
 
   function normalizeButtonMappingEntry(entry, fallbackSource = "") {
     const raw = isObject(entry) ? entry : {};
@@ -1905,122 +2205,289 @@
     );
   }
 
-  const UNKNOWN_REP4_READ_SOURCE = "未知(回包异常)";
-  const REP4_READ_MAX_ATTEMPTS = 7;
-  const REP4_READ_STABLE_HITS_REQUIRED = 2;
-  const REP4_READ_RETRY_DELAY_MS = 20;
-  const RETRYABLE_REP4_READ_ERROR_CODES = new Set([
-    "REP4_READ_EMPTY",
-    "REP4_READ_INVALID",
-    "REP4_SOURCE_ECHO_MISMATCH",
-    "REP4_READ_UNKNOWN_ACTION",
-    "REP4_READ_UNSTABLE",
+  function hexU8(v) {
+    return clampU8(v).toString(16).padStart(2, "0").toUpperCase();
+  }
+
+  const OFFICIAL_OBM_MOUSE_ASSIGNMENT_BY_PUBLIC_ACTION = Object.freeze({
+    "1:0": { functionId: OFFICIAL_OBM_FUNCTION_ID.BUTTON_CODE, dataSize: 1, dataArray: [OFFICIAL_OBM_BUTTON_TARGET.LEFT_BUTTON] },
+    "2:0": { functionId: OFFICIAL_OBM_FUNCTION_ID.BUTTON_CODE, dataSize: 1, dataArray: [OFFICIAL_OBM_BUTTON_TARGET.RIGHT_BUTTON] },
+    "4:0": { functionId: OFFICIAL_OBM_FUNCTION_ID.BUTTON_CODE, dataSize: 1, dataArray: [OFFICIAL_OBM_BUTTON_TARGET.SCROLL_BUTTON] },
+    "8:0": { functionId: OFFICIAL_OBM_FUNCTION_ID.BUTTON_CODE, dataSize: 1, dataArray: [OFFICIAL_OBM_BUTTON_TARGET.BUTTON_5] },
+    "16:0": { functionId: OFFICIAL_OBM_FUNCTION_ID.BUTTON_CODE, dataSize: 1, dataArray: [OFFICIAL_OBM_BUTTON_TARGET.BUTTON_4] },
+    "1:6": { functionId: OFFICIAL_OBM_FUNCTION_ID.DOUBLE_CLICK, dataSize: 1, dataArray: [OFFICIAL_OBM_BUTTON_TARGET.LEFT_BUTTON] },
+    "1:9": { functionId: OFFICIAL_OBM_FUNCTION_ID.BUTTON_CODE, dataSize: 1, dataArray: [OFFICIAL_OBM_BUTTON_TARGET.SCROLL_UP] },
+    "1:10": { functionId: OFFICIAL_OBM_FUNCTION_ID.BUTTON_CODE, dataSize: 1, dataArray: [OFFICIAL_OBM_BUTTON_TARGET.SCROLL_DOWN] },
+    "7:0": { functionId: OFFICIAL_OBM_FUNCTION_ID.OFF, dataSize: 0, dataArray: [] },
+    "32:5": { functionId: OFFICIAL_OBM_FUNCTION_ID.DPI, dataSize: 1, dataArray: [OFFICIAL_OBM_DPI_ACTION.DPI_CYCLE_UP] },
+  });
+
+  const OFFICIAL_OBM_MEDIA_USAGE_BY_PUBLIC_ACTION = Object.freeze({
+    "64:0": OFFICIAL_MEDIA_USAGE.VOLUME_UP,
+    "64:1": OFFICIAL_MEDIA_USAGE.VOLUME_DOWN,
+    "64:2": OFFICIAL_MEDIA_USAGE.MUTE_VOLUME,
+    "64:4": OFFICIAL_MEDIA_USAGE.MEDIA_PLAY_OR_PAUSE,
+    "64:5": OFFICIAL_MEDIA_USAGE.NEXT_TRACK,
+    "64:6": OFFICIAL_MEDIA_USAGE.PREVIOUS_TRACK,
+    "64:7": OFFICIAL_MEDIA_USAGE.CALCULATOR,
+    "64:8": OFFICIAL_MEDIA_USAGE.THIS_PC,
+    "64:9": OFFICIAL_MEDIA_USAGE.WEB_BROWSER,
+    "64:10": OFFICIAL_MEDIA_USAGE.MAIL,
+    "64:11": OFFICIAL_MEDIA_USAGE.MEDIA_PLAYER,
+    "64:12": OFFICIAL_MEDIA_USAGE.MEDIA_STOP,
+    "64:13": OFFICIAL_MEDIA_USAGE.WEB_BACK,
+    "64:14": OFFICIAL_MEDIA_USAGE.WEB_FORWARD,
+    "64:15": OFFICIAL_MEDIA_USAGE.WEB_REFRESH,
+    "64:16": OFFICIAL_MEDIA_USAGE.WEB_FAVORITES,
+    "64:17": OFFICIAL_MEDIA_USAGE.WEB_SEARCH,
+  });
+
+  const OFFICIAL_PUBLIC_ACTION_BY_MEDIA_USAGE = new Map([
+    [OFFICIAL_MEDIA_USAGE.VOLUME_UP, { funckey: 0x40, keycode: 0x0000 }],
+    [OFFICIAL_MEDIA_USAGE.VOLUME_DOWN, { funckey: 0x40, keycode: 0x0001 }],
+    [OFFICIAL_MEDIA_USAGE.MUTE_VOLUME, { funckey: 0x40, keycode: 0x0002 }],
+    [OFFICIAL_MEDIA_USAGE.MEDIA_PLAY_OR_PAUSE, { funckey: 0x40, keycode: 0x0004 }],
+    [OFFICIAL_MEDIA_USAGE.NEXT_TRACK, { funckey: 0x40, keycode: 0x0005 }],
+    [OFFICIAL_MEDIA_USAGE.PREVIOUS_TRACK, { funckey: 0x40, keycode: 0x0006 }],
+    [OFFICIAL_MEDIA_USAGE.CALCULATOR, { funckey: 0x40, keycode: 0x0007 }],
+    [OFFICIAL_MEDIA_USAGE.THIS_PC, { funckey: 0x40, keycode: 0x0008 }],
+    [OFFICIAL_MEDIA_USAGE.WEB_BROWSER, { funckey: 0x40, keycode: 0x0009 }],
+    [OFFICIAL_MEDIA_USAGE.MAIL, { funckey: 0x40, keycode: 0x000a }],
+    [OFFICIAL_MEDIA_USAGE.MEDIA_PLAYER, { funckey: 0x40, keycode: 0x000b }],
+    [OFFICIAL_MEDIA_USAGE.MEDIA_STOP, { funckey: 0x40, keycode: 0x000c }],
+    [OFFICIAL_MEDIA_USAGE.WEB_BACK, { funckey: 0x40, keycode: 0x000d }],
+    [OFFICIAL_MEDIA_USAGE.WEB_FORWARD, { funckey: 0x40, keycode: 0x000e }],
+    [OFFICIAL_MEDIA_USAGE.WEB_REFRESH, { funckey: 0x40, keycode: 0x000f }],
+    [OFFICIAL_MEDIA_USAGE.WEB_FAVORITES, { funckey: 0x40, keycode: 0x0010 }],
+    [OFFICIAL_MEDIA_USAGE.WEB_SEARCH, { funckey: 0x40, keycode: 0x0011 }],
   ]);
 
-  function buildUnknownRep4Entry(sourceText = UNKNOWN_REP4_READ_SOURCE) {
+  const OFFICIAL_MODIFIER_BITS_BY_LEGACY_USAGE = Object.freeze({
+    0xe0: OFFICIAL_MODIFIER_BITS.LEFT_CTRL,
+    0xe1: OFFICIAL_MODIFIER_BITS.LEFT_SHIFT,
+    0xe2: OFFICIAL_MODIFIER_BITS.LEFT_ALT,
+    0xe3: OFFICIAL_MODIFIER_BITS.LEFT_GUI,
+    0xe4: OFFICIAL_MODIFIER_BITS.RIGHT_CTRL,
+    0xe5: OFFICIAL_MODIFIER_BITS.RIGHT_SHIFT,
+    0xe6: OFFICIAL_MODIFIER_BITS.RIGHT_ALT,
+    0xe7: OFFICIAL_MODIFIER_BITS.RIGHT_GUI,
+  });
+
+  const OFFICIAL_LEGACY_USAGE_BY_MODIFIER_BITS = Object.freeze(
+    Object.fromEntries(
+      Object.entries(OFFICIAL_MODIFIER_BITS_BY_LEGACY_USAGE).map(([usage, bits]) => [bits, Number(usage)])
+    )
+  );
+
+  function hexByteList(dataArray, size = dataArray?.length ?? 0) {
+    const list = [];
+    const src = dataArray instanceof Uint8Array ? dataArray : new Uint8Array(dataArray || []);
+    const count = clampInt(size, 0, src.length);
+    for (let i = 0; i < count; i++) list.push(hexU8(src[i]));
+    return list.join("-");
+  }
+
+  function buildUnknownOfficialObmEntry(functionId = 0x00, dataArray = null, dataSize = 0) {
+    const src = dataArray instanceof Uint8Array ? dataArray : new Uint8Array(dataArray || []);
     return {
-      source: String(sourceText || UNKNOWN_REP4_READ_SOURCE),
+      source: `鏈煡(瀹樻柟OBM:fn=${hexU8(functionId)} data=${hexByteList(src, dataSize)})`,
       funckey: 0x00,
       keycode: 0x0000,
     };
   }
 
-  function hexU8(v) {
-    return clampU8(v).toString(16).padStart(2, "0").toUpperCase();
+  function buildOfficialObmDataArray(input = null) {
+    const src = input instanceof Uint8Array ? input : new Uint8Array(input || []);
+    const out = new Uint8Array(5);
+    out.set(src.subarray(0, 5), 0);
+    return out;
   }
 
-  function buildUnknownRep4QuadletEntry(quadlet) {
-    const a0 = Array.isArray(quadlet) ? clampU8(quadlet[0]) : 0x00;
-    const a1 = Array.isArray(quadlet) ? clampU8(quadlet[1]) : 0x00;
-    const a2 = Array.isArray(quadlet) ? clampU8(quadlet[2]) : 0x00;
-    const a3 = Array.isArray(quadlet) ? clampU8(quadlet[3]) : 0x00;
-    return buildUnknownRep4Entry(`未知(REP4:${hexU8(a0)}-${hexU8(a1)}-${hexU8(a2)}-${hexU8(a3)})`);
+  function splitLegacyKeyboardActionKeycode(keycode) {
+    const packed = clampInt(keycode, 0, 0xffff);
+    let modifierBits = (packed >> 8) & 0xff;
+    let hidUsage = packed & 0xff;
+    if (!modifierBits && Object.prototype.hasOwnProperty.call(OFFICIAL_MODIFIER_BITS_BY_LEGACY_USAGE, hidUsage)) {
+      modifierBits = OFFICIAL_MODIFIER_BITS_BY_LEGACY_USAGE[hidUsage];
+      hidUsage = 0x00;
+    }
+    return { modifierBits, hidUsage };
   }
 
-  function resolveActionFromRep4Quadlet(_btnId, quadlet) {
-    if (!Array.isArray(quadlet) || quadlet.length < 4) return buildUnknownRep4QuadletEntry(quadlet);
+  function buildLegacyKeyboardActionKeycode(modifierBits = 0x00, hidUsage = 0x00) {
+    const bits = clampU8(modifierBits);
+    const hid = clampU8(hidUsage);
+    if (!hid && Object.prototype.hasOwnProperty.call(OFFICIAL_LEGACY_USAGE_BY_MODIFIER_BITS, bits)) {
+      return clampInt(OFFICIAL_LEGACY_USAGE_BY_MODIFIER_BITS[bits], 0, 0xffff);
+    }
+    return ((bits << 8) | hid) & 0xffff;
+  }
 
-    const a0 = clampU8(quadlet[0]);
-    const a1 = clampU8(quadlet[1]);
-    const a2 = clampU8(quadlet[2]);
-    const a3 = clampU8(quadlet[3]);
+  function buildOfficialObmAssignmentFromPublicAction(actionLike) {
+    const action = normalizeButtonMappingEntry(actionLike);
+    const actionKey = `${action.funckey}:${action.keycode}`;
 
-    if (a0 === 0x02 && a1 === 0x02) {
-      const keycode = ((a2 << 8) | a3) & 0xffff;
-      const label = FUNCKEY_KEYCODE_TO_LABEL.get(`2:${keycode}`);
-      if (!label) return buildUnknownRep4QuadletEntry(quadlet);
+    if (Object.prototype.hasOwnProperty.call(OFFICIAL_OBM_MOUSE_ASSIGNMENT_BY_PUBLIC_ACTION, actionKey)) {
+      const hit = OFFICIAL_OBM_MOUSE_ASSIGNMENT_BY_PUBLIC_ACTION[actionKey];
       return {
-        source: label,
-        funckey: 0x02,
-        keycode,
+        functionId: clampU8(hit.functionId),
+        dataSize: clampInt(hit.dataSize, 0, 5),
+        dataArray: buildOfficialObmDataArray(hit.dataArray),
       };
     }
 
-    const label = REP4_LABEL_BY_ACTION_QUADLET.get(quadletKey(a0, a1, a2, a3));
-    if (!label) return buildUnknownRep4QuadletEntry(quadlet);
+    if (action.funckey === 0x02) {
+      const { modifierBits, hidUsage } = splitLegacyKeyboardActionKeycode(action.keycode);
+      return {
+        functionId: OFFICIAL_OBM_FUNCTION_ID.KEY_CODE,
+        dataSize: 2,
+        dataArray: buildOfficialObmDataArray([modifierBits, hidUsage]),
+      };
+    }
 
-    const action = LABEL_TO_PROTOCOL_ACTION[label];
-    if (!action) return buildUnknownRep4QuadletEntry(quadlet);
+    if (Object.prototype.hasOwnProperty.call(OFFICIAL_OBM_MEDIA_USAGE_BY_PUBLIC_ACTION, actionKey)) {
+      const usage = clampU16(OFFICIAL_OBM_MEDIA_USAGE_BY_PUBLIC_ACTION[actionKey]);
+      return {
+        functionId: OFFICIAL_OBM_FUNCTION_ID.MEDIA_KEYS,
+        dataSize: 2,
+        dataArray: buildOfficialObmDataArray([usage & 0xff, (usage >> 8) & 0xff]),
+      };
+    }
 
+    return null;
+  }
+
+  function parseOfficialObmAssignment(response, mode = OFFICIAL_BUTTON_MODE.NORMAL) {
+    const args = response?.argumentsData instanceof Uint8Array && response.argumentsData.length
+      ? response.argumentsData
+      : response?.arguments instanceof Uint8Array
+        ? response.arguments
+        : new Uint8Array();
+    if (!args.length) {
+      throw new ProtocolError("OBM button assignment response is empty", "OBM_READ_FAILED");
+    }
+    const parsedMode = clampU8(args[2] ?? mode);
     return {
-      source: label,
-      funckey: clampU8(action.funckey),
-      keycode: clampInt(action.keycode, 0, 0xffff),
+      profileId: clampU8(args[0] ?? OFFICIAL_MOUSE_PROFILE_ID),
+      buttonId: clampU8(args[1] ?? 0x00),
+      mode: parsedMode,
+      functionId: clampU8(args[3] ?? 0x00),
+      dataSize: clampInt(args[4] ?? 0x00, 0, 5),
+      dataArray: buildOfficialObmDataArray(args.subarray(5, 10)),
     };
   }
 
-  function extractRep4ReadQuadlet(btnId, sourceCode, res) {
-    const expectedSourceCode = clampU16(sourceCode);
-    const expectedBtn = BUTTON_ID_BY_REP4_SOURCE_CODE.get(expectedSourceCode);
-    const b = clampInt(Number.isFinite(btnId) ? btnId : (expectedBtn ?? 1), 1, 6);
-    const args = res?.arguments;
-    if (!(args instanceof Uint8Array) || args.length < 7) {
-      throw new ProtocolError("REP4 mapping response is invalid", "REP4_READ_INVALID", {
-        btnId: b,
-        expectedSourceCode,
-        argsLength: args instanceof Uint8Array ? args.length : -1,
-      });
-    }
-    if (clampU8(args[0]) !== 0x01) {
-      throw new ProtocolError("REP4 mapping response header is invalid", "REP4_READ_INVALID", {
-        btnId: b,
-        expectedSourceCode,
-        header: clampU8(args[0]),
+  function buildPublicActionFromOfficialObmAssignment(assignment) {
+    const fnId = clampU8(assignment?.functionId ?? 0x00);
+    const dataSize = clampInt(assignment?.dataSize ?? 0x00, 0, 5);
+    const dataArray = buildOfficialObmDataArray(assignment?.dataArray);
+
+    if (fnId === OFFICIAL_OBM_FUNCTION_ID.OFF) {
+      return normalizeButtonMappingEntry({
+        source: FUNCKEY_KEYCODE_TO_LABEL.get("7:0") || "绂佹鎸夐敭",
+        funckey: 0x07,
+        keycode: 0x0000,
       });
     }
 
-    const sourceEcho = ((clampU8(args[2]) << 8) | clampU8(args[1])) & 0xffff;
-    // Strict source echo validation avoids applying another key's response
-    // to the current slot during connect-time jitter.
-    if (sourceEcho !== expectedSourceCode) {
-      throw new ProtocolError("REP4 source echo mismatch", "REP4_SOURCE_ECHO_MISMATCH", {
-        btnId: b,
-        expectedSourceCode,
-        sourceEcho,
-      });
+    if (fnId === OFFICIAL_OBM_FUNCTION_ID.BUTTON_CODE) {
+      const target = clampU8(dataArray[0] ?? 0x00);
+      let publicKey = "";
+      switch (target) {
+        case OFFICIAL_OBM_BUTTON_TARGET.LEFT_BUTTON: publicKey = "1:0"; break;
+        case OFFICIAL_OBM_BUTTON_TARGET.RIGHT_BUTTON: publicKey = "2:0"; break;
+        case OFFICIAL_OBM_BUTTON_TARGET.SCROLL_BUTTON: publicKey = "4:0"; break;
+        case OFFICIAL_OBM_BUTTON_TARGET.BUTTON_5: publicKey = "8:0"; break;
+        case OFFICIAL_OBM_BUTTON_TARGET.BUTTON_4: publicKey = "16:0"; break;
+        case OFFICIAL_OBM_BUTTON_TARGET.SCROLL_UP: publicKey = "1:9"; break;
+        case OFFICIAL_OBM_BUTTON_TARGET.SCROLL_DOWN: publicKey = "1:10"; break;
+        case OFFICIAL_OBM_BUTTON_TARGET.DPI_CYCLE_UP: publicKey = "32:5"; break;
+        default: break;
+      }
+      if (publicKey) {
+        const [funckey, keycode] = publicKey.split(":").map((v) => Number(v));
+        const source = FUNCKEY_KEYCODE_TO_LABEL.get(publicKey);
+        if (source) return normalizeButtonMappingEntry({ source, funckey, keycode });
+      }
+      return buildUnknownOfficialObmEntry(fnId, dataArray, dataSize);
     }
 
-    return [clampU8(args[3]), clampU8(args[4]), clampU8(args[5]), clampU8(args[6])];
-  }
-
-  function isKnownRep4Quadlet(quadlet) {
-    if (!Array.isArray(quadlet) || quadlet.length < 4) return false;
-    const a0 = clampU8(quadlet[0]);
-    const a1 = clampU8(quadlet[1]);
-    const a2 = clampU8(quadlet[2]);
-    const a3 = clampU8(quadlet[3]);
-
-    if (a0 === 0x02 && a1 === 0x02) {
-      const keycode = ((a2 << 8) | a3) & 0xffff;
-      return FUNCKEY_KEYCODE_TO_LABEL.has(`2:${keycode}`);
+    if (fnId === OFFICIAL_OBM_FUNCTION_ID.DOUBLE_CLICK) {
+      if (clampU8(dataArray[0] ?? 0x00) === OFFICIAL_OBM_BUTTON_TARGET.LEFT_BUTTON) {
+        const source = FUNCKEY_KEYCODE_TO_LABEL.get("1:6");
+        if (source) return normalizeButtonMappingEntry({ source, funckey: 0x01, keycode: 0x0006 });
+      }
+      return buildUnknownOfficialObmEntry(fnId, dataArray, dataSize);
     }
 
-    return REP4_LABEL_BY_ACTION_QUADLET.has(quadletKey(a0, a1, a2, a3));
+    if (fnId === OFFICIAL_OBM_FUNCTION_ID.DPI) {
+      if (clampU8(dataArray[0] ?? 0x00) === OFFICIAL_OBM_DPI_ACTION.DPI_CYCLE_UP) {
+        const source = FUNCKEY_KEYCODE_TO_LABEL.get("32:5");
+        if (source) return normalizeButtonMappingEntry({ source, funckey: 0x20, keycode: 0x0005 });
+      }
+      return buildUnknownOfficialObmEntry(fnId, dataArray, dataSize);
+    }
+
+    if (fnId === OFFICIAL_OBM_FUNCTION_ID.KEY_CODE) {
+      const keycode = buildLegacyKeyboardActionKeycode(dataArray[0], dataArray[1]);
+      const source = FUNCKEY_KEYCODE_TO_LABEL.get(`2:${keycode}`);
+      if (source) return normalizeButtonMappingEntry({ source, funckey: 0x02, keycode });
+      return buildUnknownOfficialObmEntry(fnId, dataArray, dataSize);
+    }
+
+    if (fnId === OFFICIAL_OBM_FUNCTION_ID.MEDIA_KEYS) {
+      const usage = ((clampU8(dataArray[1] ?? 0x00) << 8) | clampU8(dataArray[0] ?? 0x00)) & 0xffff;
+      const action = OFFICIAL_PUBLIC_ACTION_BY_MEDIA_USAGE.get(usage);
+      if (action) {
+        const source = FUNCKEY_KEYCODE_TO_LABEL.get(`${action.funckey}:${action.keycode}`);
+        if (source) return normalizeButtonMappingEntry({ source, funckey: action.funckey, keycode: action.keycode });
+      }
+      return buildUnknownOfficialObmEntry(fnId, dataArray, dataSize);
+    }
+
+    return buildUnknownOfficialObmEntry(fnId, dataArray, dataSize);
   }
 
-  function isRetryableRep4ReadError(err) {
-    return RETRYABLE_REP4_READ_ERROR_CODES.has(String(err?.code || ""));
+  function resolveButtonMappingActionInput(btnId, labelOrObj) {
+    const slot = clampInt(btnId, 1, 6);
+
+    if (typeof labelOrObj === "string") {
+      return resolveActionFromLabel(slot, labelOrObj);
+    }
+
+    if (!isObject(labelOrObj)) return null;
+
+    const explicitLabel = normalizeActionLabel(labelOrObj.label ?? labelOrObj.source ?? "");
+    if (explicitLabel) {
+      const byLabel = resolveActionFromLabel(slot, explicitLabel);
+      if (byLabel) return byLabel;
+    }
+
+    const normalized = normalizeButtonMappingEntry(labelOrObj);
+    const source = FUNCKEY_KEYCODE_TO_LABEL.get(`${normalized.funckey}:${normalized.keycode}`) || normalized.source;
+    if (!source) return null;
+
+    return {
+      label: source,
+      source,
+      action: {
+        funckey: normalized.funckey,
+        keycode: normalized.keycode,
+      },
+    };
   }
+
+  const OFFICIAL_OBM_WRITABLE_LABELS = Object.freeze(
+    (() => {
+      const labels = new Set();
+      for (const [label, action] of Object.entries(KEYMAP_ACTIONS)) {
+        if (buildOfficialObmAssignmentFromPublicAction(action)) {
+          labels.add(label);
+        }
+      }
+      return labels;
+    })()
+  );
 
   function resolveActionFromLabel(btnId, label) {
     const b = clampInt(btnId, 1, 6);
@@ -2072,6 +2539,10 @@
   class MouseMouseHidApi {
     constructor({ device = null } = {}) {
       this._device = null;
+      this._eventDevice = null;
+      this._attachedInputDevice = null;
+      this._transportPid = 0;
+      this._sessionPid = 0;
       this._driver = new UniversalHidDriver();
       this._planner = new CommandPlanner(0);
       this._opQueue = new SendQueue();
@@ -2080,6 +2551,7 @@
       this._onRawReportCbs = new Set();
       this._boundInputReport = (event) => this._handleInputReport(event);
       this._closed = true;
+      this._sessionReadCache = this._makeSessionReadCache();
 
       if (device) this.device = device;
       this._cfg = this._makeDefaultCfg();
@@ -2087,23 +2559,115 @@
     }
 
     set device(dev) {
-      if (this._device && this._device !== dev && typeof this._device.removeEventListener === "function") {
-        this._device.removeEventListener("inputreport", this._boundInputReport);
-      }
-      this._device = dev || null;
-      const pid = normalizePid(this._device);
-      this._planner.setProductId(pid);
-      this._driver.setDevice(this._device, pid);
-      this._cfg = this._makeDefaultCfg();
-      this._syncCapabilitiesSnapshot();
+      this._setSessionDevices(dev || null, null);
     }
 
     get device() {
       return this._device;
     }
 
+    set eventDevice(dev) {
+      this._setSessionDevices(this._device || null, dev || null);
+    }
+
+    get eventDevice() {
+      return this._eventDevice;
+    }
+
+    _resolveTransportPid(controlDevice = this._device) {
+      return normalizePid(controlDevice);
+    }
+
+    _resolveSessionPid(controlDevice = this._device) {
+      return normalizePid(controlDevice);
+    }
+
+    _makeSessionReadCache() {
+      return {
+        dpiProfileId: OFFICIAL_MOUSE_PROFILE_ID,
+        dpiStageIds: [],
+      };
+    }
+
+    _resetSessionReadCache() {
+      this._sessionReadCache = this._makeSessionReadCache();
+      return this._sessionReadCache;
+    }
+
+    _resolveSnapshotReadMode(mode = "full", reason = "") {
+      const normalizedMode = String(mode || "full").trim().toLowerCase();
+      if (normalizedMode === "none") return "none";
+      if (
+        normalizedMode === SNAPSHOT_READ_MODE.CONNECT_FULL
+        || normalizedMode === SNAPSHOT_READ_MODE.REFRESH_FULL
+      ) {
+        return normalizedMode;
+      }
+      return String(reason || "").trim().toLowerCase() === "connect"
+        ? SNAPSHOT_READ_MODE.CONNECT_FULL
+        : SNAPSHOT_READ_MODE.REFRESH_FULL;
+    }
+
+    _hasStaticSnapshotValue(key) {
+      return String(this._cfg?.[key] || "").trim().length > 0;
+    }
+
+    _updateDpiWriteContext(profileId = OFFICIAL_MOUSE_PROFILE_ID, stageIds = []) {
+      if (!this._sessionReadCache) this._resetSessionReadCache();
+      this._sessionReadCache.dpiProfileId = clampU8(profileId);
+      this._sessionReadCache.dpiStageIds = Array.isArray(stageIds) ? stageIds.map((v) => clampU8(v)) : [];
+      this._planner.setDpiWriteContext({
+        profileId: this._sessionReadCache.dpiProfileId,
+        stageIds: this._sessionReadCache.dpiStageIds,
+      });
+    }
+
+    _setSessionDevices(controlDevice, eventDevice) {
+      this._detachInputReportListener();
+      this._device = controlDevice || null;
+      this._eventDevice = eventDevice || null;
+      this._transportPid = this._resolveTransportPid(this._device);
+      this._sessionPid = this._resolveSessionPid(this._device);
+      this._planner.setProductId(this._sessionPid);
+      this._driver.setDevice(this._device, this._transportPid);
+      this._resetSessionReadCache();
+      this._cfg = this._makeDefaultCfg();
+      this._syncCapabilitiesSnapshot();
+    }
+
+    _resolveInputDevice() {
+      const eventDevice = (
+        this._eventDevice
+        && this._eventDevice !== this._device
+        && this._eventDevice.opened
+      ) ? this._eventDevice : null;
+      return eventDevice || this._device || null;
+    }
+
+    matchesHidDevice(device) {
+      if (!device) return false;
+      return (
+        device === this._device
+        || device === this._eventDevice
+        || device === this._attachedInputDevice
+      );
+    }
+
+    async _closeDeviceHandle(device) {
+      if (!device) return;
+      try {
+        if (device.opened) await device.close();
+      } catch {
+        // ignore close errors
+      }
+    }
+
     _pid() {
-      return normalizePid(this._device);
+      return this._sessionPid || this._resolveSessionPid(this._device);
+    }
+
+    _transportPidValue() {
+      return this._transportPid || this._resolveTransportPid(this._device);
     }
 
     _caps() {
@@ -2111,17 +2675,23 @@
     }
 
     _ensureSupported() {
-      const pid = this._pid();
-      ensureSupportedPid(pid);
-      return pid;
+      const sessionPid = this._pid();
+      const transportPid = this._transportPidValue();
+      ensureSupportedPid(sessionPid);
+      if (transportPid && transportPid !== sessionPid) ensureSupportedPid(transportPid);
+      return sessionPid;
     }
 
     async _ensureOpen() {
       if (!this.device) throw new ProtocolError("No HID device assigned", "NO_DEVICE");
       this._ensureSupported();
-      if (!this.device.opened) {
-        await this.open();
+      const needsOpen = !this.device.opened;
+      if (needsOpen) {
+        await this.open({ openEventDevice: false });
+        return;
       }
+      const inputDevice = this._resolveInputDevice();
+      if (inputDevice && this._attachedInputDevice !== inputDevice) this._attachInputReportListener();
     }
 
     _capabilitiesSnapshot(caps = this._caps()) {
@@ -2199,25 +2769,36 @@
       if (this._closed) return;
 
       const reportId = clampU8(event?.reportId ?? 0);
+      const expectedReportId = getEventReportIdForPid(this._pid());
       const reportBytes = toDataViewU8(event?.data);
       this._emitRawReport({
         reportId,
+        expectedReportId,
         bytes: new Uint8Array(reportBytes || []),
         timestamp: Number(event?.timeStamp ?? Date.now()),
       });
     }
 
     _attachInputReportListener() {
-      if (!this.device || typeof this.device.addEventListener !== "function") return;
-      if (typeof this.device.removeEventListener === "function") {
-        this.device.removeEventListener("inputreport", this._boundInputReport);
+      const inputDevice = this._resolveInputDevice();
+      if (!inputDevice || typeof inputDevice.addEventListener !== "function") return;
+      if (this._attachedInputDevice && this._attachedInputDevice !== inputDevice) {
+        this._detachInputReportListener();
       }
-      this.device.addEventListener("inputreport", this._boundInputReport);
+      if (typeof inputDevice.removeEventListener === "function") {
+        inputDevice.removeEventListener("inputreport", this._boundInputReport);
+      }
+      inputDevice.addEventListener("inputreport", this._boundInputReport);
+      this._attachedInputDevice = inputDevice;
     }
 
     _detachInputReportListener() {
-      if (!this.device || typeof this.device.removeEventListener !== "function") return;
-      this.device.removeEventListener("inputreport", this._boundInputReport);
+      if (!this._attachedInputDevice || typeof this._attachedInputDevice.removeEventListener !== "function") {
+        this._attachedInputDevice = null;
+        return;
+      }
+      this._attachedInputDevice.removeEventListener("inputreport", this._boundInputReport);
+      this._attachedInputDevice = null;
     }
 
     _makeDefaultCfg() {
@@ -2226,7 +2807,7 @@
 
       const cfg = {
         capabilities: this._capabilitiesSnapshot(caps),
-        deviceName: this.device?.productName ? String(this.device.productName) : (PID_NAME[pid] || "Razer Mouse"),
+        deviceName: PID_NAME[pid] || (this.device?.productName ? String(this.device.productName) : "Razer Mouse"),
         firmwareVersion: "",
         serial: "",
         pollingHz: caps.pollingMode === "v2" ? 1000 : 1000,
@@ -2258,10 +2839,7 @@
       }
 
       if (caps.smartTracking) {
-        cfg.smartTrackingMode = "symmetric";
-        cfg.smartTrackingLevel = 2;
-        cfg.smartTrackingLiftDistance = 2;
-        cfg.smartTrackingLandingDistance = 1;
+        Object.assign(cfg, DEFAULT_RAZER_SMART_TRACKING_PUBLIC_STATE);
       }
 
       if (caps.sensorAngle) {
@@ -2271,78 +2849,119 @@
       return cfg;
     }
 
-    async open() {
+    async open(opts = {}) {
+      const options = isObject(opts) ? opts : {};
+      const {
+        openEventDevice = true,
+        tolerateEventDeviceOpenFailure = false,
+      } = options;
       if (!this.device) throw new ProtocolError("open() requires a HID device", "NO_DEVICE");
       const pid = this._ensureSupported();
+      const transportPid = this._transportPidValue();
+      const controlDevice = this.device;
+      const eventDevice = (this.eventDevice && this.eventDevice !== controlDevice) ? this.eventDevice : null;
+      let openedControl = false;
+      let openedEvent = false;
+      try {
+        if (!controlDevice.opened) {
+          await controlDevice.open();
+          openedControl = true;
+        }
 
-      if (!this.device.opened) {
-        await this.device.open();
+        if (eventDevice && !eventDevice.opened) {
+          await eventDevice.open();
+          openedEvent = true;
+        }
+
+        this._closed = false;
+        this._driver.setDevice(controlDevice, transportPid);
+        this._planner.setProductId(pid);
+        this._cfg = Object.assign({}, this._makeDefaultCfg(), isObject(this._cfg) ? this._cfg : {});
+        this._detachInputReportListener();
+
+        if (openEventDevice && eventDevice && !eventDevice.opened) {
+          try {
+            await eventDevice.open();
+            openedEvent = true;
+          } catch (err) {
+            if (!tolerateEventDeviceOpenFailure) throw err;
+            console.warn("[Razer] Event device open failed during bootstrap", err);
+          }
+        }
+
+        this._attachInputReportListener();
+      } catch (err) {
+        this._closed = true;
+        this._detachInputReportListener();
+        if (openedEvent) await this._closeDeviceHandle(eventDevice);
+        if (openedControl) await this._closeDeviceHandle(controlDevice);
+        throw err;
       }
-
-      this._closed = false;
-      this._driver.setDevice(this.device, pid);
-      this._planner.setProductId(pid);
-      this._cfg = this._makeDefaultCfg();
-      this._attachInputReportListener();
 
       if (RAZER_POST_OPEN_SETTLE_MS > 0) {
         await sleep(RAZER_POST_OPEN_SETTLE_MS);
       }
-
-      let updates = null;
-      try {
-        updates = await this._readDeviceStateSnapshot({ strictButtonMappingRead: true });
-      } catch (e) {
-        const msg = String(e?.message || e);
-        throw new ProtocolError(`Initial state read failed: ${msg}`, "INITIAL_READ_FAIL", { cause: e });
-      }
-      if (updates && Object.keys(updates).length) {
-        this._cfg = Object.assign({}, this._cfg, updates);
-      }
-      this._emitConfig();
-
-      if (this._caps().battery) {
-        this._emitBattery({
-          batteryPercent: this._cfg.batteryPercent,
-          batteryIsCharging: this._cfg.batteryIsCharging,
-        });
-      }
     }
 
-    // Unified session bootstrap entry: open -> initial read -> timeout/retry -> cache fallback,
+    // Unified session bootstrap entry: open -> optional initial read -> timeout/retry -> cache fallback,
     // while guaranteeing at least one _emitConfig() call.
     async bootstrapSession(opts = {}) {
       const options = isObject(opts) ? opts : {};
+      const hasDevice = Object.prototype.hasOwnProperty.call(options, "device");
+      const hasEventDevice = Object.prototype.hasOwnProperty.call(options, "eventDevice");
+      const hasOpenRetry = Object.prototype.hasOwnProperty.call(options, "openRetry");
+      const hasReadRetry = Object.prototype.hasOwnProperty.call(options, "readRetry");
+      const hasOpenRetryDelayMs = Object.prototype.hasOwnProperty.call(options, "openRetryDelayMs");
+      const hasReadRetryDelayMs = Object.prototype.hasOwnProperty.call(options, "readRetryDelayMs");
+      const normalizedReason = String(options.reason || "").trim().toLowerCase();
       const {
-        device = null,
         reason = "",
-        openRetry = 2,
+        openRetry = (normalizedReason === "connect" ? 1 : 2),
         readRetry = 2,
         openRetryDelayMs = 120,
-        readRetryDelayMs = 120,
-        readTimeoutMs = 1200,
+        readRetryDelayMs = (normalizedReason === "connect" ? 40 : 120),
+        readTimeoutMs = 2000,
+        sendTimeoutMs = null,
         useCacheFallback = true,
+        initialReadMode = "full",
       } = options;
-      // Single-read strategy: the initial read is completed inside open().
-      // readRetry/readRetryDelayMs/readTimeoutMs are currently kept for interface compatibility.
-      void readRetry;
-      void readRetryDelayMs;
-      void readTimeoutMs;
 
-      if (device) this.device = device;
+      if (hasDevice || hasEventDevice) {
+        const nextControlDevice = hasDevice ? (options.device || null) : this.device;
+        const nextEventDevice = hasEventDevice ? (options.eventDevice || null) : (hasDevice ? null : this.eventDevice);
+        this._setSessionDevices(nextControlDevice, nextEventDevice);
+      }
 
       const cachedCfg = this.getCachedConfig();
-      const maxOpenAttempts = clampInt(openRetry, 1, 10);
-      const openDelayMs = clampInt(openRetryDelayMs, 0, 5000);
+      const requestedOpenRetry = hasOpenRetry ? options.openRetry : openRetry;
+      const requestedReadRetry = hasReadRetry ? options.readRetry : readRetry;
+      const requestedOpenRetryDelayMs = hasOpenRetryDelayMs ? options.openRetryDelayMs : openRetryDelayMs;
+      const requestedReadRetryDelayMs = hasReadRetryDelayMs ? options.readRetryDelayMs : readRetryDelayMs;
+      const normalizedInitialReadMode = String(initialReadMode || "full").trim().toLowerCase();
+      const snapshotReadMode = this._resolveSnapshotReadMode(normalizedInitialReadMode, normalizedReason);
+      const maxOpenAttempts = clampInt(requestedOpenRetry, 1, 10);
+      const maxReadAttempts = clampInt(requestedReadRetry, 1, 10);
+      const openDelayMs = clampInt(requestedOpenRetryDelayMs, 0, 5000);
+      const readDelayMs = clampInt(requestedReadRetryDelayMs, 0, 5000);
+      const driverReadTimeoutMs = clampInt(readTimeoutMs, 250, 10_000);
+      const driverSendTimeoutMs = clampInt(
+        sendTimeoutMs == null ? Math.max(driverReadTimeoutMs, 1500) : sendTimeoutMs,
+        250,
+        10_000
+      );
+      this._driver.readTimeoutMs = driverReadTimeoutMs;
+      this._driver.sendTimeoutMs = driverSendTimeoutMs;
 
       let openAttempts = 0;
       let readAttempts = 0;
       let openErr = null;
       for (let i = 0; i < maxOpenAttempts; i++) {
         openAttempts = i + 1;
-        readAttempts = openAttempts;
         try {
-          await this.open();
+          await this.open({
+            openEventDevice: snapshotReadMode === "none",
+            tolerateEventDeviceOpenFailure: snapshotReadMode === "none",
+          });
           openErr = null;
           break;
         } catch (e) {
@@ -2351,14 +2970,47 @@
         }
       }
 
+      let initialReadErr = null;
+      if (!openErr && snapshotReadMode !== "none") {
+        for (let i = 0; i < maxReadAttempts; i++) {
+          readAttempts = i + 1;
+          try {
+            const updates = await this._readDeviceStateSnapshot({
+              mode: snapshotReadMode,
+            });
+            if (updates && Object.keys(updates).length) {
+              this._cfg = Object.assign({}, this._cfg, updates);
+            }
+            initialReadErr = null;
+            break;
+          } catch (e) {
+            const msg = String(e?.message || e);
+            initialReadErr = new ProtocolError(`Initial state read failed: ${msg}`, "INITIAL_READ_FAIL", { cause: e });
+            if (i < maxReadAttempts - 1 && readDelayMs > 0) await sleep(readDelayMs);
+          }
+        }
+      }
+
+      if (!openErr && snapshotReadMode !== "none" && this.eventDevice && this.eventDevice !== this.device) {
+        try {
+          await this.open({
+            openEventDevice: true,
+            tolerateEventDeviceOpenFailure: true,
+          });
+        } catch (eventErr) {
+          console.warn("[Razer] Event device bootstrap open failed", eventErr);
+        }
+      }
+
       let usedCacheFallback = false;
-      if (openErr) {
-        const isInitialReadFail = String(openErr?.code || "") === "INITIAL_READ_FAIL";
+      const bootstrapErr = initialReadErr || openErr;
+      if (bootstrapErr) {
+        const isInitialReadFail = String(bootstrapErr?.code || "") === "INITIAL_READ_FAIL";
         if (isInitialReadFail && useCacheFallback && cachedCfg && typeof cachedCfg === "object") {
           this._cfg = Object.assign({}, cachedCfg);
           usedCacheFallback = true;
         } else {
-          throw openErr;
+          throw bootstrapErr;
         }
       }
 
@@ -2377,6 +3029,9 @@
           openAttempts,
           readAttempts,
           usedCacheFallback,
+          initialReadMode: normalizedInitialReadMode,
+          readTimeoutMs: driverReadTimeoutMs,
+          sendTimeoutMs: driverSendTimeoutMs,
         },
       };
     }
@@ -2384,12 +3039,10 @@
     async close() {
       this._closed = true;
       this._detachInputReportListener();
-      if (!this.device) return;
-      try {
-        if (this.device.opened) await this.device.close();
-      } catch {
-        // ignore close errors
-      }
+      const controlDevice = this.device;
+      const eventDevice = (this.eventDevice && this.eventDevice !== controlDevice) ? this.eventDevice : null;
+      if (eventDevice) await this._closeDeviceHandle(eventDevice);
+      if (controlDevice) await this._closeDeviceHandle(controlDevice);
     }
 
     /**
@@ -2438,7 +3091,9 @@
     async requestConfig() {
       return this._opQueue.enqueue(async () => {
         await this._ensureOpen();
-        const updates = await this._readDeviceStateSnapshot({ strictButtonMappingRead: false });
+        const updates = await this._readDeviceStateSnapshot({
+          mode: SNAPSHOT_READ_MODE.REFRESH_FULL,
+        });
         if (updates && Object.keys(updates).length) {
           this._cfg = Object.assign({}, this._cfg, updates);
         }
@@ -2506,7 +3161,9 @@
             // On write failure, run a protocol-level readback reconciliation once
             // so the UI cache realigns with the device's actual state.
             try {
-              const updates = await this._readDeviceStateSnapshot({ strictButtonMappingRead: false });
+              const updates = await this._readDeviceStateSnapshot({
+                mode: SNAPSHOT_READ_MODE.REFRESH_FULL,
+              });
               if (updates && Object.keys(updates).length) {
                 this._cfg = Object.assign({}, this._cfg, updates);
               }
@@ -2599,183 +3256,161 @@
     async setButtonMappingBySelect(btnId, labelOrObj) {
       return this._opQueue.enqueue(async () => {
         await this._ensureOpen();
-        const pid = this._pid();
-        const b = clampInt(btnId, 1, 6);
-        const sourceCode = REP4_SOURCE_CODE_BY_BUTTON_ID[b];
-        if (!Number.isFinite(sourceCode)) {
-          throw new ProtocolError(`Btn${b} mapping source code is not defined`, "FEATURE_UNSUPPORTED", {
-            btnId: b,
-            pid,
-          });
-        }
-        let action = null;
-        let source = "";
-        let rep4Action = null;
-
-        if (typeof labelOrObj === "string") {
-          const resolved = resolveActionFromLabel(b, labelOrObj);
-          if (!resolved) {
-            throw new ProtocolError(`Unknown key action label: ${labelOrObj}`, "BAD_PARAM", { btnId: b, label: labelOrObj });
-          }
-          action = resolved.action;
-          source = resolved.source || resolved.label || "";
-          rep4Action = resolveRep4ActionFromLabel(resolved.label || source || labelOrObj);
-        } else if (isObject(labelOrObj)) {
-          action = {
-            funckey: clampU8(labelOrObj.funckey ?? labelOrObj.func ?? 0),
-            keycode: clampInt(labelOrObj.keycode ?? labelOrObj.code ?? 0, 0, 0xffff),
-          };
-          source = String(labelOrObj.source ?? labelOrObj.label ?? "custom").trim() || "custom";
-          rep4Action = resolveRep4ActionFromObject(
-            Object.assign({}, labelOrObj, {
-              funckey: action.funckey,
-              keycode: action.keycode,
-              source,
-            })
-          );
-        } else {
-          throw new ProtocolError("key action must be label string or {funckey,keycode}", "BAD_PARAM");
+        const slot = clampInt(btnId, 1, 6);
+        const buttonId = OFFICIAL_OBM_SLOT_TO_BUTTON_ID[slot];
+        if (!buttonId) {
+          throw new ProtocolError(`Unsupported Razer button slot: ${btnId}`, "BAD_PARAM", { btnId });
         }
 
-        if (!Array.isArray(rep4Action) || rep4Action.length !== 4) {
-          throw new ProtocolError("Key action is not supported by Razer REP4 mapping write path", "FEATURE_UNSUPPORTED", {
-            btnId: b,
-            pid,
-            sourceCode,
-            label: typeof labelOrObj === "string" ? labelOrObj : (labelOrObj?.label ?? labelOrObj?.source ?? source),
-            funckey: action?.funckey,
-            keycode: action?.keycode,
+        const resolved = resolveButtonMappingActionInput(slot, labelOrObj);
+        if (!resolved?.action) {
+          throw new ProtocolError(`Unknown or unsupported button action: ${String(labelOrObj ?? "")}`, "BAD_PARAM", {
+            btnId: slot,
+            value: labelOrObj,
           });
         }
 
-        const tx = txForField(pid, "buttonMapping");
-        const packet = ProtocolCodec.commands.setButtonMappingRep4(tx, sourceCode, rep4Action);
-        await this._driver.sendAndWait(packet);
+        const assignment = buildOfficialObmAssignmentFromPublicAction(resolved.action);
+        if (!assignment) {
+          throw new ProtocolError(`Button action is not writable via official Razer OBM path: ${String(resolved.label || resolved.source || "")}`, "FEATURE_UNAVAILABLE", {
+            btnId: slot,
+            label: resolved.label || resolved.source || "",
+          });
+        }
 
-        const next = Array.isArray(this._cfg?.buttonMappings)
+        const tx = txForField(this._pid(), "buttonMappings");
+        await this._driver.runSequence([{
+          packet: ProtocolCodec.commands.setSingleButtonAssignment(
+            tx,
+            OFFICIAL_MOUSE_PROFILE_ID,
+            buttonId,
+            OFFICIAL_BUTTON_MODE.NORMAL,
+            assignment.functionId,
+            assignment.dataSize,
+            assignment.dataArray
+          ),
+          waitMs: RAZER_OBM_BUTTON_IO_WAIT_MS,
+        }]);
+
+        let verified = null;
+        try {
+          verified = await this._readSingleOfficialObmButtonMapping(slot);
+        } catch (err) {
+          throw new ProtocolError("Button mapping verify readback failed", "VERIFY_FAILED", {
+            btnId: slot,
+            expected: normalizeButtonMappingEntry(resolved.action, resolved.source || resolved.label || ""),
+            cause: err,
+          });
+        }
+        if (!isSameButtonAction(verified, resolved.action)) {
+          throw new ProtocolError("Button mapping verify mismatch", "VERIFY_FAILED", {
+            btnId: slot,
+            expected: normalizeButtonMappingEntry(resolved.action, resolved.source || resolved.label || ""),
+            actual: verified,
+          });
+        }
+
+        const defaultMappings = buildDefaultRazerButtonMappings();
+        const nextMappings = Array.isArray(this._cfg?.buttonMappings)
           ? this._cfg.buttonMappings.slice(0, 6)
-          : buildDefaultRazerButtonMappings();
-        while (next.length < 6) {
-          next.push({ source: "", funckey: 0x00, keycode: 0x0000 });
+          : defaultMappings.slice(0, 6);
+        while (nextMappings.length < 6) {
+          nextMappings.push(defaultMappings[nextMappings.length] || normalizeButtonMappingEntry());
         }
-        next[b - 1] = {
-          source,
-          funckey: clampU8(action.funckey),
-          keycode: clampInt(action.keycode, 0, 0xffff),
-        };
-
-        this._cfg = Object.assign({}, this._cfg, { buttonMappings: next });
+        nextMappings[slot - 1] = verified;
+        this._cfg = Object.assign({}, this._cfg, { buttonMappings: nextMappings });
         this._emitConfig();
-        return {
-          btnId: b,
-          sourceCode,
-          rep4Action: rep4Action.slice(0, 4),
-          action: next[b - 1],
-        };
       });
     }
 
     async _safeQuery(packet, fallback = null, opts = {}) {
+      const {
+        swallowPermissionPathError = true,
+        swallowCodes = ["DEVICE_COMMAND_NOT_SUPPORTED"],
+        ...sendOpts
+      } = opts || {};
+      const allowedCodes = new Set(
+        Array.isArray(swallowCodes)
+          ? swallowCodes.map((code) => String(code || ""))
+          : []
+      );
       try {
-        return await this._driver.sendAndWait(packet, opts);
+        return await this._driver.sendAndWait(packet, sendOpts);
       } catch (err) {
-        const name = String(err?.name || "");
-        const msg = String(err?.message || "").toLowerCase();
-        if (
-          name === "NotAllowedError"
-          || msg.includes("notallowederror")
-          || msg.includes("failed to write the feature report")
-          || msg.includes("failed to receive the feature report")
-          || msg.includes("failed to read the feature report")
-        ) {
+        if (isPermissionPathError(err)) {
+          if (swallowPermissionPathError) return fallback;
           throw err;
         }
-        return fallback;
+        if (allowedCodes.has(String(err?.code || ""))) {
+          return fallback;
+        }
+        throw err;
       }
     }
 
-    async _readButtonMappingsSnapshot({ strictStability = false } = {}) {
-      const pid = this._ensureSupported();
-      const tx = txForField(pid, "buttonMapping");
-      const out = Array.from({ length: 6 }, () => buildUnknownRep4Entry());
+    async _readSingleOfficialObmButtonMapping(btnId) {
+      const slot = clampInt(btnId, 1, 6);
+      const buttonId = OFFICIAL_OBM_SLOT_TO_BUTTON_ID[slot];
+      if (!buttonId) {
+        throw new ProtocolError(`Unsupported Razer button slot: ${btnId}`, "BAD_PARAM", { btnId });
+      }
 
-      for (let btnId = 1; btnId <= 6; btnId++) {
-        const sourceCode = REP4_SOURCE_CODE_BY_BUTTON_ID[btnId];
-        if (!Number.isFinite(sourceCode)) continue;
-        let resolved = null;
-        let lastQuadSig = "";
-        let stableHits = 0;
-        const cachedMapping = normalizeButtonMappingEntry(this._cfg?.buttonMappings?.[btnId - 1]);
-
-        // Retry for transient empty/misaligned reads and require stable decode.
-        for (let attempt = 1; attempt <= REP4_READ_MAX_ATTEMPTS; attempt++) {
-          let readRes = null;
-          try {
-            readRes = await this._safeQuery(
-              ProtocolCodec.commands.getButtonMappingRep4(tx, sourceCode),
-              null,
-              {
-                // Reject stale/misaligned packets before decode layer maps button slots.
-                responseValidator: (_request, response) => {
-                  const args = response?.arguments;
-                  if (!(args instanceof Uint8Array) || args.length < 3) return false;
-                  const sourceEcho = ((clampU8(args[2]) << 8) | clampU8(args[1])) & 0xffff;
-                  return sourceEcho === clampU16(sourceCode);
-                },
-              }
-            );
-            if (!readRes?.arguments) {
-              throw new ProtocolError("REP4 mapping response is empty", "REP4_READ_EMPTY", {
-                btnId,
-                sourceCode: clampU16(sourceCode),
-                attempt,
-              });
-            }
-
-            const quadlet = extractRep4ReadQuadlet(btnId, sourceCode, readRes);
-            const sig = quadletKey(quadlet[0], quadlet[1], quadlet[2], quadlet[3]);
-            if (sig === lastQuadSig) {
-              stableHits += 1;
-            } else {
-              lastQuadSig = sig;
-              stableHits = 1;
-            }
-
-            if (!isKnownRep4Quadlet(quadlet)) {
-              throw new ProtocolError("REP4 mapping quadlet is unknown", "REP4_READ_UNKNOWN_ACTION", {
-                btnId,
-                sourceCode: clampU16(sourceCode),
-                attempt,
-                quadlet: quadlet.slice(0, 4),
-              });
-            }
-
-            const candidate = resolveActionFromRep4Quadlet(btnId, quadlet);
-            const needStrictStability = !!strictStability || !isSameButtonAction(candidate, cachedMapping);
-            const requiredHits = needStrictStability ? REP4_READ_STABLE_HITS_REQUIRED : 1;
-
-            if (stableHits < requiredHits) {
-              throw new ProtocolError("REP4 mapping read is unstable", "REP4_READ_UNSTABLE", {
-                btnId,
-                sourceCode: clampU16(sourceCode),
-                attempt,
-                stableHits,
-                required: requiredHits,
-              });
-            }
-
-            resolved = candidate;
-            break;
-          } catch (err) {
-            const canRetry = isRetryableRep4ReadError(err) && attempt < REP4_READ_MAX_ATTEMPTS;
-            if (!canRetry) break;
-            if (REP4_READ_RETRY_DELAY_MS > 0) {
-              await sleep(REP4_READ_RETRY_DELAY_MS);
-            }
+      const pid = this._pid();
+      let lastErr = null;
+      for (let attempt = 1; attempt <= RAZER_OBM_BUTTON_IO_RETRY; attempt++) {
+        try {
+          const tx = txForField(pid, "buttonMappings");
+          const res = await this._driver.sendAndWait(
+            ProtocolCodec.commands.getSingleButtonAssignment(
+              tx,
+              OFFICIAL_MOUSE_PROFILE_ID,
+              buttonId,
+              OFFICIAL_BUTTON_MODE.NORMAL
+            ),
+            { waitMs: RAZER_OBM_BUTTON_IO_WAIT_MS }
+          );
+          return buildPublicActionFromOfficialObmAssignment(
+            parseOfficialObmAssignment(res, OFFICIAL_BUTTON_MODE.NORMAL)
+          );
+        } catch (err) {
+          lastErr = err;
+          if (attempt >= RAZER_OBM_BUTTON_IO_RETRY || !shouldRetryOfficialObmButtonIoError(err)) {
+            throw err;
           }
+          await sleep(RAZER_OBM_BUTTON_IO_RETRY_DELAY_MS);
+        }
+      }
+
+      throw lastErr || new ProtocolError("OBM button mapping read failed", "OBM_READ_FAILED", {
+        btnId: slot,
+        buttonId,
+      });
+    }
+
+    async _readButtonMappingsSnapshot() {
+      this._ensureSupported();
+      const cached = Array.isArray(this._cfg?.buttonMappings) && this._cfg.buttonMappings.length
+        ? this._cfg.buttonMappings
+        : buildDefaultRazerButtonMappings();
+      const out = [];
+
+      for (let slot = 1; slot <= 6; slot++) {
+        const fallback = normalizeButtonMappingEntry(
+          cached[slot - 1],
+          DEFAULT_RAZER_BUTTON_SOURCE_BY_BUTTON[slot]
+        );
+        const buttonId = OFFICIAL_OBM_SLOT_TO_BUTTON_ID[slot];
+        if (!buttonId) {
+          out.push(fallback);
+          continue;
         }
 
-        out[btnId - 1] = resolved || buildUnknownRep4Entry();
+        try {
+          out.push(await this._readSingleOfficialObmButtonMapping(slot));
+        } catch (err) {
+          console.warn("[Razer] OBM button read failed", { slot, buttonId, err });
+          out.push(fallback);
+        }
       }
 
       return out;
@@ -2831,24 +3466,30 @@
       return out;
     }
 
-    // Read full runtime snapshot used by open()/requestConfig().
-    async _readDeviceStateSnapshot({ strictButtonMappingRead = false } = {}) {
+    // Read the serialized runtime snapshot used by connect bootstrap and later refreshes.
+    async _readDeviceStateSnapshot({ mode = SNAPSHOT_READ_MODE.REFRESH_FULL } = {}) {
       const pid = this._ensureSupported();
       const caps = this._caps();
       const tx = txForField(pid, "snapshot");
+      const snapshotMode = this._resolveSnapshotReadMode(mode);
+      const isConnectFull = snapshotMode === SNAPSHOT_READ_MODE.CONNECT_FULL;
       const updates = {
-        deviceName: this.device?.productName ? String(this.device.productName) : (PID_NAME[pid] || "Razer Mouse"),
+        deviceName: PID_NAME[pid] || (this.device?.productName ? String(this.device.productName) : "Razer Mouse"),
         capabilities: this._capabilitiesSnapshot(caps),
       };
 
-      const fw = await this._safeQuery(ProtocolCodec.commands.getFirmwareVersion(tx));
-      if (fw?.arguments) {
-        updates.firmwareVersion = `v${Number(fw.arguments[0] ?? 0)}.${Number(fw.arguments[1] ?? 0)}`;
+      if (isConnectFull || !this._hasStaticSnapshotValue("firmwareVersion")) {
+        const fw = await this._safeQuery(ProtocolCodec.commands.getFirmwareVersion(tx));
+        if (fw?.arguments) {
+          updates.firmwareVersion = `v${Number(fw.arguments[0] ?? 0)}.${Number(fw.arguments[1] ?? 0)}`;
+        }
       }
 
-      const serial = await this._safeQuery(ProtocolCodec.commands.getSerial(tx));
-      if (serial?.arguments) {
-        updates.serial = asciiFromBytes(serial.arguments.subarray(0, 22));
+      if (isConnectFull || !this._hasStaticSnapshotValue("serial")) {
+        const serial = await this._safeQuery(ProtocolCodec.commands.getSerial(tx));
+        if (serial?.arguments) {
+          updates.serial = asciiFromBytes(serial.arguments.subarray(0, 22));
+        }
       }
 
       if (caps.pollingMode === "v2") {
@@ -2863,19 +3504,32 @@
         }
       }
 
-      const dpi = await this._safeQuery(ProtocolCodec.commands.getDpiXY(tx, RAZER_CONST.NOSTORE));
-      if (dpi?.arguments) {
-        updates.dpi = {
-          x: ((dpi.arguments[1] << 8) | (dpi.arguments[2] & 0xff)) & 0xffff,
-          y: ((dpi.arguments[3] << 8) | (dpi.arguments[4] & 0xff)) & 0xffff,
-        };
-      }
-
-      const stages = await this._safeQuery(ProtocolCodec.commands.getDpiStages(tx, RAZER_CONST.VARSTORE));
+      const stages = await this._safeQuery(ProtocolCodec.commands.getDpiStages(tx, OFFICIAL_MOUSE_PROFILE_ID));
       if (stages?.arguments) {
         const parsed = TRANSFORMERS.parseDpiStagesResponse(stages);
-        if (parsed.dpiStages?.length) updates.dpiStages = parsed.dpiStages;
-        updates.activeDpiStageIndex = parsed.activeDpiStageIndex;
+        if (parsed.dpiStages?.length) {
+          this._updateDpiWriteContext(parsed.classId ?? OFFICIAL_MOUSE_PROFILE_ID, parsed.stageIds ?? []);
+          const activeIndex = clampInt(parsed.activeDpiStageIndex ?? 0, 0, Math.max(0, parsed.dpiStages.length - 1));
+          const activeStage = parsed.dpiStages[activeIndex] || parsed.dpiStages[0] || null;
+          updates.dpiStages = parsed.dpiStages;
+          updates.activeDpiStageIndex = activeIndex;
+          if (activeStage) {
+            updates.dpi = {
+              x: activeStage.x,
+              y: activeStage.y,
+            };
+          }
+        }
+      }
+
+      if (!isObject(updates.dpi)) {
+        const dpi = await this._safeQuery(ProtocolCodec.commands.getDpiXY(tx, OFFICIAL_MOUSE_PROFILE_ID));
+        if (dpi?.arguments) {
+          updates.dpi = {
+            x: ((dpi.arguments[1] << 8) | (dpi.arguments[2] & 0xff)) & 0xffff,
+            y: ((dpi.arguments[3] << 8) | (dpi.arguments[4] & 0xff)) & 0xffff,
+          };
+        }
       }
 
       if (caps.battery) {
@@ -2893,11 +3547,11 @@
 
       if (caps.dynamicSensitivity) {
         const txDyn = txForField(pid, "dynamicSensitivity");
-        const dynEnabled = await this._safeQuery(ProtocolCodec.commands.getDynamicSensitivityEnabled(txDyn));
+        const dynEnabled = await this._safeQuery(ProtocolCodec.commands.getProximitySensorAccelerationState(txDyn));
         if (dynEnabled?.arguments) {
           updates.dynamicSensitivityEnabled = !!clampU8(dynEnabled.arguments[1] ?? 0);
         }
-        const dynMode = await this._safeQuery(ProtocolCodec.commands.getDynamicSensitivityMode(txDyn));
+        const dynMode = await this._safeQuery(ProtocolCodec.commands.getProximitySensorAccelerationMode(txDyn));
         if (dynMode?.arguments) {
           updates.dynamicSensitivityMode = TRANSFORMERS.normalizeDynamicSensitivityMode(dynMode.arguments[1] ?? 1);
         }
@@ -2915,39 +3569,52 @@
 
       if (caps.smartTracking) {
         const txTracking = txForField(pid, "smartTracking");
-        const modeRes = await this._safeQuery(ProtocolCodec.commands.getSmartTrackingMode(txTracking));
-        if (modeRes?.arguments) {
-          const modeSel = clampU8(modeRes.arguments[2] ?? 0x01);
-          updates.smartTrackingMode = modeSel === 0x04 ? "asymmetric" : "symmetric";
-          if (updates.smartTrackingMode === "symmetric") {
-            updates.smartTrackingLevel = TRANSFORMERS.normalizeSmartTrackingLevel(modeRes.arguments[3] ?? 0);
+        const officialSmartTracking = Object.assign(
+          {},
+          DEFAULT_RAZER_SMART_TRACKING_OFFICIAL_MODEL,
+          buildOfficialSmartTrackingModelFromPublicState(this._cfg)
+        );
+        const liftRes = await this._safeQuery(
+          ProtocolCodec.commands.getProximitySensorLiftSetting(
+            txTracking,
+            OFFICIAL_PROXIMITY_CLASS_ID,
+            OFFICIAL_PROXIMITY_SENSOR_ID
+          )
+        );
+        if (liftRes?.arguments) {
+          const modeSel = clampU8(liftRes.arguments[2] ?? 0x01);
+          officialSmartTracking.isAsymmetric = modeSel === 0x04;
+          if (liftRes.arguments[3] != null) {
+            officialSmartTracking.trackingDistance = TRANSFORMERS.smartTrackingLevelToTrackingDistance(
+              liftRes.arguments[3]
+            );
           }
         }
 
-        // Keep asymmetric pair fresh regardless of current mode to avoid stale defaults
-        // after config refreshes that happen while device is in symmetric mode.
-        const distRes = await this._safeQuery(ProtocolCodec.commands.getSmartTrackingAsymmetricDistances(txTracking));
+        const distRes = await this._safeQuery(
+          ProtocolCodec.commands.getProximitySensorConfiguration(
+            txTracking,
+            OFFICIAL_PROXIMITY_CLASS_ID,
+            OFFICIAL_PROXIMITY_SENSOR_ID
+          )
+        );
         if (distRes?.arguments) {
-          // 0x0b/0x85 response layout from captures:
-          // args[0]=0x00, args[1]=0x04, args[2]=selector/fixed flag,
-          // args[3]=lift-1, args[4]=landing-1.
-          const dist = TRANSFORMERS.normalizeSmartTrackingDistances(
-            clampU8(distRes.arguments[3] ?? 0) + 1,
-            clampU8(distRes.arguments[4] ?? 0) + 1
-          );
-          updates.smartTrackingLiftDistance = dist.lift;
-          updates.smartTrackingLandingDistance = dist.landing;
+          if (distRes.arguments[3] != null) {
+            officialSmartTracking.liftOffDistance = clampU8(distRes.arguments[3]) + 1;
+          }
+          if (distRes.arguments[4] != null) {
+            officialSmartTracking.landingDistance = clampU8(distRes.arguments[4]) + 1;
+          }
         }
+        Object.assign(updates, buildPublicSmartTrackingStateFromOfficialModel(officialSmartTracking));
       }
 
-      const buttonMappings = await this._readButtonMappingsSnapshot({
-        strictStability: !!strictButtonMappingRead,
-      });
+      const buttonMappings = await this._readButtonMappingsSnapshot();
       if (Array.isArray(buttonMappings) && buttonMappings.length) {
         updates.buttonMappings = buttonMappings;
       }
 
-      // REP4 keymap readback uses strict decode; failed reads are surfaced as unknown placeholders.
+      // Button mapping snapshot now uses the official OBM path for every Razer PID.
 
       return updates;
     }
@@ -2967,9 +3634,14 @@
     defaultFilters: SUPPORTED_PIDS.map((productId) => ({
       vendorId: RAZER_VENDOR_ID,
       productId,
+      usagePage: RAZER_WEBHID_CONTROL_USAGE_PAGE,
     })),
     isSupportedPid(productId) {
       return SUPPORTED_PID_SET.has(Number(productId));
+    },
+    getTransportMeta(productId) {
+      const meta = getTransportMetaForPid(productId);
+      return meta ? Object.assign({}, meta) : null;
     },
   };
 
@@ -2987,7 +3659,7 @@
   ProtocolApi.listKeyActionsByType = function listKeyActionsByType() {
     const buckets = Object.create(null);
     for (const [label, action] of Object.entries(KEYMAP_ACTIONS)) {
-      if (!REP4_WRITABLE_LABELS.has(label)) continue;
+      if (!OFFICIAL_OBM_WRITABLE_LABELS.has(label)) continue;
       const type = String(action?.type || "system");
       if (!buckets[type]) buckets[type] = [];
       buckets[type].push(label);

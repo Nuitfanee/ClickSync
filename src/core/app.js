@@ -393,6 +393,21 @@
    * @returns {any} Check result.
    */
   const hasFeature = (key) => !!adapterFeatures[key];
+  function normalizeBatteryReadMode(rawMode) {
+    const mode = String(rawMode || "").trim().toLowerCase();
+    if (mode === "passive" || mode === "hybrid") return mode;
+    return "active";
+  }
+  function getBatteryReadMode() {
+    return normalizeBatteryReadMode(adapterFeatures?.batteryReadMode);
+  }
+  function supportsActiveBatteryRead() {
+    const mode = getBatteryReadMode();
+    return mode === "active" || mode === "hybrid";
+  }
+  function shouldTrustBootstrapBatterySnapshot(meta) {
+    return !(supportsActiveBatteryRead() && !!meta?.usedCacheFallback);
+  }
   let hasDpiLightCycle = !!adapterFeatures.hasDpiLightCycle;
   let hasReceiverLightCycle = !!adapterFeatures.hasReceiverLightCycle;
   let hasStaticLedColorPanel = !!adapterFeatures.hasStaticLedColorPanel;
@@ -2131,6 +2146,9 @@ async function enterAppWithLiquidTransition(origin = null) {
 
 
   let batteryTimer = null;
+  let __batteryKnownForCurrentSession = false;
+  let __batteryPrimePendingForCurrentSession = false;
+  let __pendingHandshakeBatterySnapshot = null;
 
   function parseBatteryPercent(rawBatteryText) {
     const txt = String(rawBatteryText ?? "").trim();
@@ -2138,6 +2156,57 @@ async function enterAppWithLiquidTransition(origin = null) {
     const numeric = Number(txt.replace(/[^\d.]+/g, ""));
     if (!Number.isFinite(numeric)) return null;
     return Math.max(0, Math.min(100, Math.round(numeric)));
+  }
+
+  function normalizeBatteryPercentValue(rawBatteryPercent) {
+    const numeric = Number(rawBatteryPercent);
+    if (!Number.isFinite(numeric) || numeric < 0) return null;
+    return Math.max(0, Math.min(100, Math.round(numeric)));
+  }
+
+  function __setCurrentSessionBatteryText(batteryText = "") {
+    const normalized = String(batteryText || "").trim();
+    currentBatteryText = normalized;
+    __batteryKnownForCurrentSession = parseBatteryPercent(normalized) != null;
+    return __batteryKnownForCurrentSession ? normalized : "";
+  }
+
+  function __getCurrentSessionBatteryText() {
+    return __batteryKnownForCurrentSession ? currentBatteryText : "";
+  }
+
+  function __rememberBatterySnapshot(snapshot) {
+    const percent = normalizeBatteryPercentValue(snapshot?.batteryPercent);
+    if (percent == null) return "";
+    return __setCurrentSessionBatteryText(`${percent}%`);
+  }
+
+  function __resetBatterySessionState({ clearText = false } = {}) {
+    __batteryKnownForCurrentSession = false;
+    __batteryPrimePendingForCurrentSession = false;
+    __pendingHandshakeBatterySnapshot = null;
+    if (clearText) currentBatteryText = "";
+  }
+
+  function __queuePendingHandshakeBatterySnapshot(snapshot) {
+    __pendingHandshakeBatterySnapshot = snapshot && typeof snapshot === "object"
+      ? Object.assign({}, snapshot)
+      : null;
+  }
+
+  function __flushPendingHandshakeBatterySnapshot({ trust = true } = {}) {
+    const snapshot = __pendingHandshakeBatterySnapshot;
+    __pendingHandshakeBatterySnapshot = null;
+    if (!trust || !snapshot) return "";
+    return __rememberBatterySnapshot(snapshot);
+  }
+
+  function __renderUnknownBatteryPlaceholder() {
+    if (hdrBatteryVal) {
+      hdrBatteryVal.textContent = "...";
+      hdrBatteryVal.classList.remove("connected");
+    }
+    renderTopDeviceMeta(true, currentDeviceName || "Connected", "");
   }
 
   function renderTopDeviceMeta(connected, deviceName = "", batteryText = "") {
@@ -2171,7 +2240,10 @@ async function enterAppWithLiquidTransition(origin = null) {
    */
   async function requestBatterySafe(reason = "") {
     if (!isHidReady()) return;
-    if (adapterFeatures.supportsBatteryRequest === false) return;
+    if (!supportsActiveBatteryRead()) return;
+    // During connect bootstrap, skip the extra prime read when a protocol has
+    // already surfaced a valid battery value via cfg/onBattery.
+    if (__batteryPrimePendingForCurrentSession && __batteryKnownForCurrentSession) return;
     try {
       await hidApi.requestBattery();
       if (reason) log(window.tr(`已刷新电量(${reason})`, `Battery refreshed (${reason})`));
@@ -2189,7 +2261,10 @@ async function enterAppWithLiquidTransition(origin = null) {
    */
   function startBatteryAutoRead() {
     if (batteryTimer) return;
-    if (adapterFeatures.supportsBatteryRequest === false) return;
+    if (!supportsActiveBatteryRead()) {
+      __batteryPrimePendingForCurrentSession = false;
+      return;
+    }
 
     requestBatterySafe(window.tr("首次", "First"));
 
@@ -2198,6 +2273,7 @@ async function enterAppWithLiquidTransition(origin = null) {
       : 360_000;
     const tag = adapterFeatures.batteryPollTag || "auto";
     batteryTimer = setInterval(() => requestBatterySafe(tag), intervalMs);
+    __batteryPrimePendingForCurrentSession = false;
   }
 
 
@@ -2209,6 +2285,7 @@ async function enterAppWithLiquidTransition(origin = null) {
   function stopBatteryAutoRead() {
     if (batteryTimer) clearInterval(batteryTimer);
     batteryTimer = null;
+    __batteryPrimePendingForCurrentSession = false;
   }
 
   /**
@@ -2243,7 +2320,7 @@ async function enterAppWithLiquidTransition(origin = null) {
 
       if (widgetDeviceName) widgetDeviceName.textContent = nameText;
       if (widgetDeviceMeta) widgetDeviceMeta.textContent = window.tr("点击断开", "Click to Disconnect");
-      renderTopDeviceMeta(true, deviceName || currentDeviceName || "", battery || currentBatteryText || "");
+      renderTopDeviceMeta(true, deviceName || currentDeviceName || "", battery || __getCurrentSessionBatteryText());
     } else {
       deviceStatusDot?.classList.remove("connected");
       if (widgetDeviceName) widgetDeviceName.textContent = window.tr("未连接设备", "No Device Connected");
@@ -2254,13 +2331,13 @@ async function enterAppWithLiquidTransition(origin = null) {
 
     if (connected) {
       if (deviceName) currentDeviceName = deviceName;
-      if (battery) currentBatteryText = battery;
+      if (battery) __setCurrentSessionBatteryText(battery);
       if (firmware) currentFirmwareText = firmware;
     } else {
 
       currentDeviceName = "";
-      currentBatteryText = "";
       currentFirmwareText = "";
+      __resetBatterySessionState({ clearText: true });
     }
   }
 
@@ -3994,10 +4071,15 @@ function lockEl(el) {
     animateCycleVisual(container, opt.state, opt.label, opt.cls, syncForm);
   }
 
+  const DEFAULT_SMART_TRACKING_MODE = "symmetric";
+  const DEFAULT_SMART_TRACKING_LEVEL = 1;
+  const DEFAULT_SMART_TRACKING_LIFT_DISTANCE = 13;
+  const DEFAULT_SMART_TRACKING_LANDING_DISTANCE = 12;
+
   function __normalizeSmartTrackingMode(rawValue) {
-    const mode = String(rawValue ?? "symmetric").trim().toLowerCase();
+    const mode = String(rawValue ?? DEFAULT_SMART_TRACKING_MODE).trim().toLowerCase();
     if (mode === "asymmetric" || mode === "asym") return "asymmetric";
-    return "symmetric";
+    return DEFAULT_SMART_TRACKING_MODE;
   }
 
   function __normalizeSmartTrackingDistance(rawValue, min, max, fallback) {
@@ -4007,8 +4089,8 @@ function lockEl(el) {
   }
 
   function __normalizeSmartTrackingPair(liftValue, landingValue) {
-    let lift = __normalizeSmartTrackingDistance(liftValue, 2, 26, 2);
-    let landing = __normalizeSmartTrackingDistance(landingValue, 1, 25, 1);
+    let lift = __normalizeSmartTrackingDistance(liftValue, 2, 26, DEFAULT_SMART_TRACKING_LIFT_DISTANCE);
+    let landing = __normalizeSmartTrackingDistance(landingValue, 1, 25, DEFAULT_SMART_TRACKING_LANDING_DISTANCE);
     if (landing >= lift) {
       lift = Math.min(26, landing + 1);
       if (landing >= lift) landing = Math.max(1, lift - 1);
@@ -4062,7 +4144,7 @@ function lockEl(el) {
   }
 
   function __resolveSmartTrackingLevelLabel(rawLevel) {
-    const level = __normalizeSmartTrackingDistance(rawLevel, 0, 2, 2);
+    const level = __normalizeSmartTrackingDistance(rawLevel, 0, 2, DEFAULT_SMART_TRACKING_LEVEL);
     const labels = (adapter?.ui?.smartTrackingLevelLabels && typeof adapter.ui.smartTrackingLevelLabels === "object")
       ? adapter.ui.smartTrackingLevelLabels
       : null;
@@ -4087,7 +4169,7 @@ function lockEl(el) {
     const liftInput = getSourceRangeByStdKey("smartTrackingLiftDistance", ADV_REGION_SINGLE);
     const landingInput = getSourceRangeByStdKey("smartTrackingLandingDistance", ADV_REGION_SINGLE);
 
-    const mode = __normalizeSmartTrackingMode(modeSelect?.value || card.dataset.smartTrackingMode);
+    const mode = __normalizeSmartTrackingMode(modeSelect?.value || card.dataset.smartTrackingMode || DEFAULT_SMART_TRACKING_MODE);
     card.dataset.smartTrackingMode = mode;
     if (modeSelect && modeSelect.value !== mode) modeSelect.value = mode;
     if (modeSwitchInput) modeSwitchInput.checked = mode === "asymmetric";
@@ -4105,7 +4187,7 @@ function lockEl(el) {
       levelInput.min = String(levelCfg.min ?? 0);
       levelInput.max = String(levelCfg.max ?? 2);
       levelInput.step = String(levelCfg.step ?? 1);
-      const level = __normalizeSmartTrackingDistance(levelInput.value, 0, 2, 2);
+      const level = __normalizeSmartTrackingDistance(levelInput.value, 0, 2, DEFAULT_SMART_TRACKING_LEVEL);
       if (String(levelInput.value) !== String(level)) levelInput.value = String(level);
       const levelCard = levelInput.closest(".slider-card");
       const disp = levelCard?.querySelector(".value-readout");
@@ -4350,7 +4432,7 @@ function lockEl(el) {
       dynamicSensitivityEnabledToggle.checked = false;
     }
     if (smartTrackingModeSelect && !smartTrackingModeSelect.value) {
-      smartTrackingModeSelect.value = "symmetric";
+      smartTrackingModeSelect.value = DEFAULT_SMART_TRACKING_MODE;
     }
     if (hyperpollingSelect && !hyperpollingSelect.value) {
       hyperpollingSelect.value = "1";
@@ -4466,7 +4548,7 @@ function lockEl(el) {
 
     if (smartTrackingModeSwitchInput && smartTrackingModeSelect) {
       const setSmartTrackingMode = (nextMode) => {
-        const current = __normalizeSmartTrackingMode(smartTrackingModeSelect.value || "symmetric");
+        const current = __normalizeSmartTrackingMode(smartTrackingModeSelect.value || DEFAULT_SMART_TRACKING_MODE);
         const next = __normalizeSmartTrackingMode(nextMode);
         if (next === current) {
           syncSmartTrackingCompositeUi();
@@ -4500,7 +4582,7 @@ function lockEl(el) {
           syncSmartTrackingCompositeUi();
         },
         onCommit: () => {
-          const v = __normalizeSmartTrackingDistance(smartTrackingLevelInput.value, 0, 2, 2);
+          const v = __normalizeSmartTrackingDistance(smartTrackingLevelInput.value, 0, 2, DEFAULT_SMART_TRACKING_LEVEL);
           smartTrackingLevelInput.value = String(v);
           enqueueDevicePatch({ smartTrackingLevel: v });
           syncSmartTrackingCompositeUi();
@@ -4838,27 +4920,22 @@ function lockEl(el) {
 
     api.onBattery((bat) => {
       if (api !== hidApi) return;
-      const p = Number(bat?.batteryPercent);
-
-      if (!Number.isFinite(p) || p < 0) {
-        if (hdrBatteryVal) {
-          hdrBatteryVal.textContent = "...";
-          hdrBatteryVal.classList.remove("connected");
-        }
-        renderTopDeviceMeta(true, currentDeviceName || "Connected", "");
+      const isHandshakePhase = hidConnecting || __activeHandshakeSeq !== 0 || (__connectInFlight && !hidLinked);
+      if (isHandshakePhase) {
+        __queuePendingHandshakeBatterySnapshot(bat);
         return;
       }
-
-      const batteryText = `${p}%`;
+      const batteryText = __rememberBatterySnapshot(bat);
+      if (!batteryText) {
+        __renderUnknownBatteryPlaceholder();
+        return;
+      }
       if (hdrBatteryVal) {
         hdrBatteryVal.textContent = batteryText;
         hdrBatteryVal.classList.add("connected");
       }
-
-      currentBatteryText = batteryText;
       updateDeviceStatus(true, currentDeviceName || "Connected", batteryText, currentFirmwareText || "");
-
-      log(`Battery packet received: ${p}%`);
+      log(`Battery packet received: ${parseBatteryPercent(batteryText)}%`);
     });
 
     api.onRawReport((raw) => {
@@ -4892,6 +4969,7 @@ function lockEl(el) {
 
   function __resetDeviceScopedTransientState() {
     __cachedDeviceConfig = null;
+    __resetBatterySessionState({ clearText: true });
     __writesEnabled = false;
     __pendingDevicePatch = null;
     __intentByKey.clear();
@@ -8342,7 +8420,8 @@ function openDrawer(btn) {
   //   3) app.js event binding (enqueueDevicePatch) + applyConfigToUi setter
   //   4) refactor.ui.js layout/visibility/order/runtime wiring
   // - Never bypass this function with ad-hoc DOM writes from polling/read paths.
-  function applyConfigToUi(cfg) {
+  function applyConfigToUi(cfg, opts = {}) {
+    const { trustBatteryFromCfg = true } = opts || {};
 
     applyCapabilityStateToRuntime(cfg?.capabilities, { preserveDpiMax: true });
     __cleanupExpiredIntents();
@@ -8631,7 +8710,7 @@ function openDrawer(btn) {
     if (smartTrackingLevel != null) {
       safeSetValue(
         getSourceRangeByStdKey("smartTrackingLevel", ADV_REGION_SINGLE, { warnOnMissing: true }),
-        __normalizeSmartTrackingDistance(smartTrackingLevel, 0, 2, 2)
+        __normalizeSmartTrackingDistance(smartTrackingLevel, 0, 2, DEFAULT_SMART_TRACKING_LEVEL)
       );
     }
 
@@ -8639,7 +8718,7 @@ function openDrawer(btn) {
     if (smartTrackingLiftDistance != null) {
       safeSetValue(
         getSourceRangeByStdKey("smartTrackingLiftDistance", ADV_REGION_SINGLE, { warnOnMissing: true }),
-        __normalizeSmartTrackingDistance(smartTrackingLiftDistance, 2, 26, 2)
+        __normalizeSmartTrackingDistance(smartTrackingLiftDistance, 2, 26, DEFAULT_SMART_TRACKING_LIFT_DISTANCE)
       );
     }
 
@@ -8647,7 +8726,7 @@ function openDrawer(btn) {
     if (smartTrackingLandingDistance != null) {
       safeSetValue(
         getSourceRangeByStdKey("smartTrackingLandingDistance", ADV_REGION_SINGLE, { warnOnMissing: true }),
-        __normalizeSmartTrackingDistance(smartTrackingLandingDistance, 1, 25, 1)
+        __normalizeSmartTrackingDistance(smartTrackingLandingDistance, 1, 25, DEFAULT_SMART_TRACKING_LANDING_DISTANCE)
       );
     }
 
@@ -8661,6 +8740,8 @@ function openDrawer(btn) {
 
 
     syncAdvancedPanelUi();
+    // Some protocols expose battery during bootstrap via cfg rather than onBattery.
+    if (trustBatteryFromCfg) __rememberBatterySnapshot(cfg);
 
     const mouseV = cfg.mouseFw ?? (cfg.mouseFwRaw != null ? ProtocolApi.uint8ToVersion(cfg.mouseFwRaw) : "-");
     const rxV = cfg.receiverFw ?? (cfg.receiverFwRaw != null ? ProtocolApi.uint8ToVersion(cfg.receiverFwRaw) : "-");
@@ -8669,7 +8750,7 @@ function openDrawer(btn) {
 
     currentFirmwareText = fwText;
     if (isHidReady()) {
-      updateDeviceStatus(true, currentDeviceName || "Unknown", currentBatteryText || "", currentFirmwareText);
+      updateDeviceStatus(true, currentDeviceName || "Unknown", __getCurrentSessionBatteryText(), currentFirmwareText);
     }
     syncBasicMonolithUI();
 
@@ -8750,6 +8831,8 @@ function openDrawer(btn) {
       let dev = null;
       let candidates = [];
       let detectedType = null;
+      let connectionPlans = [];
+      let connectionPlanError = null;
 
       const pinPrimary = (mode === true);
 
@@ -8765,6 +8848,8 @@ function openDrawer(btn) {
         dev = res?.device || null;
         candidates = Array.isArray(res?.candidates) ? res.candidates : [];
         detectedType = res?.detectedType || null;
+        connectionPlans = Array.isArray(res?.connectionPlans) ? res.connectionPlans : [];
+        connectionPlanError = res?.connectionPlanError || null;
       } catch (e) {
         if (mode === true) {
           try { __reverseLandingToInitial(__landingClickOrigin); } catch (_) {}
@@ -8786,8 +8871,160 @@ function openDrawer(btn) {
       }
       if (!candidates.length) candidates = [dev];
 
+      const walkHidCollections = (collections, visit) => {
+        for (const collection of (Array.isArray(collections) ? collections : [])) {
+          visit(collection);
+          if (Array.isArray(collection?.children) && collection.children.length) {
+            walkHidCollections(collection.children, visit);
+          }
+        }
+      };
+
+      const countHidReports = (device, reportKey) => {
+        if (Array.isArray(device?.[reportKey]) && device[reportKey].length) {
+          return device[reportKey].length;
+        }
+        let count = 0;
+        walkHidCollections(device?.collections, (collection) => {
+          if (Array.isArray(collection?.[reportKey])) count += collection[reportKey].length;
+        });
+        return count;
+      };
+
+      const buildHidHandleSummary = (device) => {
+        const collections = Array.isArray(device?.collections) ? device.collections : [];
+        const firstCollection = collections[0] || null;
+        const featureReportCount = countHidReports(device, "featureReports");
+        const inputReportCount = countHidReports(device, "inputReports");
+        return {
+          collectionCount: collections.length,
+          usagePage: Number(firstCollection?.usagePage ?? NaN),
+          usage: Number(firstCollection?.usage ?? NaN),
+          featureReportCount,
+          inputReportCount,
+          hasFeatureReports: featureReportCount > 0,
+          hasInputReports: inputReportCount > 0,
+        };
+      };
+
+      const normalizeConnectionPlan = (plan) => {
+        const controlDevice = plan?.controlDevice || plan?.device || null;
+        const eventDevice = plan?.eventDevice || controlDevice || null;
+        if (!controlDevice) return null;
+        const controlSummary = plan?.controlSummary || buildHidHandleSummary(controlDevice);
+        const eventSummary = plan?.eventSummary || (eventDevice === controlDevice ? controlSummary : buildHidHandleSummary(eventDevice));
+        const eventMode = (
+          plan?.eventMode === "separate"
+          && eventDevice
+          && eventDevice !== controlDevice
+        ) ? "separate" : "shared";
+        return {
+          controlDevice,
+          eventDevice,
+          eventMode,
+          debugLabel: String(plan?.debugLabel || ""),
+          controlSummary,
+          eventSummary,
+        };
+      };
+
+      const buildDefaultConnectionPlan = (device) => {
+        if (!device) return null;
+        return normalizeConnectionPlan({
+          controlDevice: device,
+          eventDevice: device,
+          eventMode: "shared",
+        });
+      };
+
+      const normalizeConnectionPlans = (plans) => (
+        Array.isArray(plans)
+          ? plans.map(normalizeConnectionPlan).filter(Boolean)
+          : []
+      );
+
+      const getPlanDevices = (plan) => {
+        const out = [];
+        const push = (device) => {
+          if (!device) return;
+          if (out.includes(device)) return;
+          out.push(device);
+        };
+        push(plan?.controlDevice || null);
+        push(plan?.eventDevice || plan?.controlDevice || null);
+        return out;
+      };
+
+      const formatSummaryHex = (value) => (
+        Number.isFinite(value)
+          ? `0x${Math.trunc(value).toString(16)}`
+          : "n/a"
+      );
+
+      const describeHandleSummary = (summary) => {
+        const item = summary || {};
+        return [
+          `collections=${Number(item.collectionCount ?? 0)}`,
+          `usagePage=${formatSummaryHex(item.usagePage)}`,
+          `expectedUsagePage=${formatSummaryHex(item.controlUsagePage)}`,
+          `featureReportId=${formatSummaryHex(item.webhidFeatureReportId)}`,
+          `firstFeature=${Number(item.firstCollectionFeatureReportCount ?? 0)}`,
+          `firstInput=${Number(item.firstCollectionInputReportCount ?? 0)}`,
+          `usage=${formatSummaryHex(item.usage)}`,
+          `feature=${item.hasFeatureReports ? "yes" : "no"}(${Number(item.featureReportCount ?? 0)})`,
+          `input=${item.hasInputReports ? "yes" : "no"}(${Number(item.inputReportCount ?? 0)})`,
+        ].join(" ");
+      };
+
+      const describeConnectionPlan = (plan) => {
+        const normalized = normalizeConnectionPlan(plan);
+        if (!normalized) return "invalid-plan";
+        const eventText = normalized.eventMode === "shared"
+          ? "event=shared"
+          : `event=separate { ${describeHandleSummary(normalized.eventSummary)} }`;
+        return `control={ ${describeHandleSummary(normalized.controlSummary)} } ${eventText}`;
+      };
+
+      const toConnectionPlanError = (planError) => {
+        const baseMessage = planError?.message || "Failed to resolve HID connection plan";
+        const err = new Error(
+          planError?.code
+            ? `${planError.code}: ${baseMessage}`
+            : baseMessage
+        );
+        if (planError?.code) err.code = planError.code;
+        err.connectionPlanError = planError || null;
+        return err;
+      };
+
+      const requiresDeterministicPlan = detectedType === "razer";
+      const handshakePlans = connectionPlans.length
+        ? normalizeConnectionPlans(connectionPlans)
+        : (
+          (!requiresDeterministicPlan && !connectionPlanError)
+            ? candidates.map(buildDefaultConnectionPlan).filter(Boolean)
+            : []
+        );
+
+      if (!handshakePlans.length) {
+        const effectivePlanError = connectionPlanError || (
+          requiresDeterministicPlan
+            ? {
+              code: "MISSING_RAZER_CONNECTION_PLAN",
+              message: "Missing deterministic Razer connection plan",
+            }
+            : null
+        );
+        if (effectivePlanError) {
+          console.warn("[HID] Connection plan resolution failed:", effectivePlanError);
+          throw toConnectionPlanError(effectivePlanError);
+        }
+      }
+
       hidConnecting = true;
       hidLinked = false;
+      __resetBatterySessionState({ clearText: true });
+      __batteryPrimePendingForCurrentSession = true;
       if (!isSilent) __setLandingCaption("INITIATE SYNCHRONIZATION...");
 
       const resolvePositiveInt = (v, fallback, min = 1, max = 60_000) => {
@@ -8796,8 +9033,22 @@ function openDrawer(btn) {
         const i = Math.trunc(n);
         return Math.max(min, Math.min(max, i));
       };
-      const handshakeTimeoutMs = resolvePositiveInt(window.AppConfig?.timings?.handshakeTimeoutMs, 5000, 100, 60_000);
-      const bootstrapReadTimeoutMs = resolvePositiveInt(window.AppConfig?.timings?.bootstrapReadTimeoutMs, 1200, 100, 60_000);
+      const selectedDeviceIdForHandshake = String(window.DeviceRuntime?.getSelectedDevice?.() || "").trim().toLowerCase();
+      const isRazerHandshake = selectedDeviceIdForHandshake === "razer";
+      const defaultHandshakeTimeoutMs = isRazerHandshake ? 12_000 : 5_000;
+      const defaultBootstrapReadTimeoutMs = isRazerHandshake ? 2_000 : 1_200;
+      const handshakeTimeoutMs = resolvePositiveInt(
+        window.AppConfig?.timings?.handshakeTimeoutMs,
+        defaultHandshakeTimeoutMs,
+        100,
+        60_000
+      );
+      const bootstrapReadTimeoutMs = resolvePositiveInt(
+        window.AppConfig?.timings?.bootstrapReadTimeoutMs,
+        defaultBootstrapReadTimeoutMs,
+        100,
+        60_000
+      );
       const bootstrapReadRetry = resolvePositiveInt(window.AppConfig?.timings?.bootstrapReadRetry, 2, 1, 10);
       // true: disable old-cache fallback during connect (treat first-read failure as failure);
       // false: allow degraded entry via old-cache fallback.
@@ -8836,90 +9087,127 @@ function openDrawer(btn) {
        * Unified handshake entry.
        * Purpose: connection orchestration only handles device selection and UI entry;
        * open/first-read/retry/fallback are delegated to protocol-layer bootstrapSession.
-       * @param {any} targetDev - Target HID device.
+       * @param {any} plan - Resolved connection plan.
        * @returns {Promise<any>} Async result.
        */
-      const performHandshake = async (targetDev) => {
-        if (!targetDev) throw new Error("No HID device selected.");
+      const performHandshake = async (plan) => {
+        const resolvedPlan = normalizeConnectionPlan(plan);
+        const controlDevice = resolvedPlan?.controlDevice || null;
+        const eventDevice = resolvedPlan?.eventDevice || controlDevice || null;
+        if (!controlDevice) throw new Error("No HID control device selected.");
+        const planDevices = getPlanDevices(resolvedPlan);
+        const planDescription = describeConnectionPlan(resolvedPlan);
         const handshakeSeq = (++__handshakeSeq);
         __activeHandshakeSeq = handshakeSeq;
         try {
-        // 防止下面 close() 触发浏览器的 disconnect 事件导致 UI 退回浅色页
-        if (hidApi && hidApi.device === targetDev) {
-            hidApi.device = null;
-        }
+          const planTouchesCurrentSession = planDevices.some((device) => (
+            device && (
+              typeof hidApi?.matchesHidDevice === "function"
+                ? hidApi.matchesHidDevice(device)
+                : hidApi?.device === device
+            )
+          ));
 
-        try {
-          if (targetDev.opened) {
-            await targetDev.close();
-            await new Promise(r => setTimeout(r, 50));
+          try {
+            await hidApi.close?.({ clearListeners: false });
+          } catch (_) {
+            try { await hidApi.close?.(); } catch (_) {}
           }
-        } catch (_) {}
 
-        hidApi.device = targetDev;
-        applyCapabilityStateToRuntime(hidApi.capabilities);
-        let displayName = ProtocolApi.resolveMouseDisplayName(targetDev.vendorId, targetDev.productId, targetDev.productName || "HID Device");
-        console.log("HID Open, Handshaking:", displayName);
+          if (planTouchesCurrentSession) {
+            try { hidApi.device = null; } catch (_) {}
+          }
 
-        __writesEnabled = false;
-        __armOnboardMemoryAutoEnableCheck();
-
-        if (widgetDeviceName) widgetDeviceName.textContent = displayName;
-        if (widgetDeviceMeta) widgetDeviceMeta.textContent = window.tr("正在读取配置...", "Reading configuration...");
-
-        const { cfg } = await withHandshakeTimeout(
-          () => hidApi.bootstrapSession({
-            device: targetDev,
-            reason: "connect",
-            readTimeoutMs: bootstrapReadTimeoutMs,
-            readRetry: bootstrapReadRetry,
-            // Whether connect flow allows protocol layer to use old-cache fallback.
-            useCacheFallback: !strictConnectNoCacheFallback,
-          }),
-          handshakeTimeoutMs,
-          {
-            onTimeout: async () => {
-              if (__activeHandshakeSeq !== handshakeSeq) return;
-              try {
-                await hidApi.close?.({ clearListeners: false });
-              } catch (_) {
-                try { await hidApi.close?.(); } catch (_) {}
+          for (const planDevice of planDevices) {
+            try {
+              if (planDevice?.opened) {
+                await planDevice.close();
+                await new Promise((resolve) => setTimeout(resolve, 50));
               }
-            },
+            } catch (_) {}
           }
-        );
-        if (__activeHandshakeSeq !== handshakeSeq) {
-          const staleErr = new Error(window.tr("握手结果已过期", "Handshake result is stale"));
-          staleErr.code = "STALE_HANDSHAKE_RESULT";
-          throw staleErr;
-        }
-        handshakeCfg = (cfg && typeof cfg === "object") ? cfg : null;
-        if (cfg && typeof cfg === "object") __cachedDeviceConfig = cfg;
 
-        applyConfigToUi(cfg);
-        const cfgDeviceName = String(cfg?.deviceName || "").trim();
-        if (cfgDeviceName) {
-          displayName = cfgDeviceName;
+          hidApi.device = controlDevice;
+          if (eventDevice && eventDevice !== controlDevice) {
+            try { hidApi.eventDevice = eventDevice; } catch (_) {}
+          }
+          applyCapabilityStateToRuntime(hidApi.capabilities);
+          let displayName = String(
+            hidApi.getCachedConfig?.()?.deviceName
+            || ProtocolApi.resolveMouseDisplayName(
+              controlDevice.vendorId,
+              controlDevice.productId,
+              controlDevice.productName || "HID Device"
+            )
+          );
+          console.log(`[HID] Handshake plan: ${resolvedPlan?.debugLabel || planDescription}`);
+          console.log("HID Open, Handshaking:", displayName);
+
+          __writesEnabled = false;
+          __armOnboardMemoryAutoEnableCheck();
+
           if (widgetDeviceName) widgetDeviceName.textContent = displayName;
-        }
-        if (widgetDeviceMeta) widgetDeviceMeta.textContent = window.tr("点击断开", "Click to Disconnect");
-        if (typeof updatePollingCycleUI === "function") {
-          const rate = readStandardValueWithIntent(cfg, "keyScanningRate") || 1000;
-          updatePollingCycleUI(rate, false);
-        }
+          if (widgetDeviceMeta) widgetDeviceMeta.textContent = window.tr("正在读取配置...", "Reading configuration...");
 
-        if (document.body.classList.contains("landing-active")) {
-          __prepareLandingEnterGate({ deviceName: displayName, cfg });
-          await enterAppWithLiquidTransition(__landingClickOrigin);
-        }
+          const { cfg, meta } = await withHandshakeTimeout(
+            () => hidApi.bootstrapSession({
+              device: controlDevice,
+              eventDevice,
+              reason: "connect",
+              initialReadMode: "full",
+              readTimeoutMs: bootstrapReadTimeoutMs,
+              readRetry: bootstrapReadRetry,
+              // Whether connect flow allows protocol layer to use old-cache fallback.
+              useCacheFallback: !strictConnectNoCacheFallback,
+            }),
+            handshakeTimeoutMs,
+            {
+              onTimeout: async () => {
+                if (__activeHandshakeSeq !== handshakeSeq) return;
+                try {
+                  await hidApi.close?.({ clearListeners: false });
+                } catch (_) {
+                  try { await hidApi.close?.(); } catch (_) {}
+                }
+              },
+            }
+          );
+          if (__activeHandshakeSeq !== handshakeSeq) {
+            const staleErr = new Error(window.tr("握手结果已过期", "Handshake result is stale"));
+            staleErr.code = "STALE_HANDSHAKE_RESULT";
+            throw staleErr;
+          }
+          handshakeCfg = (cfg && typeof cfg === "object") ? cfg : null;
+          if (cfg && typeof cfg === "object") __cachedDeviceConfig = cfg;
+          const trustBatteryFromCfg = shouldTrustBootstrapBatterySnapshot(meta);
 
-        __writesEnabled = true;
+          applyConfigToUi(cfg, {
+            trustBatteryFromCfg,
+          });
+          __flushPendingHandshakeBatterySnapshot({ trust: trustBatteryFromCfg });
+          const cfgDeviceName = String(cfg?.deviceName || "").trim();
+          if (cfgDeviceName) {
+            displayName = cfgDeviceName;
+            if (widgetDeviceName) widgetDeviceName.textContent = displayName;
+          }
+          if (widgetDeviceMeta) widgetDeviceMeta.textContent = window.tr("点击断开", "Click to Disconnect");
+          if (typeof updatePollingCycleUI === "function") {
+            const rate = readStandardValueWithIntent(cfg, "keyScanningRate") || 1000;
+            updatePollingCycleUI(rate, false);
+          }
 
-        if (typeof applyKeymapFromCfg === 'function') {
-          const cachedCfg = getCachedDeviceConfig();
-          if (cachedCfg) applyKeymapFromCfg(cachedCfg);
-        }
-        return displayName;
+          if (document.body.classList.contains("landing-active")) {
+            __prepareLandingEnterGate({ deviceName: displayName, cfg });
+            await enterAppWithLiquidTransition(__landingClickOrigin);
+          }
+
+          __writesEnabled = true;
+
+          if (typeof applyKeymapFromCfg === "function") {
+            const cachedCfg = getCachedDeviceConfig();
+            if (cachedCfg) applyKeymapFromCfg(cachedCfg);
+          }
+          return displayName;
         } finally {
           if (__activeHandshakeSeq === handshakeSeq) __activeHandshakeSeq = 0;
         }
@@ -8931,7 +9219,7 @@ function openDrawer(btn) {
       let chosenDev = null;
       let handshakeCfg = null;
 
-      for (const cand of candidates) {
+      for (const plan of handshakePlans) {
         for (let i = 0; i < 2; i++) {
           try {
             if (i > 0) {
@@ -8944,12 +9232,15 @@ function openDrawer(btn) {
               await new Promise(r => setTimeout(r, 500));
             }
 
-            displayName = await performHandshake(cand);
-            chosenDev = cand;
+            displayName = await performHandshake(plan);
+            chosenDev = normalizeConnectionPlan(plan)?.controlDevice || null;
             break;
           } catch (err) {
             lastErr = err;
-            console.warn(`Handshake failed (cand=${cand?.vendorId?.toString?.(16)}:${cand?.productId?.toString?.(16)} attempt=${i+1}):`, err);
+            console.warn(
+              `Handshake failed (plan=${plan?.debugLabel || describeConnectionPlan(plan)} attempt=${i + 1}):`,
+              err
+            );
           }
         }
         if (displayName) break;
@@ -8963,7 +9254,7 @@ function openDrawer(btn) {
         await new Promise(r => setTimeout(r, 120));
       }
 
-      if (!displayName) throw lastErr;
+      if (!displayName) throw (lastErr || new Error("No HID connection plan available."));
 
 
       hidLinked = true;
@@ -8977,18 +9268,17 @@ function openDrawer(btn) {
       }
 
 
-      requestBatterySafe("connect");
-
       setHeaderChipsVisible(true);
+      const sessionBatteryText = __getCurrentSessionBatteryText();
       if (hdrBatteryVal) {
-        hdrBatteryVal.textContent = currentBatteryText || "-";
-        hdrBatteryVal.classList.toggle("connected", !!currentBatteryText);
+        hdrBatteryVal.textContent = sessionBatteryText || "-";
+        hdrBatteryVal.classList.toggle("connected", !!sessionBatteryText);
       }
       if (hdrHidVal) {
         hdrHidVal.textContent = `${window.tr("已连接 · ", "Connected · ")}${displayName}`;
         hdrHidVal.classList.add("connected");
       }
-      updateDeviceStatus(true, displayName, currentBatteryText || "", currentFirmwareText || "");
+      updateDeviceStatus(true, displayName, sessionBatteryText, currentFirmwareText || "");
 
       if (chosenDev) dev = chosenDev;
 
@@ -9181,7 +9471,12 @@ function openDrawer(btn) {
       navigator.hid.addEventListener("disconnect", (e) => {
         try {
           const api = window.__HID_API_INSTANCE__;
-          if (api?.device && e?.device === api.device) {
+          const matches = (
+            typeof api?.matchesHidDevice === "function"
+              ? api.matchesHidDevice(e?.device)
+              : (api?.device && e?.device === api.device)
+          );
+          if (matches) {
             disconnectHid().catch(() => {});
           }
         } catch {}
@@ -9201,10 +9496,6 @@ function openDrawer(btn) {
     setTimeout(() => __runHeavyTaskSafely(initAutoConnect), 300);
   }
 
-
-  if (adapterFeatures.supportsBatteryRequest !== false) {
-    setTimeout(() => __runHeavyTaskSafely(() => requestBatterySafe(window.tr("页面进入", "Page Enter"))), 1400);
-  }
 
   log(window.tr(
     "页面已加载。点击页面顶部设备卡片开始连接设备",

@@ -236,7 +236,11 @@
         surfaceFeelRequiredDpiLightValue: 1,
         staticLedColorRequiresDpiLightEffect: false,
         staticLedColorRequiredDpiLightValue: 0,
-        supportsBatteryRequest: false,
+        // Battery source contract:
+        // - passive: rely on cfg/onBattery updates pushed by the protocol/device.
+        // - active: use requestBattery() prime + polling.
+        // - hybrid: accept passive updates and also allow active refresh.
+        batteryReadMode: "passive",
         batteryPollMs: 120000,
         batteryPollTag: "2min",
         enterDelayMs: 0,
@@ -357,7 +361,7 @@
       hasReceiverLightCycle: true,
       hasDpiColors: true,
       hideSportPerfMode: true,
-      supportsBatteryRequest: true,
+      batteryReadMode: "active",
       batteryPollMs: 60000,
       batteryPollTag: "60s",
       enterDelayMs: 120,
@@ -463,7 +467,7 @@
       surfaceFeelRequiredDpiLightValue: 1,
       staticLedColorRequiresDpiLightEffect: false,
       staticLedColorRequiredDpiLightValue: 0,
-      supportsBatteryRequest: true,
+      batteryReadMode: "active",
       batteryPollMs: 60000,
       batteryPollTag: "60s",
       enterDelayMs: 0,
@@ -791,7 +795,7 @@
       keymapButtonCount: 5,
       // Ninjutso protocol writes slot count first and then requires readback for stable slot DPI display.
       deferDpiSlotCountUiUntilAck: true,
-      supportsBatteryRequest: true,
+      batteryReadMode: "active",
       batteryPollMs: 60000,
       batteryPollTag: "60s",
     },
@@ -1161,7 +1165,7 @@
       hasSurfaceMode: false,
       hasBhopDelay: false,
       deferDpiSlotCountUiUntilAck: false,
-      supportsBatteryRequest: true,
+      batteryReadMode: "active",
       batteryPollMs: 60000,
       batteryPollTag: "60s",
       keymapButtonCount: 6,
