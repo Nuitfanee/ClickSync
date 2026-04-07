@@ -4382,7 +4382,7 @@ body.dark .stagehead{
 }
 
 .topDeviceName{
-    max-width: 180px;
+    max-width: clamp(220px, 28vw, 420px);
     font-size: clamp(16px, 0.82vw, 20px);
     line-height: 1.15;
     font-weight: 700;
@@ -4649,7 +4649,7 @@ body.dark #themeBtn::after{
         margin-right: 0;
     }
     .topDeviceName{
-        max-width: 84px;
+        max-width: 132px;
         font-size: 12px;
     }
     .topBatteryWrap{
@@ -5758,8 +5758,10 @@ body.landing-system-ready #landing-layer .os-cursor-dot{ opacity: 0; }
 /* Inner tabs (Ultra-Liquid Segmented Style) */
 #testtools .ttTabs {
   --glider-index: 0;
+  --tt-desktop-link-space: 152px;
   display: flex;
   margin: calc(var(--spacing-lg) * -1) calc(var(--spacing-lg) * -1) var(--spacing-md) calc(var(--spacing-lg) * -1);
+  padding-right: calc(var(--tt-desktop-link-space) + 16px);
   gap: 0;
   border-bottom: 1px solid var(--border);
   background: #ffffff;
@@ -5787,7 +5789,7 @@ body.landing-system-ready #landing-layer .os-cursor-dot{ opacity: 0; }
   top: 4px;
   left: 0;
   height: calc(100% - 8px);
-  width: 25%;
+  width: calc((100% - var(--tt-desktop-link-space) - 16px) / 4);
   background: #000000;
   color: #000000;
   border-radius: 999px;
@@ -5869,6 +5871,48 @@ body.landing-system-ready #landing-layer .os-cursor-dot{ opacity: 0; }
   font-weight: 700;
 }
 
+#testtools .ttDesktopToolLink{
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(var(--tt-desktop-link-space) - 16px);
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid #000000;
+  background: #000000;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  transition: background .2s ease, color .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+}
+
+#testtools .ttDesktopToolLink:hover{
+  background: #151515;
+  color: #ffffff;
+  border-color: #151515;
+  box-shadow: 0 10px 26px rgba(0,0,0,.24);
+}
+
+#testtools .ttDesktopToolLink:focus{
+  outline: none;
+}
+
+#testtools .ttDesktopToolLink:focus-visible{
+  outline: 2px solid rgba(0,0,0,.18);
+  outline-offset: 2px;
+}
+
 /* 暗色模式适配 */
 body.dark #testtools .ttTabs {
   background: #1a1a1a;
@@ -5883,6 +5927,16 @@ body.dark #testtools .ttTab {
 }
 body.dark #testtools .ttTab.active {
   color: #000000 !important;
+}
+body.dark #testtools .ttDesktopToolLink{
+  background: #000000;
+  color: #ffffff;
+  border-color: #000000;
+  box-shadow: 0 10px 24px rgba(0,0,0,.32);
+}
+body.dark #testtools .ttDesktopToolLink:hover{
+  background: #151515;
+  border-color: #151515;
 }
 
 #testtools .ttPages{
