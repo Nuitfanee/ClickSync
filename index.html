@@ -16,7 +16,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Click Sync</title>
   <meta name="color-scheme" content="light dark" />
-  <meta name="app-asset-version" content="2026.03.06.1" />
+  <meta name="app-asset-version" content="2026.03.27.9" />
   <!-- Font preconnect optimization -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1114,7 +1114,7 @@
                         <span class="slider-sub">对称模式档位 0 - 2</span>
                       </div>
                       <div class="height-visual-group">
-                        <div class="value-readout" data-unit="">0</div>
+                        <div class="value-readout" data-unit="">1</div>
                         <div class="height-visual">
                           <div class="height-guide"></div>
                           <div class="height-surface"></div>
@@ -1124,7 +1124,7 @@
                     </div>
                     <div class="range-wrap">
                       <div class="custom-track"></div>
-                      <input type="range" min="0" max="2" step="1" value="0" data-adv-item="smartTrackingLevel" data-adv-control="range" data-std-key="smartTrackingLevel" aria-label="Smart Tracking Level" />
+                      <input type="range" min="0" max="2" step="1" value="1" data-adv-item="smartTrackingLevel" data-adv-control="range" data-std-key="smartTrackingLevel" aria-label="Smart Tracking Level" />
                     </div>
                   </div>
                 </div>
@@ -1138,11 +1138,11 @@
                           <span class="slider-name">抬起距离</span>
                           <span class="slider-sub">范围 2 - 26</span>
                         </div>
-                        <div class="value-readout" data-unit="">2</div>
+                        <div class="value-readout" data-unit="">13</div>
                       </div>
                       <div class="range-wrap">
                         <div class="custom-track"></div>
-                        <input type="range" min="2" max="26" step="1" value="2" data-adv-item="smartTrackingLiftDistance" data-adv-control="range" data-std-key="smartTrackingLiftDistance" aria-label="Smart Tracking Lift Distance" />
+                        <input type="range" min="2" max="26" step="1" value="13" data-adv-item="smartTrackingLiftDistance" data-adv-control="range" data-std-key="smartTrackingLiftDistance" aria-label="Smart Tracking Lift Distance" />
                       </div>
                     </div>
                     <div class="slider-card" data-adv-item="smartTrackingLandingDistance" data-adv-control="range" data-std-key="smartTrackingLandingDistance" aria-label="Smart Tracking 落地距离">
@@ -1153,11 +1153,11 @@
                           <span class="slider-name">落地距离</span>
                           <span class="slider-sub">范围 1 - 25</span>
                         </div>
-                        <div class="value-readout" data-unit="">1</div>
+                        <div class="value-readout" data-unit="">12</div>
                       </div>
                       <div class="range-wrap">
                         <div class="custom-track"></div>
-                        <input type="range" min="1" max="25" step="1" value="1" data-adv-item="smartTrackingLandingDistance" data-adv-control="range" data-std-key="smartTrackingLandingDistance" aria-label="Smart Tracking Landing Distance" />
+                        <input type="range" min="1" max="25" step="1" value="12" data-adv-item="smartTrackingLandingDistance" data-adv-control="range" data-std-key="smartTrackingLandingDistance" aria-label="Smart Tracking Landing Distance" />
                       </div>
                     </div>
                   </div>
@@ -1232,6 +1232,13 @@
               <button class="btn ttTab" id="navRot" type="button">鼠标角度校准</button>
               <button class="btn ttTab" id="navPoll" type="button">轮询率检测</button>
               <button class="btn ttTab" id="navMatch" type="button">灵敏度匹配</button>
+              <a
+                class="ttDesktopToolLink"
+                href="https://github.com/Nuitfanee/ClickSyncMouseTester/releases"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="桌面版工具"
+              >桌面版工具</a>
             </div>
 
             <!-- Test-tool page container -->
@@ -1791,25 +1798,25 @@
   <!-- ==================== JavaScript Script References ==================== -->
   <!-- Note: script load order is critical; do not reorder casually -->
   <script>
-    window.__APP_ASSET_VERSION__ = "2026.03.06.1";
+    window.__APP_ASSET_VERSION__ = "2026.03.27.9";
     try { document.documentElement.dataset.assetVersion = window.__APP_ASSET_VERSION__; } catch (_) {}
     try { console.info(`[Assets] JS version ${window.__APP_ASSET_VERSION__}`); } catch (_) {}
   </script>
   <!-- Device runtime: core HID connection and communication -->
-  <script src="./src/core/device_runtime.js?v=2026.03.06.1"></script>
-  <script src="./src/core/i18n.literals.js?v=2026.03.06.1"></script>
+  <script src="./src/core/device_runtime.js?v=2026.03.27.9"></script>
+  <script src="./src/core/i18n.literals.js?v=2026.03.27.9"></script>
   <!-- Refactor utilities: shared utility functions and helpers -->
-  <script src="./src/refactor/refactor.core.js?v=2026.03.06.1"></script>
-  <script src="./src/refactor/refactor.profiles.js?v=2026.03.06.1"></script>
-  <script src="./src/refactor/refactor.ui.js?v=2026.03.06.1"></script>
+  <script src="./src/refactor/refactor.core.js?v=2026.03.27.9"></script>
+  <script src="./src/refactor/refactor.profiles.js?v=2026.03.27.9"></script>
+  <script src="./src/refactor/refactor.ui.js?v=2026.03.27.9"></script>
   <!-- Main application logic: routing, UI interactions, and data binding -->
-  <script src="./src/core/app.js?v=2026.03.06.1"></script>
+  <script src="./src/core/app.js?v=2026.03.27.9"></script>
   <!-- Main mouse test features: key mapping, DPI, performance, and more -->
-  <script src="./src/tools/mouse-main.js?v=2026.03.06.1"></script>
+  <script src="./src/tools/mouse-main.js?v=2026.03.27.9"></script>
   <!-- Navigation and matching tools: sensitivity matching feature -->
-  <script src="./src/tools/nav-match.js?v=2026.03.06.1"></script>
+  <script src="./src/tools/nav-match.js?v=2026.03.27.9"></script>
   <!-- Angle calibration tool: mouse angle calibration feature -->
-  <script src="./src/tools/rotation-calibration.js?v=2026.03.06.1"></script>
+  <script src="./src/tools/rotation-calibration.js?v=2026.03.27.9"></script>
 
   <script>
   /**
