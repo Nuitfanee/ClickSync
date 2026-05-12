@@ -1366,12 +1366,15 @@ body.dark .pill:hover {
     min-height: 0;
   }
   .topToolbar {
-    width: 100%;
-    justify-content: flex-start;
+    width: max-content;
+    max-width: 100%;
+    margin-left: auto;
+    justify-content: flex-end;
     gap: 10px;
   }
   .topSlotBar {
     gap: 16px;
+    max-width: 44vw;
   }
   .topSlotBtn {
     font-size: 12px;
@@ -1382,11 +1385,12 @@ body.dark .pill:hover {
     margin: 0 2px;
   }
   .topDeviceMeta {
+    flex: 0 1 auto;
     gap: 6px;
     margin-right: 0;
   }
   .topDeviceName {
-    max-width: 84px;
+    max-width: 112px;
     font-size: 12px;
   }
   .topBatteryWrap {
@@ -4508,7 +4512,8 @@ body.dark .stagehead{
 }
 
 .topToolbar{
-    width: min(100%, 980px);
+    width: max-content;
+    max-width: 100%;
     margin-left: auto;
     display: flex;
     align-items: center;
@@ -4516,13 +4521,14 @@ body.dark .stagehead{
     gap: 12px;
     position: relative;
     top: 12px;
-    left: -30px;
     z-index: 4;
 }
 
 
 .topSlotBar{
+    flex: 0 1 auto;
     min-width: 0;
+    max-width: min(48vw, 720px);
     display: flex;
     align-items: flex-end;
     gap: clamp(16px, 1.6vw, 30px);
@@ -4596,22 +4602,27 @@ body.dark .stagehead{
 }
 
 .topToolbarDivider{
+    flex: 0 0 auto;
     width: 1px;
     height: 34px;
     background: rgba(0,0,0,.14);
-    margin: 0 2px 0 6px;
+    margin: 0 4px;
 }
 
 .topDeviceMeta{
+    flex: 0 1 auto;
     min-width: 0;
+    max-width: min(36vw, 460px);
     display: inline-flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 10px;
-    margin-right: 2px;
+    margin-right: 0;
 }
 
 .topDeviceName{
-    max-width: clamp(220px, 28vw, 420px);
+    flex: 0 1 auto;
+    max-width: clamp(180px, 24vw, 360px);
     font-size: clamp(16px, 0.82vw, 20px);
     line-height: 1.15;
     font-weight: 700;
@@ -4623,9 +4634,11 @@ body.dark .stagehead{
 }
 
 .topBatteryWrap{
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    white-space: nowrap;
 }
 
 .topBatteryPercent{
@@ -4678,6 +4691,7 @@ body.dark .stagehead{
 }
 
 .topIconBtn{
+    flex: 0 0 auto;
     width: 32px;
     height: 32px;
     border: none;
@@ -4709,6 +4723,7 @@ body.dark .stagehead{
 }
 
 .topLangBtn{
+    flex: 0 0 auto;
     width: auto;
     min-width: 64px;
     padding: 0 6px;
@@ -4720,6 +4735,9 @@ body.dark .stagehead{
     font-size: 20px;
     line-height: 1;
     letter-spacing: 0;
+    white-space: nowrap;
+    word-break: keep-all;
+    writing-mode: horizontal-tb;
 }
 
 /* 主题按钮改为精致的滑钮样式 */
@@ -4858,12 +4876,15 @@ body.dark #themeBtn::after{
         min-height: 0;
     }
     .topToolbar{
-        width: 100%;
-        justify-content: flex-start;
+        width: max-content;
+        max-width: 100%;
+        margin-left: auto;
+        justify-content: flex-end;
         gap: 10px;
     }
     .topSlotBar{
         gap: 16px;
+        max-width: 44vw;
     }
     .topSlotBtn{
         font-size: 12px;
@@ -4874,11 +4895,12 @@ body.dark #themeBtn::after{
         margin: 0 2px;
     }
     .topDeviceMeta{
+        flex: 0 1 auto;
         gap: 6px;
         margin-right: 0;
     }
     .topDeviceName{
-        max-width: 132px;
+        max-width: 112px;
         font-size: 12px;
     }
     .topBatteryWrap{
@@ -5010,6 +5032,8 @@ body.page-basic .stagebody {
 }
 
 #basicMonolith{
+  --basic-bottom-rail-width: 900px;
+  --basic-bottom-rail-gutter: 160px;
   position: relative;
   min-height: calc(100vh - 140px);
   display: flex;
@@ -5149,7 +5173,9 @@ body.page-basic #basicSynapseLayer{ display: block; }
 
 /* 底部 */
 #basicMonolith .basicFooter{
-  padding: 40px 40px 30px 200px;
+  width: min(var(--basic-bottom-rail-width), calc(100% - var(--basic-bottom-rail-gutter)));
+  margin: 0 auto;
+  padding: 40px 0 30px;
 
 
   font-size: 15px;
@@ -5184,35 +5210,40 @@ body.dark {
 
 #basicMonolith .basicRapooSwitches{
   display: none;
-  padding: 0 100px 32px 200px;
-  gap: 24px;
+  width: min(var(--basic-bottom-rail-width), calc(100% - var(--basic-bottom-rail-gutter)));
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 0 0 32px;
+  grid-template-columns: max-content max-content;
+  row-gap: 24px;
+  column-gap: 64px;
   align-items: stretch;
   justify-content: space-between;
-  flex-wrap: wrap;
   z-index: 20;
   mix-blend-mode: exclusion;
 }
 
 body.device-rapoo #basicMonolith .basicRapooSwitches{
-  display: flex;
+  display: grid;
 }
 
 #basicMonolith .basicMiniSwitch{
   position: relative;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 58px;
   grid-template-rows: auto auto;
-  gap: 6px 20px;
-  padding: 18px 22px;
+  gap: 6px 10px;
+  padding: 18px 18px;
   border-radius: 0;
   border: none;
   background: transparent;
   cursor: pointer;
   user-select: none;
   transition: all 0.4s var(--trans-curve);
-  flex: 1;
-  min-width: 280px;
-  max-width: 360px;
+  flex: 0 0 auto;
+  width: fit-content;
+  min-width: 0;
+  max-width: none;
   overflow: hidden;
 }
 
@@ -5247,9 +5278,9 @@ body.device-rapoo #basicMonolith .basicRapooSwitches{
 
 /* 主标题：大字体，outline效果 */
 #basicMonolith .basicMiniSwitch .miniTitle{
-  font-size: clamp(24px, 3.2vw, 42px);
+  font-size: clamp(22px, 2.8vw, 36px);
   font-weight: 900;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   line-height: 0.85;
   white-space: nowrap;
@@ -5263,7 +5294,7 @@ body.device-rapoo #basicMonolith .basicRapooSwitches{
 #basicMonolith .basicMiniSwitch:focus-within .miniTitle{
   -webkit-text-stroke: 1.5px var(--ink);
   transform: scale(1.02);
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
 }
 
 /* 激活状态：填充独立颜色 */
@@ -5308,9 +5339,9 @@ body.device-rapoo #basicMonolith .basicRapooSwitches{
 #basicMonolith .basicMiniSwitch .miniState{
   grid-column: 2;
   grid-row: 1;
-  font-size: clamp(12px, 1.5vw, 16px);
+  font-size: clamp(11px, 1.1vw, 13px);
   font-weight: 900;
-  letter-spacing: 0.15em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   opacity: 0.6;
   transition: all 0.4s var(--trans-curve);
@@ -5318,6 +5349,9 @@ body.device-rapoo #basicMonolith .basicRapooSwitches{
   white-space: nowrap;
   position: relative;
   padding-top: 2px;
+  min-width: 0;
+  text-align: right;
+  justify-self: end;
 }
 
 #basicMonolith .basicMiniSwitch:hover .miniState,
@@ -5391,6 +5425,7 @@ body.device-rapoo #basicMonolith .basicRapooSwitches{
   padding: 2px;
   display: inline-flex;
   align-items: center;
+  justify-self: end;
   transition: all 0.5s var(--trans-curve);
   position: relative;
   overflow: hidden;
@@ -5538,8 +5573,12 @@ body.device-rapoo #basicMonolith .basicRapooSwitches{
 /* 响应式调整 */
 @media (max-width: 920px){
   #basicMonolith .basicRapooSwitches{
+    width: auto;
+    margin: 0;
     padding: 0 40px 24px 20px;
     gap: 20px;
+    grid-template-columns: 1fr;
+    justify-content: stretch;
   }
   
   #basicMonolith .basicMiniSwitch{
@@ -9661,8 +9700,9 @@ body.dark #basicMonolith .basicMiniSwitch .miniTrack {
 }
 
 body.dark #basicMonolith .basicMiniSwitch input:checked + .miniTrack {
-  background: var(--surface-invert);
-  border-color: var(--surface-invert);
+  background: #050506 !important;
+  border-color: rgba(255, 255, 255, 0.72) !important;
+  box-shadow: 6px 6px 0 rgba(255, 255, 255, 0.12);
 }
 
 body.dark #basicMonolith .basicMiniSwitch .miniThumb {
@@ -9671,8 +9711,18 @@ body.dark #basicMonolith .basicMiniSwitch .miniThumb {
 }
 
 body.dark #basicMonolith .basicMiniSwitch input:checked + .miniTrack .miniThumb {
-  background: #050506;
-  border-color: #050506;
+  background: #050506 !important;
+  border-color: #050506 !important;
+}
+
+body.dark #basicMonolith .basicMiniSwitch:has(#wirelessStrategyToggle:checked) .miniTrack .miniThumb {
+  background: var(--rapoo-wireless-color) !important;
+  border-color: #050506 !important;
+}
+
+body.dark #basicMonolith .basicMiniSwitch:has(#commProtocolToggle:checked) .miniTrack .miniThumb {
+  background: var(--rapoo-protocol-color) !important;
+  border-color: #050506 !important;
 }
 
 body.dark #basicMonolith .basicMiniSwitch input:checked + .miniTrack .miniThumb::before {

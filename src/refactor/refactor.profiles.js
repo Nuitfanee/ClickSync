@@ -320,8 +320,19 @@
   // ============================================================
 
   const AtkProfile = composeDeviceProfile({
-    id: "atk",
+id: "atk",
     ui: {
+      keymap: {
+        imageSrc: "./assets/images/ATK.webp",
+        points: {
+          1: { x: 34, y: 18, side: "left" },
+          2: { x: 64, y: 37, side: "right" },
+          3: { x: 50, y: 25, side: "right" },
+          4: { x: 24, y: 39, side: "left" },
+          5: { x: 25, y: 52, side: "left" },
+          6: { x: 52, y: 74, side: "right" },
+        },
+      },
       landingReadyText: "ATK READY",
       landingTitle: atkTexts.landingTitle,
       landingCaption: atkTexts.landingCaption,

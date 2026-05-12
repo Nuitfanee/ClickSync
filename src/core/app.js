@@ -840,6 +840,11 @@
   function commitCycleVisual(container, value, label, colorClass, syncForm) {
     if (!container) return;
     const { baseLayer, nextLayer, textEl } = getCycleVisualParts(container);
+    const normalizedValue = String(value);
+    if (container.classList.contains('is-animating') && String(container.dataset.value || "") === normalizedValue) {
+      if (typeof syncForm === 'function') syncForm(value);
+      return;
+    }
     cancelCycleAnim(container);
     if (nextLayer) nextLayer.className = 'shutter-bg-next ' + colorClass;
     if (baseLayer) baseLayer.className = 'shutter-bg-base ' + colorClass;
@@ -857,6 +862,7 @@
 
     cancelCycleAnim(container);
     if (typeof syncForm === 'function') syncForm(value);
+    textEl.textContent = toDisplayActionLabel(label);
 
     const state = getCycleAnimState(container);
     const token = state.token + 1;
@@ -3285,7 +3291,9 @@ function lockEl(el) {
      */
     const updateLineOnce = () => {
       if (!document.body.classList.contains("page-basic")) return;
-      if (!__basicActiveModeEl || !__basicActiveHzEl || !__basicSvgPath) return;
+      if (__hideBasicSynapse) return;
+      if (!__basicActiveModeEl || !__basicActiveHzEl || !__basicSvgLayer || !__basicSvgPath) return;
+      if (__basicSvgLayer.style.display === "none") return;
       syncSvgBox();
 
       const a = getAttachPoint(__basicActiveModeEl, "left");
@@ -3309,6 +3317,16 @@ function lockEl(el) {
      * @returns {any} Start result.
      */
     const startLineAnimation = (duration = 800) => {
+      if (__hideBasicSynapse || !__basicSvgLayer || !__basicSvgPath) {
+        if (lineRafId) cancelAnimationFrame(lineRafId);
+        lineRafId = 0;
+        return;
+      }
+      if (__basicSvgLayer.style.display === "none") {
+        if (lineRafId) cancelAnimationFrame(lineRafId);
+        lineRafId = 0;
+        return;
+      }
       if (lineRafId) cancelAnimationFrame(lineRafId);
       const start = performance.now();
 
@@ -3331,27 +3349,23 @@ function lockEl(el) {
     };
 
 
-    if (__hideBasicSynapse) {
-      __startLineAnimation = null;
-    } else {
-      __startLineAnimation = startLineAnimation;
+    __startLineAnimation = startLineAnimation;
 
 
-      window.addEventListener("resize", () => startLineAnimation(100));
+    window.addEventListener("resize", () => startLineAnimation(100));
 
 
-      const sidebar = document.querySelector('.sidebar');
-      if (sidebar) {
-          sidebar.addEventListener('transitionend', (e) => {
-            if (!e || e.target !== sidebar) return;
-            if (e.propertyName !== "width" && e.propertyName !== "padding-left") return;
-            startLineAnimation(120);
-          });
-      }
-
-
-      startLineAnimation(100);
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar) {
+        sidebar.addEventListener('transitionend', (e) => {
+          if (!e || e.target !== sidebar) return;
+          if (e.propertyName !== "width" && e.propertyName !== "padding-left") return;
+          startLineAnimation(120);
+        });
     }
+
+
+    startLineAnimation(100);
 
 
     syncBasicMonolithUI();
@@ -8607,6 +8621,10 @@ function openDrawer(btn) {
     });
   }
 
+  window.addEventListener("uilangchange", () => {
+    try { syncBasicExtraSwitchState(); } catch (_) {}
+  });
+
 
   const longRangeToggle = getAdvancedToggleInput("longRangeMode", { region: ADV_REGION_DUAL_RIGHT });
   if (longRangeToggle) {
@@ -8779,19 +8797,35 @@ function openDrawer(btn) {
    */
   function syncBasicExtraSwitchState() {
     const wsToggle = $("#wirelessStrategyToggle");
+    const wsTitle = document.querySelector('label[for="wirelessStrategyToggle"] .miniTitle');
+    const wsSub = document.querySelector('label[for="wirelessStrategyToggle"] .miniSub');
     const wsState = $("#wirelessStrategyState");
+    if (wsTitle) {
+      wsTitle.textContent = window.tr("无线策略", "RF Mode");
+    }
+    if (wsSub) {
+      wsSub.textContent = window.tr("智能调节 / 满格射频", "Smart / Full");
+    }
     if (wsToggle && wsState) {
       wsState.textContent = wsToggle.checked
-        ? window.tr("满格射频", "Full RF")
+        ? window.tr("满格射频", "Full")
         : window.tr("智能调节", "Smart");
     }
 
     const cpToggle = $("#commProtocolToggle");
+    const cpTitle = document.querySelector('label[for="commProtocolToggle"] .miniTitle');
+    const cpSub = document.querySelector('label[for="commProtocolToggle"] .miniSub');
     const cpState = $("#commProtocolState");
+    if (cpTitle) {
+      cpTitle.textContent = window.tr("通信协议", "LINK");
+    }
+    if (cpSub) {
+      cpSub.textContent = window.tr("高效 / 初始", "Fast / Init");
+    }
     if (cpToggle && cpState) {
       cpState.textContent = cpToggle.checked
-        ? window.tr("初始", "Initial")
-        : window.tr("高效", "Efficient");
+        ? window.tr("初始", "Init")
+        : window.tr("高效", "Fast");
     }
   }
 
