@@ -1,6 +1,6 @@
 # Device UI Regression Checklist
 
-适用范围：当前项目已接入的 6 个设备品牌 UI 回归。  
+适用范围：当前项目已接入的 7 个设备品牌 UI 回归。  
 目标：在每次修改 `device_runtime.js`、`refactor.core.js`、`refactor.profiles.js`、`refactor.ui.js`、`app.js` 或 keymap 图片资源后，快速确认“主页面、按键映射图、主题类名、高级面板”没有串线或缺失。
 
 关联代码：
@@ -289,11 +289,33 @@
   - 应显示 `smartTrackingComposite`
   - 应显示 `lowPowerThresholdPercent`
   - 应显示 `hyperpollingIndicator`
-### 4.7 跨设备切换矩阵
+### 4.7 CRDRAKO
+
+基础预期：
+- `runtimeDevice = "crdrako"`
+- `bodyClasses` 只应包含 `device-crdrako`
+- 按键映射图应为 `./assets/images/CRDRAKO_KO_ONE.png`
+- 按键热点应为 `1,2,3,4,5`
+
+主页面预期：
+- 性能模式区域可见
+- 配置槽位不可见
+- 双回报率 UI 不可见
+
+高级面板预期：
+- 布局应为 `dual`
+- `surfaceFeel` 只应显示在右侧 `cycle` 面板，左侧 `surfaceFeel` 滑条不应显示
+- `surfaceFeel` 点击顺序为 `0.7mm -> 1mm -> 2mm -> 0.7mm`
+- `scrollHpMode` 应显示在右侧 `cycle` 面板，点击顺序为 `关闭(0) -> 上滚(2) -> 下滚(3) -> 双向(1)`
+- `scrollHpWindowMs` 应显示在左侧离散 range 面板，档位为 `100/200/300/400/500/1000ms`
+- 当 `scrollHpMode = 0`、`hasScrollHp` 为 false 或 `capabilities.scrollHp !== true` 时，`scrollHpWindowMs` 面板必须锁定
+- 当 `capabilities.surfaceFeel`、`capabilities.speedEnable` 或 `capabilities.scrollHp` 缺失/为 false 时，对应整卡必须隐藏，且不能触发写入
+
+### 4.8 跨设备切换矩阵
 
 按以下顺序完成跨设备切换并在 DPI 页停留验证：
 
-1. Logitech -> Chaos / Rapoo / ATK / Ninjutso / Razer
+1. Logitech -> Chaos / Rapoo / ATK / Ninjutso / CRDRAKO / Razer
    - `.dpiLodSwitch` 仅当目标设备 `hasDpiLods = true` 时存在
    - DPI 副标题必须是通用编辑提示，不能残留 Logitech 文案
    - DPI 行数、轴模式、范围都按目标设备重建
@@ -320,8 +342,8 @@
 
 在一次完整回归中，至少满足以下结果才算通过：
 
-1. 6 个设备都不会出现主页面主题串线
-2. 6 个设备的按键映射图都能成功加载，不出现破图
+1. 7 个设备都不会出现主页面主题串线
+2. 7 个设备的按键映射图都能成功加载，不出现破图
 3. 设备按钮数量与 `keymapButtonCount` 一致
 4. Ninjutso 同时具备真实设备类和 ATK 皮肤类
 5. Logitech 的单列高级面板与配置槽/双回报率同时正确

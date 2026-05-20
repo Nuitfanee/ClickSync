@@ -26,8 +26,8 @@ class UpdateResult:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Interactively bump local JS asset versions.")
-    parser.add_argument("version", nargs="?", help="Explicit target version, e.g. 2026.03.06.2")
+    parser = argparse.ArgumentParser(description="Interactively set local JS asset versions.")
+    parser.add_argument("version", nargs="?", help="Explicit target version, e.g. 2026.05.13")
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without writing files")
     parser.add_argument("--yes", action="store_true", help="Skip prompts and apply suggested/custom version directly")
     return parser
@@ -49,16 +49,12 @@ def resolve_current_version(content: str) -> str:
     return ""
 
 
-def resolve_suggested_version(current_version: str) -> str:
-    today_prefix = get_today_prefix()
-    match = re.fullmatch(r"(\d{4}\.\d{2}\.\d{2})\.(\d+)", current_version or "")
-    if match and match.group(1) == today_prefix:
-        return f"{today_prefix}.{int(match.group(2)) + 1}"
-    return f"{today_prefix}.1"
+def resolve_suggested_version(_current_version: str) -> str:
+    return get_today_prefix()
 
 
 def is_valid_version(version: str) -> bool:
-    return bool(re.fullmatch(r"\d{4}\.\d{2}\.\d{2}\.\d+", version.strip()))
+    return bool(re.fullmatch(r"\d{4}\.\d{2}\.\d{2}(?:\.\d+)?", version.strip()))
 
 
 def prompt_yes_no(prompt: str, default: bool = True) -> bool:

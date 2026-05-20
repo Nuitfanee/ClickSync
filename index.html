@@ -599,6 +599,47 @@
                     <input type="range" id="debounceInput" min="0" max="4" step="1" value="0" data-adv-item="debounceMs" data-adv-control="range" data-std-key="debounceMs" />
                   </div>
                 </div>
+
+                <!-- Capability-gated feature: competitive wheel window time -->
+                <div class="slider-card" id="scrollHpWindowMsCard" aria-label="竞技滚轮窗口时间" data-adv-item="scrollHpWindowMs" data-adv-control="range" data-std-key="scrollHpWindowMs" style="display: none;">
+                  <div class="card-corner corner-tl"></div><div class="card-corner corner-tr"></div>
+                  <div class="card-corner corner-bl"></div><div class="card-corner corner-br"></div>
+
+                  <div class="slider-header-row">
+                    <div class="slider-info">
+                      <span class="slider-name">竞技滚轮窗口</span>
+                      <span class="slider-sub">RANGE // 100ms - 1000ms</span>
+                    </div>
+
+                    <div class="debounce-visual-group wide-mode">
+                      <div class="value-readout" id="scrollHpWindowMsValue" data-unit="ms">100</div>
+                      <div class="debounce-visual-wide">
+                        <div class="debounce-scale">
+                          <i></i><i></i><i></i><i></i><i></i><i></i>
+                        </div>
+                        <div class="debounce-bar-wide" id="scrollHpWindowMsBar">
+                          <div class="bar-texture"></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="range-wrap">
+                    <div class="custom-track"></div>
+                    <input type="range" id="scrollHpWindowMsInput" min="0" max="5" step="1" value="0" data-adv-item="scrollHpWindowMs" data-adv-control="range" data-std-key="scrollHpWindowMs" aria-label="竞技滚轮窗口时间" />
+                  </div>
+
+                  <div class="adv-cycle-select-wrap" aria-hidden="true" style="display: none;">
+                    <select class="input adv-cycle-select" id="scrollHpWindowMsSelect" tabindex="-1" data-adv-item="scrollHpWindowMs" data-adv-control="select" data-std-key="scrollHpWindowMs" aria-label="竞技滚轮窗口时间">
+                      <option value="100">100</option>
+                      <option value="200">200</option>
+                      <option value="300">300</option>
+                      <option value="400">400</option>
+                      <option value="500">500</option>
+                      <option value="1000">1000</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
               <!-- Hidden form controls: retained for backward-compatible data write paths -->
@@ -748,6 +789,99 @@
                   </div>
                 </div>
               </label>
+
+              <!-- Capability-gated feature: SpeedClick / SPDT quick trigger left button -->
+              <label class="advShutterItem" id="speedClickLeftItem" data-adv-item="speedClickLeft" data-adv-control="toggle" data-std-key="speedClickLeft" style="display: none;">
+                <input type="checkbox" class="raw-input" id="speedClickLeftToggle" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">SPDT // 左键</span>
+                      <span class="label-title">按键SpeedClick</span>
+                      <span class="label-desc">开启触动SPDT状态，使按键触发更快</span>
+                    </div>
+                    <div class="status-indicator">
+                      <span class="status-text" data-off="OFF" data-on="ON"></span>
+                      <div class="crosshair"></div>
+                    </div>
+                  </div>
+                </div>
+              </label>
+
+              <!-- Capability-gated feature: SpeedClick / SPDT quick trigger right button -->
+              <label class="advShutterItem" id="speedClickRightItem" data-adv-item="speedClickRight" data-adv-control="toggle" data-std-key="speedClickRight" style="display: none;">
+                <input type="checkbox" class="raw-input" id="speedClickRightToggle" />
+                <div class="shutter-row">
+                  <div class="shutter-bg"></div><div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">SPDT // 右键</span>
+                      <span class="label-title">按键SpeedClick</span>
+                      <span class="label-desc">开启触动SPDT状态，使按键触发更快</span>
+                    </div>
+                    <div class="status-indicator">
+                      <span class="status-text" data-off="OFF" data-on="ON"></span>
+                      <div class="crosshair"></div>
+                    </div>
+                  </div>
+                </div>
+              </label>
+
+              <!-- Capability-gated feature: competitive wheel mode -->
+              <div class="advShutterItem adv-cycle-item" id="scrollHpModeCycle" data-adv-item="scrollHpMode" data-adv-control="cycle" data-std-key="scrollHpMode" role="button" tabindex="0" aria-label="竞技滚轮模式" style="display: none;">
+                <div class="shutter-row">
+                  <div class="shutter-bg-base"></div>
+                  <div class="shutter-bg-next"></div>
+                  <div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">滚轮 // 模式</span>
+                      <span class="label-title">竞技滚轮</span>
+                      <span class="label-desc">设置竞技滚轮触发方向</span>
+                    </div>
+                    <div class="status-indicator">
+                      <span class="status-text cycle-text">关闭</span>
+                      <div class="crosshair"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="adv-cycle-select-wrap" aria-hidden="true" style="display: none;">
+                  <select class="input adv-cycle-select" id="scrollHpModeSelect" data-adv-item="scrollHpMode" data-adv-control="select" data-std-key="scrollHpMode" aria-label="竞技滚轮模式">
+                    <option value="0" data-cycle-class="adv-cycle-mode-0">关闭</option>
+                    <option value="2" data-cycle-class="adv-cycle-mode-2">上滚</option>
+                    <option value="3" data-cycle-class="adv-cycle-mode-3">下滚</option>
+                    <option value="1" data-cycle-class="adv-cycle-mode-1">双向</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Capability-gated feature: three-step LOD cycle -->
+              <div class="advShutterItem adv-cycle-item" id="surfaceFeelCycle" data-adv-item="surfaceFeel" data-adv-control="cycle" data-std-key="surfaceFeel" role="button" tabindex="0" aria-label="LOD 高度" style="display: none;">
+                <div class="shutter-row">
+                  <div class="shutter-bg-base"></div>
+                  <div class="shutter-bg-next"></div>
+                  <div class="border-deco"></div>
+                  <div class="content-layer">
+                    <div class="meta">
+                      <span class="label-code">005 // LOD</span>
+                      <span class="label-title">LOD</span>
+                      <span class="label-desc">设置传感器抬起距离</span>
+                    </div>
+                    <div class="status-indicator">
+                      <span class="status-text cycle-text">1mm</span>
+                      <div class="crosshair"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="adv-cycle-select-wrap" aria-hidden="true" style="display: none;">
+                  <select class="input adv-cycle-select" id="surfaceFeelCycleSelect" data-adv-item="surfaceFeel" data-adv-control="select" data-std-key="surfaceFeel" aria-label="LOD 高度">
+                    <option value="0.7" data-cycle-class="adv-cycle-mode-0">0.7mm</option>
+                    <option value="1" data-cycle-class="adv-cycle-mode-1">1mm</option>
+                    <option value="2" data-cycle-class="adv-cycle-mode-2">2mm</option>
+                  </select>
+                </div>
+              </div>
 
               <!-- Toggle 4: key scan rate / recoil assist - bit marker: bit6 -->
               <label class="advShutterItem" data-adv-item="secondarySurfaceToggle" data-adv-control="toggle" data-std-key="surfaceModeSecondary">

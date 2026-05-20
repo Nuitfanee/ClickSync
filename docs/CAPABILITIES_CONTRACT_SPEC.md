@@ -244,6 +244,8 @@ capabilities: {
 - `linearCorrection`
 - `rippleControl`
 - `surfaceFeel`
+- `speedEnable`
+- `scrollHp`
 - `secondarySurfaceToggle`
 - `keyScanningRate`
 - `surfaceModePrimary`
@@ -299,6 +301,8 @@ capabilities: {
 - `linearCorrection -> linearCorrection`
 - `rippleControl -> rippleControl`
 - `surfaceFeel -> surfaceFeel`
+- `speedClickLeft/speedClickRight -> speedEnable`
+- `scrollHpMode/scrollHpWindowMs -> scrollHp`
 - `secondarySurfaceToggle -> secondarySurfaceToggle`
 - `keyScanningRate -> keyScanningRate`
 - `surfaceModePrimary -> surfaceModePrimary`
@@ -315,6 +319,7 @@ capabilities: {
 
 - capability key 应优先对应“顶层语义功能”或“复合面板”，而不是其内部子控件
 - 例如 `smartTracking` gate 控制的是整个 `smartTrackingComposite`，而不是分别为 `smartTrackingLevel`、`smartTrackingLiftDistance`、`smartTrackingLandingDistance` 建三个独立 gate
+- 例如 CRDRAKO 的竞技滚轮由 `scrollHp` gate 同时控制 `scrollHpMode` 和 `scrollHpWindowMs`；SPDT/SpeedClick 左右键共用 `speedEnable`
 - 并非每个高级面板都必须有动态 capability key；只有存在 PID/机型差异时才需要动态化
 
 ## 7. 快照输出规则

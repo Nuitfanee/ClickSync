@@ -214,6 +214,39 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
           }
         },
       },
+      crdrako: {
+        power: {
+          sleepSeconds: Array.from({ length: 15 }, (_, i) => (i + 1) * 60),
+          debounceMs: Array.from({ length: 9 }, (_, i) => i),
+        },
+        sensor: {
+          angleDeg: { min: -30, max: 30, step: 1, hint: "范围 -30° ~ 30°", name: "传感器角度", sub: "范围 -30° ~ 30°", unit: "°" },
+          feel: { min: 0.7, max: 2, step: 0.1, unit: "mm", name: "LOD", sub: "0.7 / 1 / 2 mm" },
+        },
+        dpi: {
+          min: 50,
+          max: 30000,
+          step: 50,
+          policy: {
+            mode: "fixed",
+            step: 50,
+          },
+        },
+        polling: {
+          basicHz: [125, 250, 500, 1000, 2000, 4000, 8000],
+          advHz: [125, 250, 500, 1000, 2000, 4000, 8000],
+        },
+        texts: {
+          landingTitle: "CRDRAKO",
+          landingCaption: "stare into the void to connect (CRDRAKO)",
+          lod: { code: "005 // LOD", title: "LOD", desc: "Lift-off distance 0.7 / 1 / 2 mm" },
+          led: null,
+          perfMode: {
+            hp: { color: "#000000", text: "Standard mode" },
+            sport: { color: "#FF4500", text: "Competitive mode" },
+          },
+        },
+      },
       ninjutso: {
         power: {
           sleepSeconds: Array.from({ length: 15 }, (_, i) => (i + 1) * 60),
@@ -350,7 +383,7 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   const VALID_DEVICE_IDS = Object.freeze(
     (Array.isArray(window.DeviceRuntime?.VALID_DEVICE_IDS) && window.DeviceRuntime.VALID_DEVICE_IDS.length
       ? window.DeviceRuntime.VALID_DEVICE_IDS
-      : [DEFAULT_DEVICE_ID, "rapoo", "atk", "ninjutso", "logitech", "razer"])
+      : [DEFAULT_DEVICE_ID, "rapoo", "atk", "crdrako", "ninjutso", "logitech", "razer"])
       .map((deviceId) => String(deviceId || "").trim().toLowerCase())
       .filter(Boolean)
   );
@@ -651,6 +684,7 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   // ============================================================
   const rapooTexts = window.AppConfig?.ranges?.rapoo?.texts || {};
   const atkTexts = window.AppConfig?.ranges?.atk?.texts || {};
+  const crdrakoTexts = window.AppConfig?.ranges?.crdrako?.texts || {};
   const ninjutsoTexts = window.AppConfig?.ranges?.ninjutso?.texts || {};
   const razerTexts = window.AppConfig?.ranges?.razer?.texts || {};
 
@@ -890,6 +924,10 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
     rippleControl: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasRippleControl"]), requiresCapabilities: Object.freeze([]) }),
     secondarySurfaceToggle: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasSecondarySurfaceToggle"]), requiresCapabilities: Object.freeze([]) }),
     keyScanningRate: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasKeyScanRate"]), requiresCapabilities: Object.freeze([]) }),
+    speedClickLeft: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasSpeedClick"]), requiresCapabilities: Object.freeze(["speedEnable"]) }),
+    speedClickRight: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasSpeedClick"]), requiresCapabilities: Object.freeze(["speedEnable"]) }),
+    scrollHpMode: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasScrollHp"]), requiresCapabilities: Object.freeze(["scrollHp"]) }),
+    scrollHpWindowMs: Object.freeze({ regions: Object.freeze(["dual-left"]), requiresFeatures: Object.freeze(["hasScrollHp"]), requiresCapabilities: Object.freeze(["scrollHp"]) }),
     surfaceModePrimary: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasPrimarySurfaceToggle"]), requiresCapabilities: Object.freeze([]) }),
     primaryLedFeature: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasPrimaryLedFeature"]), requiresCapabilities: Object.freeze([]) }),
     dpiLightEffect: Object.freeze({ regions: Object.freeze(["dual-right"]), requiresFeatures: Object.freeze(["hasDpiLightCycle"]), requiresCapabilities: Object.freeze([]) }),
@@ -999,6 +1037,7 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
     normalizeButtonMappingPatch,
     rapooTexts,
     atkTexts,
+    crdrakoTexts,
     ninjutsoTexts,
     razerTexts,
     KEYMAP_COMMON,

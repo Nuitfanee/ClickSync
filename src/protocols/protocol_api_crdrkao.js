@@ -70,52 +70,78 @@
   // 1) Device constants & capability model
   // ============================================================
   const CRDRAKO_VENDOR_ID = 0x373e;
+  const CRDRAKO_PRODUCT_ID_006A = 0x006a;
   const CRDRAKO_PRODUCT_ID_006B = 0x006b;
   const CRDRAKO_REPORT_ID = 0x00;
   const CRDRAKO_REPORT_LEN = 64;
-  const CRDRAKO_DEVICE_ID_DEFAULT = 0x02;
-  const CRDRAKO_MAX_DPI_STAGES = 6;
+  const CRDRAKO_DEVICE_ID_WIRED = 0x00;
+  const CRDRAKO_DEVICE_ID_WIRELESS_LIGHT = 0x01;
+  const CRDRAKO_DEVICE_ID_WIRELESS = 0x02;
+  const CRDRAKO_DEVICE_ID_DEFAULT = CRDRAKO_DEVICE_ID_WIRELESS;
+  const CRDRAKO_PROFILE_ID_DEFAULT = 0x01;
+  const CRDRAKO_PROFILE_ID_MIN = 0x01;
+  const CRDRAKO_PROFILE_ID_MAX = 0x03;
+  const CRDRAKO_MIN_DPI = 50;
+  const CRDRAKO_MAX_DPI = 30000;
+  const CRDRAKO_DPI_STEP = 50;
+  const CRDRAKO_MAX_DPI_STAGES = 5;
+  const CRDRAKO_KEYMAP_BUTTON_COUNT = 5;
   const CRDRAKO_BUSY_RETRY = 5;
   const CRDRAKO_BUSY_POLL = 30;
   const CRDRAKO_RETRY_DELAY_MS = 20;
   const CRDRAKO_POST_OPEN_SETTLE_MS = 80;
 
   const PID = Object.freeze({
+    CRDRAKO_006A: CRDRAKO_PRODUCT_ID_006A,
     CRDRAKO_006B: CRDRAKO_PRODUCT_ID_006B,
   });
 
   const PID_NAME = Object.freeze({
-    [PID.CRDRAKO_006B]: "CRDRAKO Mouse",
+    [PID.CRDRAKO_006A]: "CRDRAKO KO-ONE Wired",
+    [PID.CRDRAKO_006B]: "CRDRAKO KO-ONE 8K",
   });
 
-  const SUPPORTED_PIDS = Object.freeze([PID.CRDRAKO_006B]);
+  const SUPPORTED_PIDS = Object.freeze([PID.CRDRAKO_006A, PID.CRDRAKO_006B]);
   const SUPPORTED_PID_SET = new Set(SUPPORTED_PIDS);
+  const CRDRAKO_WIRELESS_LIGHT_FIELDS = new Set(["lightingEffect", "lightness"]);
+
+  const COMMON_DEVICE_CAPABILITIES = Object.freeze({
+    polling: true,
+    battery: true,
+    charging: true,
+    dpi: true,
+    dpiStages: true,
+    activeDpiStageIndex: true,
+    idle: true,
+    lod: true,
+    angleSnap: true,
+    motionSync: true,
+    rippleControl: true,
+    competitiveMode: true,
+    hyperMode: true,
+    dpiXYOnOff: true,
+    dpiIndicator: true,
+    buttonCombine: true,
+    debounceTime: true,
+    speedEnable: true,
+    scrollHp: true,
+    sensorAngle: true,
+    keyMapping: true,
+    lightingEffect: true,
+    lightness: true,
+    dpiStageColors: true,
+    macro: false,
+    firmwareUpgrade: false,
+  });
 
   const DEVICE_CAPABILITIES = Object.freeze({
+    [PID.CRDRAKO_006A]: Object.freeze({
+      ...COMMON_DEVICE_CAPABILITIES,
+      lightingEffect: false,
+      lightness: false,
+    }),
     [PID.CRDRAKO_006B]: Object.freeze({
-      polling: true,
-      battery: true,
-      charging: true,
-      dpi: true,
-      dpiStages: true,
-      activeDpiStageIndex: true,
-      idle: true,
-      lod: true,
-      angleSnap: true,
-      motionSync: true,
-      rippleControl: true,
-      hyperMode: true,
-      dpiXYOnOff: true,
-      dpiIndicator: true,
-      buttonCombine: true,
-      debounceTime: true,
-      speedEnable: true,
-      keyMapping: true,
-      lightingEffect: true,
-      lightness: true,
-      dpiStageColors: true,
-      macro: false,
-      firmwareUpgrade: false,
+      ...COMMON_DEVICE_CAPABILITIES,
     }),
   });
 
@@ -134,12 +160,15 @@
       angleSnap: false,
       motionSync: false,
       rippleControl: false,
+      competitiveMode: false,
       hyperMode: false,
       dpiXYOnOff: false,
       dpiIndicator: false,
       buttonCombine: false,
       debounceTime: false,
       speedEnable: false,
+      scrollHp: false,
+      sensorAngle: false,
       keyMapping: false,
       lightingEffect: false,
       lightness: false,
@@ -170,8 +199,40 @@
     return normalized;
   }
 
-  function txForField(_pid, _field) {
-    return CRDRAKO_DEVICE_ID_DEFAULT;
+  function normalizeProfileId(v, fallback = CRDRAKO_PROFILE_ID_DEFAULT) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return normalizeProfileId(fallback, CRDRAKO_PROFILE_ID_DEFAULT);
+    return clampInt(n, CRDRAKO_PROFILE_ID_MIN, CRDRAKO_PROFILE_ID_MAX);
+  }
+
+  function isDebugEnabled() {
+    try {
+      return typeof localStorage !== "undefined" && localStorage.DEBUG_CRDRAKO === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function hexPreview(bytes, len = 32) {
+    const u8 = bytes instanceof Uint8Array ? bytes : toDataViewU8(bytes);
+    return Array.from(u8.slice(0, clampInt(len, 0, 64)))
+      .map((x) => clampU8(x).toString(16).padStart(2, "0"))
+      .join(" ");
+  }
+
+  function debugCrdrako(scope, payload) {
+    if (!isDebugEnabled()) return;
+    try {
+      console.debug(`[CRDRAKO] ${scope}`, payload);
+    } catch { }
+  }
+
+  function txForField(pid, field) {
+    const normalizedPid = Number(pid) & 0xffff;
+    if (normalizedPid === PID.CRDRAKO_006B && CRDRAKO_WIRELESS_LIGHT_FIELDS.has(String(field || ""))) {
+      return CRDRAKO_DEVICE_ID_WIRELESS_LIGHT;
+    }
+    return CRDRAKO_DEVICE_ID_WIRELESS;
   }
 
   class SendQueue {
@@ -221,8 +282,26 @@
 
     async _sendFeature(payload) {
       this._requireOpenDevice();
+      let bytes = ProtocolCodec.fitReport(payload);
+      if (
+        (Number(this.productId) & 0xffff) === PID.CRDRAKO_006A
+        && bytes[2] === CRDRAKO_DEVICE_ID_WIRELESS
+      ) {
+        bytes = bytes.slice(0);
+        bytes[2] = CRDRAKO_DEVICE_ID_WIRED;
+      }
+      debugCrdrako("sendFeatureReport", {
+        reportId: CRDRAKO_REPORT_ID,
+        length: bytes.byteLength,
+        productId: `0x${(Number(this.productId) & 0xffff).toString(16).padStart(4, "0")}`,
+        reportDeviceId: clampU8(bytes[2]),
+        targetId: clampU8(bytes[6]),
+        commandClass: clampU8(bytes[4]),
+        commandId: clampU8(bytes[5]),
+        hex: hexPreview(bytes),
+      });
       await this._withTimeout(
-        this.device.sendFeatureReport(CRDRAKO_REPORT_ID, payload),
+        this.device.sendFeatureReport(CRDRAKO_REPORT_ID, bytes),
         this.sendTimeoutMs,
         "IO_WRITE_TIMEOUT",
         `sendFeatureReport timeout (${this.sendTimeoutMs}ms)`
@@ -237,7 +316,13 @@
         "IO_READ_TIMEOUT",
         `receiveFeatureReport timeout (${this.readTimeoutMs}ms)`
       );
-      return ProtocolCodec.fitReport(raw);
+      const bytes = ProtocolCodec.fitReport(raw);
+      debugCrdrako("receiveFeatureReport", {
+        reportId: CRDRAKO_REPORT_ID,
+        length: bytes.byteLength,
+        hex: hexPreview(bytes),
+      });
+      return bytes;
     }
 
     _isResponseOk(requestBytes, responseBytes, hidIndex, checkHeader) {
@@ -317,6 +402,15 @@
 
         this.hidIndex = settled.hidIndex;
         const parsed = ProtocolCodec.parseCrdrakoReport(settled.buffer, this.hidIndex, requestBytes);
+        debugCrdrako("parsedResponse", {
+          hidIndex: parsed.hidIndex,
+          status: `0x${parsed.status.toString(16).padStart(2, "0")}`,
+          commandClass: `0x${parsed.commandClass.toString(16).padStart(2, "0")}`,
+          commandId: `0x${parsed.commandId.toString(16).padStart(2, "0")}`,
+          targetId: parsed.targetId,
+          value0: parsed.values?.[0],
+          value1: parsed.values?.[1],
+        });
 
         if (checkHeader && !ProtocolCodec.matchResponse(requestBytes, parsed)) {
           throw new ProtocolError("Response does not match request header", "RESPONSE_MISMATCH", {
@@ -372,6 +466,7 @@
     },
 
     encodeCrdrakoReport({
+      reportDeviceId = null,
       deviceId = CRDRAKO_DEVICE_ID_DEFAULT,
       commandClass = 0x00,
       commandId = 0x00,
@@ -391,7 +486,7 @@
       }
 
       const out = new Uint8Array(CRDRAKO_REPORT_LEN);
-      out[2] = clampU8(deviceId);
+      out[2] = clampU8(reportDeviceId == null ? deviceId : reportDeviceId);
       out[3] = clampU8(finalDataSize);
       out[4] = clampU8(commandClass);
       out[5] = clampU8(commandId);
@@ -430,22 +525,34 @@
         ? ProtocolCodec.inferHidIndex(requestBytes, u8, hidIndexHint)
         : clampInt(hidIndexHint, 0, 1);
       const argsStart = 7 - hidIndex;
+      const valueStart = 8 - hidIndex;
       const maxArgs = Math.max(0, CRDRAKO_REPORT_LEN - argsStart);
       const lenA = clampInt(u8[4 - hidIndex], 0, maxArgs);
       const lenB = clampInt(u8[3 - hidIndex], 0, maxArgs);
       const payloadSize = lenA > 0 ? lenA : lenB;
       const argsEnd = Math.min(CRDRAKO_REPORT_LEN, argsStart + payloadSize);
+      const commandClass = requestBytes ? clampU8(requestBytes[4]) : clampU8(u8[5 - hidIndex]);
       return {
         status: clampU8(u8[1 - hidIndex]),
         hidIndex,
         deviceId: clampU8(u8[2 - hidIndex]),
+        targetId: clampU8(u8[7 - hidIndex]),
         payloadSize,
-        commandClass: clampU8(u8[4 - hidIndex]),
+        commandClass,
         commandId: clampU8(u8[6 - hidIndex]),
+        valueStart,
         arguments: u8.slice(argsStart),
         argumentsData: u8.slice(argsStart, argsEnd),
+        values: u8.slice(valueStart),
         raw: u8,
       };
+    },
+
+    valueAt(response, offset = 0, fallback = 0) {
+      const parsed = response?.raw ? response : ProtocolCodec.parseCrdrakoReport(response);
+      const idx = clampInt(offset, 0, CRDRAKO_REPORT_LEN);
+      const values = parsed?.values instanceof Uint8Array ? parsed.values : new Uint8Array();
+      return clampU8(values[idx] ?? fallback);
     },
 
     matchResponse(request, response) {
@@ -478,261 +585,345 @@
         });
       },
 
-      getPollingRate(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getProfileId(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+        return ProtocolCodec.encodeCrdrakoReport({
+          deviceId,
+          commandClass: 0x00,
+          commandId: 0x85,
+          dataSize: 0x01,
+        });
+      },
+
+      getProfileList(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+        return ProtocolCodec.encodeCrdrakoReport({
+          deviceId,
+          commandClass: 0x00,
+          commandId: 0x86,
+          dataSize: 0x01,
+        });
+      },
+
+      getPollingRate(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x80,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00],
         });
       },
 
-      setPollingRate(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, pollingCode = 0x01) {
+      setPollingRate(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, pollingCode = 0x01) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x00,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), clampU8(pollingCode)],
+          arguments: [normalizeProfileId(targetId), clampU8(pollingCode)],
         });
       },
 
-      getSleepTime(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getSleepTime(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x00,
           commandId: 0x87,
           dataSize: 0x03,
-          arguments: [clampU8(deviceId), 0x00, 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00, 0x00],
         });
       },
 
-      setSleepTime(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, idleSec = 300) {
+      setSleepTime(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, idleSec = 300) {
         const value = clampU16(idleSec);
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x00,
           commandId: 0x07,
           dataSize: 0x03,
-          arguments: [clampU8(deviceId), (value >> 8) & 0xff, value & 0xff],
+          arguments: [normalizeProfileId(targetId), (value >> 8) & 0xff, value & 0xff],
         });
       },
 
-      getLod(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getLod(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x88,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00],
         });
       },
 
-      setLod(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, lodEncoded = 1) {
+      setLod(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, lodEncoded = 1) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x08,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), clampU8(lodEncoded)],
+          arguments: [normalizeProfileId(targetId), clampU8(lodEncoded)],
         });
       },
 
-      getAngleSnap(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getAngleSnap(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x84,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00],
         });
       },
 
-      setAngleSnap(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, enabled = false) {
+      setAngleSnap(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, enabled = false) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x04,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), enabled ? 0x01 : 0x00],
+          arguments: [normalizeProfileId(targetId), enabled ? 0x01 : 0x00],
         });
       },
 
-      getMotionSync(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getMotionSync(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x89,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00],
         });
       },
 
-      setMotionSync(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, enabled = false) {
+      setMotionSync(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, enabled = false) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x09,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), enabled ? 0x01 : 0x00],
+          arguments: [normalizeProfileId(targetId), enabled ? 0x01 : 0x00],
         });
       },
 
-      getRippleControl(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getRippleControl(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x8a,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00],
         });
       },
 
-      setRippleControl(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, enabled = false) {
+      setRippleControl(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, enabled = false) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x0a,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), enabled ? 0x01 : 0x00],
+          arguments: [normalizeProfileId(targetId), enabled ? 0x01 : 0x00],
         });
       },
 
-      getHyperMode(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getHyperMode(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x8b,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00],
         });
       },
 
-      setHyperMode(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, enabled = false) {
+      setHyperMode(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, enabled = false) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x0b,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), enabled ? 0x01 : 0x00],
+          arguments: [normalizeProfileId(targetId), enabled ? 0x01 : 0x00],
         });
       },
 
-      getDpiXyOnOff(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getCompetitiveMode(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
+        return ProtocolCodec.encodeCrdrakoReport({
+          deviceId,
+          commandClass: 0x01,
+          commandId: 0x93,
+          dataSize: 0x02,
+          arguments: [normalizeProfileId(targetId), 0x00],
+        });
+      },
+
+      setCompetitiveMode(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, enabled = false) {
+        return ProtocolCodec.encodeCrdrakoReport({
+          deviceId,
+          commandClass: 0x01,
+          commandId: 0x13,
+          dataSize: 0x02,
+          arguments: [normalizeProfileId(targetId), enabled ? 0x01 : 0x00],
+        });
+      },
+
+      getDpiXyOnOff(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x8d,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00],
         });
       },
 
-      setDpiXyOnOff(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, enabled = false) {
+      setDpiXyOnOff(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, enabled = false) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x0d,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), enabled ? 0x01 : 0x00],
+          arguments: [normalizeProfileId(targetId), enabled ? 0x01 : 0x00],
         });
       },
 
-      getDpiIndicator(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getDpiIndicator(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x02,
           commandId: 0x84,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00],
         });
       },
 
-      setDpiIndicator(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, enabled = false) {
+      setDpiIndicator(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, enabled = false) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x02,
           commandId: 0x04,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), enabled ? 0x01 : 0x00],
+          arguments: [normalizeProfileId(targetId), enabled ? 0x01 : 0x00],
         });
       },
 
-      getButtonCombine(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getButtonCombine(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x03,
           commandId: 0x81,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00],
         });
       },
 
-      setButtonCombine(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, enabled = false) {
+      setButtonCombine(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, enabled = false) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x03,
           commandId: 0x01,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), enabled ? 0x01 : 0x00],
+          arguments: [normalizeProfileId(targetId), enabled ? 0x01 : 0x00],
         });
       },
 
-      getDebounceTime(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getDebounceTime(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x00,
           commandId: 0x88,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00],
         });
       },
 
-      setDebounceTime(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, debounce = 8) {
+      setDebounceTime(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, debounce = 8) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x00,
           commandId: 0x08,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), clampU8(debounce)],
+          arguments: [normalizeProfileId(targetId), clampU8(debounce)],
         });
       },
 
-      getSpeedEnable(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getSpeedEnable(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x00,
           commandId: 0x9a,
           dataSize: 0x03,
-          arguments: [clampU8(deviceId), 0x00, 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00, 0x00],
         });
       },
 
-      setSpeedEnable(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, enabled = false, speedWindow = 0) {
+      setSpeedEnable(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, leftEnabled = false, rightEnabled = false) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x00,
           commandId: 0x1a,
           dataSize: 0x03,
-          arguments: [clampU8(deviceId), enabled ? 0x01 : 0x00, clampU8(speedWindow)],
+          arguments: [normalizeProfileId(targetId), leftEnabled ? 0x01 : 0x00, rightEnabled ? 0x01 : 0x00],
         });
       },
 
-      getDpiStages(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, slotCount = CRDRAKO_MAX_DPI_STAGES) {
+      getScrollHP(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
+        return ProtocolCodec.encodeCrdrakoReport({
+          deviceId,
+          commandClass: 0x00,
+          commandId: 0x99,
+          dataSize: 0x04,
+          arguments: [normalizeProfileId(targetId)],
+        });
+      },
+
+      setScrollHP(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, rollerMode = 0, windowTime = 100) {
+        const ms = TRANSFORMERS.normalizeScrollHpWindowMs(windowTime);
+        return ProtocolCodec.encodeCrdrakoReport({
+          deviceId,
+          commandClass: 0x00,
+          commandId: 0x19,
+          dataSize: 0x04,
+          arguments: [
+            normalizeProfileId(targetId),
+            TRANSFORMERS.normalizeScrollHpMode(rollerMode),
+            (ms >> 8) & 0xff,
+            ms & 0xff,
+          ],
+        });
+      },
+
+      getAngleTune(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
+        return ProtocolCodec.encodeCrdrakoReport({
+          deviceId,
+          commandClass: 0x01,
+          commandId: 0x94,
+          dataSize: 0x02,
+          arguments: [normalizeProfileId(targetId), 0x00],
+        });
+      },
+
+      setAngleTune(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, angle = 0) {
+        return ProtocolCodec.encodeCrdrakoReport({
+          deviceId,
+          commandClass: 0x01,
+          commandId: 0x14,
+          dataSize: 0x02,
+          arguments: [normalizeProfileId(targetId), TRANSFORMERS.sensorAngleToRaw(angle)],
+        });
+      },
+
+      getDpiStages(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, slotCount = CRDRAKO_MAX_DPI_STAGES) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x81,
           dataSize: 0x0a,
-          arguments: [clampU8(deviceId), clampInt(slotCount, 1, CRDRAKO_MAX_DPI_STAGES)],
+          arguments: [normalizeProfileId(targetId), clampInt(slotCount, 1, CRDRAKO_MAX_DPI_STAGES)],
         });
       },
 
-      setDpiStages(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, stages = [], stageCount = stages.length) {
+      setDpiStages(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, stages = [], stageCount = stages.length) {
         const count = clampInt(stageCount, 1, CRDRAKO_MAX_DPI_STAGES);
         const args = new Uint8Array(26);
-        args[0] = clampU8(deviceId);
+        args[0] = normalizeProfileId(targetId);
         args[1] = clampU8(count);
         for (let i = 0; i < CRDRAKO_MAX_DPI_STAGES; i++) {
           const stage = stages[i] || stages[stages.length - 1] || { x: 1600, y: 1600 };
@@ -753,37 +944,37 @@
         });
       },
 
-      getActiveDpiStage(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getActiveDpiStage(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x82,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), 0x00],
+          arguments: [normalizeProfileId(targetId), 0x00],
         });
       },
 
-      setActiveDpiStage(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, oneBasedIndex = 1) {
+      setActiveDpiStage(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, oneBasedIndex = 1) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x01,
           commandId: 0x02,
           dataSize: 0x02,
-          arguments: [clampU8(deviceId), clampInt(oneBasedIndex, 1, CRDRAKO_MAX_DPI_STAGES)],
+          arguments: [normalizeProfileId(targetId), clampInt(oneBasedIndex, 1, CRDRAKO_MAX_DPI_STAGES)],
         });
       },
 
-      getDpiStageColors(deviceId = CRDRAKO_DEVICE_ID_DEFAULT) {
+      getDpiStageColors(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT) {
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x02,
           commandId: 0x81,
           dataSize: 0x13,
-          arguments: [clampU8(deviceId)],
+          arguments: [normalizeProfileId(targetId)],
         });
       },
 
-      setDpiStageColors(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, colorBytes = []) {
+      setDpiStageColors(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, colorBytes = []) {
         const normalized = Array.isArray(colorBytes) ? colorBytes.slice(0, 18).map((x) => clampU8(x)) : [];
         while (normalized.length < 18) normalized.push(0);
         return ProtocolCodec.encodeCrdrakoReport({
@@ -791,7 +982,7 @@
           commandClass: 0x02,
           commandId: 0x01,
           dataSize: 0x13,
-          arguments: [clampU8(deviceId), ...normalized],
+          arguments: [normalizeProfileId(targetId), ...normalized],
         });
       },
 
@@ -844,9 +1035,9 @@
         });
       },
 
-      getButtonMapping(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, sourceCode = 0x01, funckey = 0x00, payloadBytes = []) {
+      getButtonMapping(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, sourceCode = 0x01, funckey = 0x00, payloadBytes = []) {
         const payload = Array.isArray(payloadBytes) ? payloadBytes.slice(0, 16).map((x) => clampU8(x)) : [];
-        const args = [clampU8(deviceId), clampU8(sourceCode), 0x00, clampU8(funckey), clampU8(payload.length), ...payload];
+        const args = [normalizeProfileId(targetId), clampU8(sourceCode), 0x00, clampU8(funckey), clampU8(payload.length), ...payload];
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x03,
@@ -856,9 +1047,9 @@
         });
       },
 
-      setButtonMapping(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, sourceCode = 0x01, funckey = 0x00, payloadBytes = []) {
+      setButtonMapping(deviceId = CRDRAKO_DEVICE_ID_DEFAULT, targetId = CRDRAKO_PROFILE_ID_DEFAULT, sourceCode = 0x01, funckey = 0x00, payloadBytes = []) {
         const payload = Array.isArray(payloadBytes) ? payloadBytes.slice(0, 16).map((x) => clampU8(x)) : [];
-        const args = [clampU8(deviceId), clampU8(sourceCode), 0x00, clampU8(funckey), clampU8(payload.length), ...payload];
+        const args = [normalizeProfileId(targetId), clampU8(sourceCode), 0x00, clampU8(funckey), clampU8(payload.length), ...payload];
         return ProtocolCodec.encodeCrdrakoReport({
           deviceId,
           commandClass: 0x03,
@@ -873,23 +1064,26 @@
   // 4) Transformers
   // ============================================================
   const POLLING_ENCODE_MAP = new Map([
+    [125, 0x08],
+    [250, 0x04],
+    [500, 0x02],
     [1000, 0x01],
-    [2000, 0x02],
-    [4000, 0x04],
-    [8000, 0x08],
-    [500, 0x10],
-    [250, 0x20],
-    [125, 0x40],
+    [2000, 0x20],
+    [4000, 0x40],
+    [8000, 0x80],
   ]);
   const POLLING_DECODE_MAP = new Map([
+    [0x08, 125],
+    [0x04, 250],
+    [0x02, 500],
     [0x01, 1000],
-    [0x02, 2000],
-    [0x04, 4000],
-    [0x08, 8000],
-    [0x10, 500],
-    [0x20, 250],
-    [0x40, 125],
+    [0x10, 1000],
+    [0x20, 2000],
+    [0x40, 4000],
+    [0x80, 8000],
   ]);
+  const SCROLL_HP_MODE_VALUES = Object.freeze([0, 1, 2, 3]);
+  const SCROLL_HP_WINDOW_MS_VALUES = Object.freeze([100, 200, 300, 400, 500, 1000]);
 
   const TRANSFORMERS = Object.freeze({
     normalizePollingHz(v) {
@@ -918,7 +1112,10 @@
     },
 
     clampDpi(v) {
-      return clampInt(v, 100, 50000);
+      const clamped = clampInt(v, CRDRAKO_MIN_DPI, CRDRAKO_MAX_DPI);
+      const snapped = CRDRAKO_MIN_DPI
+        + Math.round((clamped - CRDRAKO_MIN_DPI) / CRDRAKO_DPI_STEP) * CRDRAKO_DPI_STEP;
+      return clampInt(snapped, CRDRAKO_MIN_DPI, CRDRAKO_MAX_DPI);
     },
 
     normalizeDpi(prevDpi, patch) {
@@ -977,13 +1174,14 @@
     },
 
     parseDpiStagesResponse(response) {
-      const args = response?.arguments instanceof Uint8Array ? response.arguments : new Uint8Array();
-      const count = clampInt(args[1] ?? 0, 0, CRDRAKO_MAX_DPI_STAGES);
+      const raw = response?.raw instanceof Uint8Array ? response.raw : new Uint8Array();
+      const hi = clampInt(response?.hidIndex ?? 0, 0, 1);
+      const count = clampInt(raw[8 - hi] ?? 0, 0, CRDRAKO_MAX_DPI_STAGES);
       const dpiStages = [];
       for (let i = 0; i < count; i++) {
-        const offset = 2 + i * 4;
-        const x = ((clampU8(args[offset]) << 8) | clampU8(args[offset + 1])) & 0xffff;
-        const y = ((clampU8(args[offset + 2]) << 8) | clampU8(args[offset + 3])) & 0xffff;
+        const offset = 9 - hi + i * 4;
+        const x = ((clampU8(raw[offset]) << 8) | clampU8(raw[offset + 1])) & 0xffff;
+        const y = ((clampU8(raw[offset + 2]) << 8) | clampU8(raw[offset + 3])) & 0xffff;
         dpiStages.push({
           x: TRANSFORMERS.clampDpi(x),
           y: TRANSFORMERS.clampDpi(y),
@@ -1027,7 +1225,38 @@
     },
 
     normalizeSpeedWindow(v) {
-      return clampInt(v, 0, 255);
+      return normalizeBoolean(v, false);
+    },
+
+    normalizeScrollHpMode(v, fallback = 0) {
+      const n = clampInt(v, 0, 3);
+      if (SCROLL_HP_MODE_VALUES.includes(n)) return n;
+      return SCROLL_HP_MODE_VALUES.includes(fallback) ? fallback : 0;
+    },
+
+    normalizeScrollHpWindowMs(v, fallback = 100) {
+      const n = Number(v);
+      const fb = SCROLL_HP_WINDOW_MS_VALUES.includes(Number(fallback)) ? Number(fallback) : 100;
+      if (!Number.isFinite(n)) return fb;
+      return SCROLL_HP_WINDOW_MS_VALUES.reduce((best, item) => (
+        Math.abs(item - n) < Math.abs(best - n) ? item : best
+      ), SCROLL_HP_WINDOW_MS_VALUES[0]);
+    },
+
+    normalizeSensorAngle(v, fallback = 0) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return TRANSFORMERS.normalizeSensorAngle(fallback, 0);
+      return clampInt(Math.round(n), -30, 30);
+    },
+
+    sensorAngleToRaw(v) {
+      const angle = TRANSFORMERS.normalizeSensorAngle(v);
+      return angle < 0 ? ((256 + angle) & 0xff) : clampU8(angle);
+    },
+
+    sensorAngleFromRaw(raw) {
+      const b = clampU8(raw);
+      return TRANSFORMERS.normalizeSensorAngle(b > 30 ? b - 256 : b);
     },
 
     normalizeLightness(v) {
@@ -1152,11 +1381,11 @@
       key: "pollingHz",
       kind: "direct",
       priority: 10,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "polling", "pollingHz", pid);
         const tx = txForField(pid, "pollingHz");
         const code = TRANSFORMERS.pollingEncode(nextState.pollingHz);
-        return [{ packet: ProtocolCodec.commands.setPollingRate(tx, code) }];
+        return [{ packet: ProtocolCodec.commands.setPollingRate(tx, targetId, code) }];
       },
     },
 
@@ -1164,13 +1393,13 @@
       key: "dpi",
       kind: "virtual",
       priority: 20,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "dpi", "dpi/dpiX/dpiY", pid);
         const tx = txForField(pid, "dpi");
         const count = nextState.dpiStages.length;
         return [
-          { packet: ProtocolCodec.commands.setDpiStages(tx, nextState.dpiStages, count), checkHeader: true },
-          { packet: ProtocolCodec.commands.setActiveDpiStage(tx, nextState.activeDpiStageIndex + 1) },
+          { packet: ProtocolCodec.commands.setDpiStages(tx, targetId, nextState.dpiStages, count), checkHeader: true },
+          { packet: ProtocolCodec.commands.setActiveDpiStage(tx, targetId, nextState.activeDpiStageIndex + 1) },
         ];
       },
     },
@@ -1179,13 +1408,13 @@
       key: "dpiStages",
       kind: "direct",
       priority: 30,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "dpiStages", "dpiStages", pid);
         const tx = txForField(pid, "dpiStages");
         const count = nextState.dpiStages.length;
         return [
-          { packet: ProtocolCodec.commands.setDpiStages(tx, nextState.dpiStages, count), checkHeader: true },
-          { packet: ProtocolCodec.commands.setActiveDpiStage(tx, nextState.activeDpiStageIndex + 1) },
+          { packet: ProtocolCodec.commands.setDpiStages(tx, targetId, nextState.dpiStages, count), checkHeader: true },
+          { packet: ProtocolCodec.commands.setActiveDpiStage(tx, targetId, nextState.activeDpiStageIndex + 1) },
         ];
       },
     },
@@ -1194,10 +1423,10 @@
       key: "activeDpiStageIndex",
       kind: "direct",
       priority: 31,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "activeDpiStageIndex", "activeDpiStageIndex", pid);
         const tx = txForField(pid, "activeDpiStageIndex");
-        return [{ packet: ProtocolCodec.commands.setActiveDpiStage(tx, nextState.activeDpiStageIndex + 1) }];
+        return [{ packet: ProtocolCodec.commands.setActiveDpiStage(tx, targetId, nextState.activeDpiStageIndex + 1) }];
       },
     },
 
@@ -1205,10 +1434,10 @@
       key: "deviceIdleTime",
       kind: "direct",
       priority: 40,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "idle", "deviceIdleTime", pid);
         const tx = txForField(pid, "deviceIdleTime");
-        return [{ packet: ProtocolCodec.commands.setSleepTime(tx, nextState.deviceIdleTime) }];
+        return [{ packet: ProtocolCodec.commands.setSleepTime(tx, targetId, nextState.deviceIdleTime) }];
       },
     },
 
@@ -1216,10 +1445,10 @@
       key: "lod",
       kind: "direct",
       priority: 50,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "lod", "lod", pid);
         const tx = txForField(pid, "lod");
-        return [{ packet: ProtocolCodec.commands.setLod(tx, TRANSFORMERS.lodToRaw(nextState.lod)) }];
+        return [{ packet: ProtocolCodec.commands.setLod(tx, targetId, TRANSFORMERS.lodToRaw(nextState.lod)) }];
       },
     },
 
@@ -1227,10 +1456,10 @@
       key: "angleSnap",
       kind: "direct",
       priority: 51,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "angleSnap", "angleSnap", pid);
         const tx = txForField(pid, "angleSnap");
-        return [{ packet: ProtocolCodec.commands.setAngleSnap(tx, !!nextState.angleSnap) }];
+        return [{ packet: ProtocolCodec.commands.setAngleSnap(tx, targetId, !!nextState.angleSnap) }];
       },
     },
 
@@ -1238,10 +1467,10 @@
       key: "motionSync",
       kind: "direct",
       priority: 52,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "motionSync", "motionSync", pid);
         const tx = txForField(pid, "motionSync");
-        return [{ packet: ProtocolCodec.commands.setMotionSync(tx, !!nextState.motionSync) }];
+        return [{ packet: ProtocolCodec.commands.setMotionSync(tx, targetId, !!nextState.motionSync) }];
       },
     },
 
@@ -1249,21 +1478,32 @@
       key: "rippleControl",
       kind: "direct",
       priority: 53,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "rippleControl", "rippleControl", pid);
         const tx = txForField(pid, "rippleControl");
-        return [{ packet: ProtocolCodec.commands.setRippleControl(tx, !!nextState.rippleControl) }];
+        return [{ packet: ProtocolCodec.commands.setRippleControl(tx, targetId, !!nextState.rippleControl) }];
+      },
+    },
+
+    competitiveMode: {
+      key: "competitiveMode",
+      kind: "direct",
+      priority: 54,
+      plan({ pid, caps, nextState, targetId }) {
+        requireCapability(caps, "competitiveMode", "competitiveMode", pid);
+        const tx = txForField(pid, "competitiveMode");
+        return [{ packet: ProtocolCodec.commands.setCompetitiveMode(tx, targetId, !!nextState.competitiveMode) }];
       },
     },
 
     hyperMode: {
       key: "hyperMode",
       kind: "direct",
-      priority: 54,
-      plan({ pid, caps, nextState }) {
+      priority: 55,
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "hyperMode", "hyperMode", pid);
         const tx = txForField(pid, "hyperMode");
-        return [{ packet: ProtocolCodec.commands.setHyperMode(tx, !!nextState.hyperMode) }];
+        return [{ packet: ProtocolCodec.commands.setHyperMode(tx, targetId, !!nextState.hyperMode) }];
       },
     },
 
@@ -1271,10 +1511,10 @@
       key: "dpiXYOnOff",
       kind: "direct",
       priority: 55,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "dpiXYOnOff", "dpiXYOnOff", pid);
         const tx = txForField(pid, "dpiXYOnOff");
-        return [{ packet: ProtocolCodec.commands.setDpiXyOnOff(tx, !!nextState.dpiXYOnOff) }];
+        return [{ packet: ProtocolCodec.commands.setDpiXyOnOff(tx, targetId, !!nextState.dpiXYOnOff) }];
       },
     },
 
@@ -1282,10 +1522,10 @@
       key: "dpiIndicator",
       kind: "direct",
       priority: 56,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "dpiIndicator", "dpiIndicator", pid);
         const tx = txForField(pid, "dpiIndicator");
-        return [{ packet: ProtocolCodec.commands.setDpiIndicator(tx, !!nextState.dpiIndicator) }];
+        return [{ packet: ProtocolCodec.commands.setDpiIndicator(tx, targetId, !!nextState.dpiIndicator) }];
       },
     },
 
@@ -1293,10 +1533,10 @@
       key: "buttonCombine",
       kind: "direct",
       priority: 57,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "buttonCombine", "buttonCombine", pid);
         const tx = txForField(pid, "buttonCombine");
-        return [{ packet: ProtocolCodec.commands.setButtonCombine(tx, !!nextState.buttonCombine) }];
+        return [{ packet: ProtocolCodec.commands.setButtonCombine(tx, targetId, !!nextState.buttonCombine) }];
       },
     },
 
@@ -1304,10 +1544,10 @@
       key: "debounceTime",
       kind: "direct",
       priority: 58,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "debounceTime", "debounceTime", pid);
         const tx = txForField(pid, "debounceTime");
-        return [{ packet: ProtocolCodec.commands.setDebounceTime(tx, nextState.debounceTime) }];
+        return [{ packet: ProtocolCodec.commands.setDebounceTime(tx, targetId, nextState.debounceTime) }];
       },
     },
 
@@ -1315,11 +1555,42 @@
       key: "speedEnable",
       kind: "direct",
       priority: 59,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "speedEnable", "speedEnable", pid);
         const tx = txForField(pid, "speedEnable");
         return [{
-          packet: ProtocolCodec.commands.setSpeedEnable(tx, !!nextState.speedEnable, nextState.speedWindow ?? 0),
+          packet: ProtocolCodec.commands.setSpeedEnable(tx, targetId, !!nextState.speedEnable, !!nextState.speedWindow),
+        }];
+      },
+    },
+
+    scrollHp: {
+      key: "scrollHp",
+      kind: "virtual",
+      priority: 60,
+      plan({ pid, caps, nextState, targetId }) {
+        requireCapability(caps, "scrollHp", "scrollHp", pid);
+        const tx = txForField(pid, "scrollHp");
+        return [{
+          packet: ProtocolCodec.commands.setScrollHP(
+            tx,
+            targetId,
+            nextState.scrollHpMode,
+            nextState.scrollHpWindowMs
+          ),
+        }];
+      },
+    },
+
+    sensorAngle: {
+      key: "sensorAngle",
+      kind: "direct",
+      priority: 61,
+      plan({ pid, caps, nextState, targetId }) {
+        requireCapability(caps, "sensorAngle", "sensorAngle", pid);
+        const tx = txForField(pid, "sensorAngle");
+        return [{
+          packet: ProtocolCodec.commands.setAngleTune(tx, targetId, nextState.sensorAngle),
         }];
       },
     },
@@ -1350,11 +1621,11 @@
       key: "dpiStageColors",
       kind: "direct",
       priority: 72,
-      plan({ pid, caps, nextState }) {
+      plan({ pid, caps, nextState, targetId }) {
         requireCapability(caps, "dpiStageColors", "dpiStageColors", pid);
         const tx = txForField(pid, "dpiStageColors");
         return [{
-          packet: ProtocolCodec.commands.setDpiStageColors(tx, TRANSFORMERS.dpiStageColorsToBytes(nextState.dpiStageColors)),
+          packet: ProtocolCodec.commands.setDpiStageColors(tx, targetId, TRANSFORMERS.dpiStageColorsToBytes(nextState.dpiStageColors)),
         }];
       },
     },
@@ -1386,6 +1657,7 @@
         "angleSnap",
         "motionSync",
         "rippleControl",
+        "competitiveMode",
         "hyperMode",
         "dpiXYOnOff",
         "dpiIndicator",
@@ -1393,6 +1665,9 @@
         "debounceTime",
         "speedEnable",
         "speedWindow",
+        "scrollHpMode",
+        "scrollHpWindowMs",
+        "sensorAngle",
         "lightingEffect",
         "lightness",
         "dpiStageColors",
@@ -1485,6 +1760,9 @@
       if (Object.prototype.hasOwnProperty.call(patch, "rippleControl")) {
         next.rippleControl = normalizeBoolean(patch.rippleControl, next.rippleControl);
       }
+      if (Object.prototype.hasOwnProperty.call(patch, "competitiveMode")) {
+        next.competitiveMode = normalizeBoolean(patch.competitiveMode, next.competitiveMode);
+      }
       if (Object.prototype.hasOwnProperty.call(patch, "hyperMode")) {
         next.hyperMode = normalizeBoolean(patch.hyperMode, next.hyperMode);
       }
@@ -1505,6 +1783,17 @@
       }
       if (Object.prototype.hasOwnProperty.call(patch, "speedWindow")) {
         next.speedWindow = TRANSFORMERS.normalizeSpeedWindow(patch.speedWindow);
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "scrollHpMode")) {
+        next.scrollHpMode = TRANSFORMERS.normalizeScrollHpMode(patch.scrollHpMode, next.scrollHpMode);
+        next.scrollHpWindowMs = TRANSFORMERS.normalizeScrollHpWindowMs(next.scrollHpWindowMs, 100);
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "scrollHpWindowMs")) {
+        next.scrollHpWindowMs = TRANSFORMERS.normalizeScrollHpWindowMs(patch.scrollHpWindowMs, next.scrollHpWindowMs);
+        next.scrollHpMode = TRANSFORMERS.normalizeScrollHpMode(next.scrollHpMode, 0);
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "sensorAngle")) {
+        next.sensorAngle = TRANSFORMERS.normalizeSensorAngle(patch.sensorAngle, next.sensorAngle);
       }
       if (Object.prototype.hasOwnProperty.call(patch, "lightingEffect")) {
         next.lightingEffect = TRANSFORMERS.normalizeLightingEffect(patch.lightingEffect, next.lightingEffect);
@@ -1536,12 +1825,15 @@
       if (has("angleSnap")) keys.push("angleSnap");
       if (has("motionSync")) keys.push("motionSync");
       if (has("rippleControl")) keys.push("rippleControl");
+      if (has("competitiveMode")) keys.push("competitiveMode");
       if (has("hyperMode")) keys.push("hyperMode");
       if (has("dpiXYOnOff")) keys.push("dpiXYOnOff");
       if (has("dpiIndicator")) keys.push("dpiIndicator");
       if (has("buttonCombine")) keys.push("buttonCombine");
       if (has("debounceTime")) keys.push("debounceTime");
       if (has("speedEnable") || has("speedWindow")) keys.push("speedEnable");
+      if (has("scrollHpMode") || has("scrollHpWindowMs")) keys.push("scrollHp");
+      if (has("sensorAngle")) keys.push("sensorAngle");
       if (has("lightingEffect")) keys.push("lightingEffect");
       if (has("lightness")) keys.push("lightness");
       if (has("dpiStageColors")) keys.push("dpiStageColors");
@@ -1561,6 +1853,10 @@
       const nextState = this._buildNextState(prevState, patch);
       const keys = this._collectSpecKeys(patch);
       const sorted = this._topoSort(keys);
+      const targetId = normalizeProfileId(
+        nextState.profileId ?? prevState?.profileId,
+        CRDRAKO_PROFILE_ID_DEFAULT
+      );
 
       const commands = [];
       for (const key of sorted) {
@@ -1572,6 +1868,7 @@
           patch,
           prevState,
           nextState,
+          targetId,
         });
         if (Array.isArray(seq) && seq.length) commands.push(...seq);
       }
@@ -1583,20 +1880,56 @@
   // ============================================================
   const DEFAULT_BUTTON_SOURCE_CODE_BY_BUTTON_ID = Object.freeze({
     1: 0x01,
-    2: 0x02,
-    3: 0x03,
-    4: 0x05,
-    5: 0x04,
-    6: 0x60,
+    2: 0x04,
+    3: 0x05,
+    4: 0x02,
+    5: 0x03,
   });
 
   const DEFAULT_ACTION_LABEL_BY_BUTTON_ID = Object.freeze({
     1: "Left Click",
-    2: "Right Click",
-    3: "Middle Click",
-    4: "Forward",
-    5: "Back",
-    6: "DPI Loop",
+    2: "Back",
+    3: "Forward",
+    4: "Right Click",
+    5: "Middle Click",
+  });
+
+  const CRDRAKO_KEYMAP_ACTION_TYPE = Object.freeze({
+    OFF: 0x00,
+    BUTTON_CODE: 0x01,
+    KEYBOARD_CODE: 0x04,
+    CONSUMER_KEYS: 0x05,
+    DPI: 0x07,
+  });
+
+  const CRDRAKO_KEYBOARD_MODIFIER = Object.freeze({
+    LEFT_CTRL: 0x01,
+    LEFT_SHIFT: 0x02,
+    LEFT_ALT: 0x04,
+    LEFT_WIN: 0x08,
+    RIGHT_CTRL: 0x10,
+    RIGHT_SHIFT: 0x20,
+    RIGHT_ALT: 0x40,
+    RIGHT_WIN: 0x80,
+  });
+
+  const CRDRAKO_CONSUMER_USAGE = Object.freeze({
+    VOLUME_UP: 0x00e9,
+    VOLUME_DOWN: 0x00ea,
+    MUTE: 0x00e2,
+    PLAY_PAUSE: 0x00cd,
+    NEXT_TRACK: 0x00b5,
+    PREVIOUS_TRACK: 0x00b6,
+    STOP: 0x00b7,
+    CALCULATOR: 0x0192,
+    THIS_PC: 0x0194,
+    BROWSER: 0x0196,
+    MAIL: 0x018a,
+    MEDIA_PLAYER: 0x0183,
+    WWW_HOME: 0x0223,
+    WWW_REFRESH: 0x0227,
+    LIGHTING_UP: 0x006f,
+    LIGHTING_DOWN: 0x0070,
   });
 
   const KEYMAP_ACTIONS = (() => {
@@ -1610,34 +1943,100 @@
       };
     };
 
-    add("Left Click", "mouse", 0x01, 0x0000);
-    add("Right Click", "mouse", 0x02, 0x0000);
-    add("Middle Click", "mouse", 0x04, 0x0000);
-    add("Forward", "mouse", 0x08, 0x0000);
-    add("Back", "mouse", 0x10, 0x0000);
-    add("DPI Loop", "mouse", 0x20, 0x0005);
-    add("Disable", "mouse", 0x07, 0x0000);
-    add("Double Click", "mouse", 0x01, 0x0006);
-    add("Wheel Up", "mouse", 0x01, 0x0009);
-    add("Wheel Down", "mouse", 0x01, 0x000a);
+    const addKeyboardUsage = (label, usage) => {
+      add(label, "keyboard", CRDRAKO_KEYMAP_ACTION_TYPE.KEYBOARD_CODE, clampU8(usage));
+    };
+    const addKeyboardModifier = (label, modifier) => {
+      add(label, "keyboard", CRDRAKO_KEYMAP_ACTION_TYPE.KEYBOARD_CODE, (clampU8(modifier) << 8) & 0xffff);
+    };
+    const addKeyboardChord = (label, modifier, usage) => {
+      add(label, "keyboard", CRDRAKO_KEYMAP_ACTION_TYPE.KEYBOARD_CODE, ((clampU8(modifier) << 8) | clampU8(usage)) & 0xffff);
+    };
+    const addConsumer = (label, usage) => {
+      add(label, "system", CRDRAKO_KEYMAP_ACTION_TYPE.CONSUMER_KEYS, clampInt(usage, 0, 0xffff));
+    };
+
+    add("Disable", "mouse", CRDRAKO_KEYMAP_ACTION_TYPE.OFF, 0x0000);
+    add("Left Click", "mouse", CRDRAKO_KEYMAP_ACTION_TYPE.BUTTON_CODE, 0x0001);
+    add("Right Click", "mouse", CRDRAKO_KEYMAP_ACTION_TYPE.BUTTON_CODE, 0x0002);
+    add("Middle Click", "mouse", CRDRAKO_KEYMAP_ACTION_TYPE.BUTTON_CODE, 0x0003);
+    add("Back", "mouse", CRDRAKO_KEYMAP_ACTION_TYPE.BUTTON_CODE, 0x0004);
+    add("Forward", "mouse", CRDRAKO_KEYMAP_ACTION_TYPE.BUTTON_CODE, 0x0005);
+    add("Wheel Up", "mouse", CRDRAKO_KEYMAP_ACTION_TYPE.BUTTON_CODE, 0x0010);
+    add("Wheel Down", "mouse", CRDRAKO_KEYMAP_ACTION_TYPE.BUTTON_CODE, 0x0011);
+    add("DPI Loop Up", "mouse", CRDRAKO_KEYMAP_ACTION_TYPE.BUTTON_CODE, 0x0014);
+    add("DPI Loop", "mouse", CRDRAKO_KEYMAP_ACTION_TYPE.DPI, 0x0006);
 
     for (let i = 0; i < 26; i++) {
-      add(String.fromCharCode(65 + i), "keyboard", 0x02, 0x0004 + i);
+      addKeyboardUsage(String.fromCharCode(65 + i), 0x04 + i);
     }
     const digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
     for (let i = 0; i < digits.length; i++) {
-      add(digits[i], "keyboard", 0x02, 0x001e + i);
+      addKeyboardUsage(digits[i], 0x1e + i);
     }
     for (let i = 1; i <= 12; i++) {
-      add(`F${i}`, "keyboard", 0x02, 0x0039 + i);
+      addKeyboardUsage(`F${i}`, 0x39 + i);
     }
 
-    add("Volume Up", "system", 0x40, 0x0000);
-    add("Volume Down", "system", 0x40, 0x0001);
-    add("Mute", "system", 0x40, 0x0002);
-    add("Play/Pause", "system", 0x40, 0x0004);
-    add("Next Track", "system", 0x40, 0x0005);
-    add("Previous Track", "system", 0x40, 0x0006);
+    [
+      ["Enter", 0x28], ["Esc", 0x29], ["Backspace", 0x2a], ["Tab", 0x2b], ["Space", 0x2c],
+      ["- _", 0x2d], ["= +", 0x2e], ["[ {", 0x2f], ["] }", 0x30], ["\\ |", 0x31],
+      ["; :", 0x33], ["' \"", 0x34], ["` ~", 0x35], [", <", 0x36], [". >", 0x37], ["/ ?", 0x38],
+      ["Caps Lock", 0x39], ["Print Screen", 0x46], ["Scroll Lock", 0x47], ["Pause", 0x48],
+      ["Insert", 0x49], ["Home", 0x4a], ["Page Up", 0x4b], ["Delete", 0x4c], ["End", 0x4d],
+      ["Page Down", 0x4e], ["Right Arrow", 0x4f], ["Left Arrow", 0x50], ["Down Arrow", 0x51],
+      ["Up Arrow", 0x52], ["Num Lock", 0x53], ["Numpad /", 0x54], ["Numpad *", 0x55],
+      ["Numpad -", 0x56], ["Numpad +", 0x57], ["Numpad Enter", 0x58], ["Numpad 1", 0x59],
+      ["Numpad 2", 0x5a], ["Numpad 3", 0x5b], ["Numpad 4", 0x5c], ["Numpad 5", 0x5d],
+      ["Numpad 6", 0x5e], ["Numpad 7", 0x5f], ["Numpad 8", 0x60], ["Numpad 9", 0x61],
+      ["Numpad 0", 0x62], ["Numpad .", 0x63],
+    ].forEach(([label, usage]) => addKeyboardUsage(label, usage));
+
+    addKeyboardModifier("Left Ctrl", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL);
+    addKeyboardModifier("Left Shift", CRDRAKO_KEYBOARD_MODIFIER.LEFT_SHIFT);
+    addKeyboardModifier("Left Alt", CRDRAKO_KEYBOARD_MODIFIER.LEFT_ALT);
+    addKeyboardModifier("Left Win", CRDRAKO_KEYBOARD_MODIFIER.LEFT_WIN);
+    addKeyboardModifier("Right Ctrl", CRDRAKO_KEYBOARD_MODIFIER.RIGHT_CTRL);
+    addKeyboardModifier("Right Shift", CRDRAKO_KEYBOARD_MODIFIER.RIGHT_SHIFT);
+    addKeyboardModifier("Right Alt", CRDRAKO_KEYBOARD_MODIFIER.RIGHT_ALT);
+    addKeyboardModifier("Right Win", CRDRAKO_KEYBOARD_MODIFIER.RIGHT_WIN);
+
+    addKeyboardChord("Copy Ctrl + C", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL, 0x06);
+    addKeyboardChord("Paste Ctrl + V", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL, 0x19);
+    addKeyboardChord("Cut Ctrl + X", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL, 0x1b);
+    addKeyboardChord("Undo Ctrl + Z", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL, 0x1d);
+    addKeyboardChord("Redo Ctrl + Y", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL, 0x1c);
+    addKeyboardChord("Select All Ctrl + A", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL, 0x04);
+    addKeyboardChord("Save Ctrl + S", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL, 0x16);
+    addKeyboardChord("Find Ctrl + F", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL, 0x09);
+    addKeyboardChord("New Ctrl + N", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL, 0x11);
+    addKeyboardChord("Print Ctrl + P", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL, 0x13);
+    addKeyboardChord("Switch Window Alt + Tab", CRDRAKO_KEYBOARD_MODIFIER.LEFT_ALT, 0x2b);
+    addKeyboardChord("Close Window Alt + F4", CRDRAKO_KEYBOARD_MODIFIER.LEFT_ALT, 0x3d);
+    addKeyboardChord("Show Desktop Win + D", CRDRAKO_KEYBOARD_MODIFIER.LEFT_WIN, 0x07);
+    addKeyboardChord("File Explorer Win + E", CRDRAKO_KEYBOARD_MODIFIER.LEFT_WIN, 0x08);
+    addKeyboardChord("Lock Computer Win + L", CRDRAKO_KEYBOARD_MODIFIER.LEFT_WIN, 0x0f);
+    addKeyboardChord("Run Win + R", CRDRAKO_KEYBOARD_MODIFIER.LEFT_WIN, 0x15);
+    addKeyboardChord("Open Settings Win + I", CRDRAKO_KEYBOARD_MODIFIER.LEFT_WIN, 0x0c);
+    addKeyboardChord("Task Manager Ctrl + Shift + Esc", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL | CRDRAKO_KEYBOARD_MODIFIER.LEFT_SHIFT, 0x29);
+    addKeyboardChord("Reopen Closed Tab Ctrl + Shift + T", CRDRAKO_KEYBOARD_MODIFIER.LEFT_CTRL | CRDRAKO_KEYBOARD_MODIFIER.LEFT_SHIFT, 0x17);
+
+    addConsumer("Volume Up", CRDRAKO_CONSUMER_USAGE.VOLUME_UP);
+    addConsumer("Volume Down", CRDRAKO_CONSUMER_USAGE.VOLUME_DOWN);
+    addConsumer("Mute", CRDRAKO_CONSUMER_USAGE.MUTE);
+    addConsumer("Play/Pause", CRDRAKO_CONSUMER_USAGE.PLAY_PAUSE);
+    addConsumer("Next Track", CRDRAKO_CONSUMER_USAGE.NEXT_TRACK);
+    addConsumer("Previous Track", CRDRAKO_CONSUMER_USAGE.PREVIOUS_TRACK);
+    addConsumer("Stop", CRDRAKO_CONSUMER_USAGE.STOP);
+    addConsumer("Calculator", CRDRAKO_CONSUMER_USAGE.CALCULATOR);
+    addConsumer("This PC", CRDRAKO_CONSUMER_USAGE.THIS_PC);
+    addConsumer("Browser", CRDRAKO_CONSUMER_USAGE.BROWSER);
+    addConsumer("Mail", CRDRAKO_CONSUMER_USAGE.MAIL);
+    addConsumer("Media Player", CRDRAKO_CONSUMER_USAGE.MEDIA_PLAYER);
+    addConsumer("WWW Home", CRDRAKO_CONSUMER_USAGE.WWW_HOME);
+    addConsumer("WWW Refresh", CRDRAKO_CONSUMER_USAGE.WWW_REFRESH);
+    addConsumer("Lighting Up", CRDRAKO_CONSUMER_USAGE.LIGHTING_UP);
+    addConsumer("Lighting Down", CRDRAKO_CONSUMER_USAGE.LIGHTING_DOWN);
 
     return Object.freeze(actions);
   })();
@@ -1652,6 +2051,7 @@
     back: "Back",
     backward: "Back",
     forward: "Forward",
+    "dpi loop up": "DPI Loop Up",
     dpiloop: "DPI Loop",
     "dpi loop": "DPI Loop",
     disable: "Disable",
@@ -1664,8 +2064,22 @@
     mute: "Mute",
     "play pause": "Play/Pause",
     "play/pause": "Play/Pause",
+    next: "Next Track",
     "next track": "Next Track",
+    previous: "Previous Track",
     "previous track": "Previous Track",
+    stop: "Stop",
+    "stop playback": "Stop",
+    calculator: "Calculator",
+    "this pc": "This PC",
+    "my computer": "This PC",
+    browser: "Browser",
+    mail: "Mail",
+    "media player": "Media Player",
+    "www home": "WWW Home",
+    "www refresh": "WWW Refresh",
+    "lighting up": "Lighting Up",
+    "lighting down": "Lighting Down",
   });
 
   const FUNCKEY_KEYCODE_TO_LABEL = (() => {
@@ -1701,7 +2115,10 @@
   function encodeButtonPayload(funckey, keycode) {
     const fk = clampU8(funckey);
     const kc = clampInt(keycode, 0, 0xffff);
-    if (fk === 0x02 || fk === 0x40 || kc > 0xff) {
+    if (
+      fk === CRDRAKO_KEYMAP_ACTION_TYPE.KEYBOARD_CODE
+      || fk === CRDRAKO_KEYMAP_ACTION_TYPE.CONSUMER_KEYS
+    ) {
       return [(kc >> 8) & 0xff, kc & 0xff];
     }
     if (kc > 0) return [kc & 0xff];
@@ -1711,7 +2128,11 @@
   function decodeButtonPayload(funckey, payloadBytes = []) {
     const fk = clampU8(funckey);
     const bytes = Array.isArray(payloadBytes) ? payloadBytes : [];
-    if (fk === 0x02 || fk === 0x40 || bytes.length >= 2) {
+    if (
+      fk === CRDRAKO_KEYMAP_ACTION_TYPE.KEYBOARD_CODE
+      || fk === CRDRAKO_KEYMAP_ACTION_TYPE.CONSUMER_KEYS
+      || bytes.length >= 2
+    ) {
       const hi = clampU8(bytes[0] ?? 0);
       const lo = clampU8(bytes[1] ?? 0);
       return ((hi << 8) | lo) & 0xffff;
@@ -1730,7 +2151,7 @@
 
   function buildDefaultButtonMappings() {
     const out = [];
-    for (let i = 1; i <= 6; i++) {
+    for (let i = 1; i <= CRDRAKO_KEYMAP_BUTTON_COUNT; i++) {
       const label = DEFAULT_ACTION_LABEL_BY_BUTTON_ID[i];
       const action = KEYMAP_ACTIONS[label] || { funckey: 0x00, keycode: 0x0000 };
       out.push({
@@ -1743,13 +2164,15 @@
   }
 
   function parseButtonMappingResponse(response, fallback = null) {
-    const args = response?.arguments instanceof Uint8Array ? response.arguments : new Uint8Array();
-    if (args.length < 5) {
+    const raw = response?.raw instanceof Uint8Array ? response.raw : new Uint8Array();
+    const hi = clampInt(response?.hidIndex ?? 0, 0, 1);
+    if (raw.length < 12 - hi) {
       return normalizeButtonMappingEntry(fallback || { source: "Unknown", funckey: 0, keycode: 0 });
     }
-    const funckey = clampU8(args[3] ?? 0);
-    const payloadLen = clampInt(args[4] ?? 0, 0, 16);
-    const payload = Array.from(args.slice(5, 5 + payloadLen)).map((x) => clampU8(x));
+    const funckey = clampU8(raw[10 - hi] ?? 0);
+    const payloadLen = clampInt(raw[11 - hi] ?? 0, 0, 16);
+    const payloadStart = 12 - hi;
+    const payload = Array.from(raw.slice(payloadStart, payloadStart + payloadLen)).map((x) => clampU8(x));
     const keycode = decodeButtonPayload(funckey, payload);
     const label = FUNCKEY_KEYCODE_TO_LABEL.get(`${funckey}:${keycode}`) || `Unknown(${funckey},${keycode})`;
     return {
@@ -1820,21 +2243,26 @@
       return {
         pollingRates: [125, 250, 500, 1000, 2000, 4000, 8000],
         dpiSlotCount: CRDRAKO_MAX_DPI_STAGES,
-        maxDpi: 50000,
-        dpiStep: 1,
+        minDpi: CRDRAKO_MIN_DPI,
+        maxDpi: CRDRAKO_MAX_DPI,
+        dpiStep: CRDRAKO_DPI_STEP,
         battery: !!caps.battery,
         charging: !!caps.charging,
         deviceIdleTime: !!caps.idle,
+        surfaceFeel: !!caps.lod,
         lod: !!caps.lod,
         angleSnap: !!caps.angleSnap,
         motionSync: !!caps.motionSync,
         rippleControl: !!caps.rippleControl,
+        competitiveMode: !!caps.competitiveMode,
         hyperMode: !!caps.hyperMode,
         dpiXYOnOff: !!caps.dpiXYOnOff,
         dpiIndicator: !!caps.dpiIndicator,
         buttonCombine: !!caps.buttonCombine,
         debounceTime: !!caps.debounceTime,
         speedEnable: !!caps.speedEnable,
+        scrollHp: !!caps.scrollHp,
+        sensorAngle: !!caps.sensorAngle,
         keyMapping: !!caps.keyMapping,
         lightingEffect: !!caps.lightingEffect,
         lightness: !!caps.lightness,
@@ -1909,6 +2337,7 @@
           ? String(this.device.productName)
           : (PID_NAME[pid] || "CRDRAKO Mouse"),
         firmwareVersion: "0.0.0.0",
+        profileId: CRDRAKO_PROFILE_ID_DEFAULT,
         pollingHz: 1000,
         dpi: { x: 1600, y: 1600 },
         dpiStages: [
@@ -1926,6 +2355,7 @@
         angleSnap: false,
         motionSync: false,
         rippleControl: false,
+        competitiveMode: false,
         hyperMode: false,
         dpiXYOnOff: false,
         dpiIndicator: false,
@@ -1933,6 +2363,9 @@
         debounceTime: 8,
         speedEnable: false,
         speedWindow: 0,
+        scrollHpMode: 0,
+        scrollHpWindowMs: 100,
+        sensorAngle: 0,
         lightingEffect: {
           zone: 0,
           mode: 0,
@@ -1948,7 +2381,6 @@
           [0, 0, 255],
           [255, 255, 0],
           [255, 0, 255],
-          [0, 255, 255],
         ],
       };
       return cfg;
@@ -2213,7 +2645,7 @@
     async setButtonMappingBySelect(btnId, labelOrObj) {
       return this._opQueue.enqueue(async () => {
         await this._ensureOpen();
-        const b = clampInt(btnId, 1, 6);
+        const b = clampInt(btnId, 1, CRDRAKO_KEYMAP_BUTTON_COUNT);
         const sourceCode = DEFAULT_BUTTON_SOURCE_CODE_BY_BUTTON_ID[b];
         if (!Number.isFinite(sourceCode)) {
           throw new ProtocolError(`Btn${b} mapping source code is not defined`, "FEATURE_UNSUPPORTED", { btnId: b });
@@ -2243,15 +2675,16 @@
 
         const payload = encodeButtonPayload(action.funckey, action.keycode);
         const tx = txForField(this._pid(), "buttonMapping");
+        const targetId = normalizeProfileId(this._cfg?.profileId, CRDRAKO_PROFILE_ID_DEFAULT);
         await this._driver.sendAndWait(
-          ProtocolCodec.commands.setButtonMapping(tx, sourceCode, action.funckey, payload),
+          ProtocolCodec.commands.setButtonMapping(tx, targetId, sourceCode, action.funckey, payload),
           { checkHeader: false }
         );
 
         const next = Array.isArray(this._cfg?.buttonMappings)
-          ? this._cfg.buttonMappings.slice(0, 6)
+          ? this._cfg.buttonMappings.slice(0, CRDRAKO_KEYMAP_BUTTON_COUNT)
           : buildDefaultButtonMappings();
-        while (next.length < 6) {
+        while (next.length < CRDRAKO_KEYMAP_BUTTON_COUNT) {
           next.push({ source: "", funckey: 0x00, keycode: 0x0000 });
         }
         next[b - 1] = {
@@ -2303,23 +2736,29 @@
       };
       const bat = await this._safeQuery(ProtocolCodec.commands.getBatteryStatus(tx));
       if (bat?.arguments) {
-        out.batteryPercent = TRANSFORMERS.batteryPercentFromRaw(bat.arguments[0] ?? 0);
-        out.batteryIsCharging = !!clampU8(bat.arguments[1] ?? 0);
+        out.batteryIsCharging = !!clampU8(bat.arguments[0] ?? 0);
+        out.batteryPercent = TRANSFORMERS.batteryPercentFromRaw(bat.arguments[1] ?? 0);
+        debugCrdrako("parsedValue", {
+          feature: "battery",
+          charge: out.batteryIsCharging,
+          percent: out.batteryPercent,
+        });
       }
       return out;
     }
 
-    async _readButtonMappingsSnapshot({ strictStability = false } = {}) {
+    async _readButtonMappingsSnapshot({ strictStability = false, targetId = CRDRAKO_PROFILE_ID_DEFAULT } = {}) {
       void strictStability;
       const pid = this._ensureSupported();
       const tx = txForField(pid, "buttonMapping");
-      const out = Array.from({ length: 6 }, () => normalizeButtonMappingEntry({ source: "Unknown", funckey: 0, keycode: 0 }));
+      const profileId = normalizeProfileId(targetId, this._cfg?.profileId ?? CRDRAKO_PROFILE_ID_DEFAULT);
+      const out = Array.from({ length: CRDRAKO_KEYMAP_BUTTON_COUNT }, () => normalizeButtonMappingEntry({ source: "Unknown", funckey: 0, keycode: 0 }));
 
-      for (let btnId = 1; btnId <= 6; btnId++) {
+      for (let btnId = 1; btnId <= CRDRAKO_KEYMAP_BUTTON_COUNT; btnId++) {
         const sourceCode = DEFAULT_BUTTON_SOURCE_CODE_BY_BUTTON_ID[btnId];
         const fallback = normalizeButtonMappingEntry(this._cfg?.buttonMappings?.[btnId - 1], DEFAULT_ACTION_LABEL_BY_BUTTON_ID[btnId]);
         const res = await this._safeQuery(
-          ProtocolCodec.commands.getButtonMapping(tx, sourceCode, fallback.funckey, encodeButtonPayload(fallback.funckey, fallback.keycode)),
+          ProtocolCodec.commands.getButtonMapping(tx, profileId, sourceCode, fallback.funckey, encodeButtonPayload(fallback.funckey, fallback.keycode)),
           null,
           { checkHeader: false }
         );
@@ -2341,11 +2780,24 @@
       const fw = await this._safeQuery(ProtocolCodec.commands.getFirmwareVersion(tx), null, { checkHeader: false });
       if (fw?.arguments) updates.firmwareVersion = TRANSFORMERS.parseFirmwareVersion(fw);
 
-      const poll = await this._safeQuery(ProtocolCodec.commands.getPollingRate(tx), null, { checkHeader: false });
-      if (poll?.arguments) updates.pollingHz = TRANSFORMERS.pollingDecode(poll.arguments[1] ?? poll.arguments[0] ?? 0x01, this._cfg?.pollingHz ?? 1000);
+      let targetId = normalizeProfileId(this._cfg?.profileId, CRDRAKO_PROFILE_ID_DEFAULT);
+      const profile = await this._safeQuery(ProtocolCodec.commands.getProfileId(tx), null, { checkHeader: true });
+      if (profile?.raw) {
+        targetId = normalizeProfileId(profile.arguments?.[0] ?? targetId, targetId);
+        updates.profileId = targetId;
+      } else {
+        updates.profileId = targetId;
+      }
+
+      const poll = await this._safeQuery(ProtocolCodec.commands.getPollingRate(tx, targetId), null, { checkHeader: false });
+      if (poll?.raw) {
+        const rawPolling = ProtocolCodec.valueAt(poll, 0, 0x01);
+        updates.pollingHz = TRANSFORMERS.pollingDecode(rawPolling, this._cfg?.pollingHz ?? 1000);
+        debugCrdrako("parsedValue", { feature: "pollingHz", raw: rawPolling, value: updates.pollingHz });
+      }
 
       const dpiStagesRes = await this._safeQuery(
-        ProtocolCodec.commands.getDpiStages(tx, CRDRAKO_MAX_DPI_STAGES),
+        ProtocolCodec.commands.getDpiStages(tx, targetId, CRDRAKO_MAX_DPI_STAGES),
         null,
         { checkHeader: true }
       );
@@ -2353,12 +2805,13 @@
         const parsed = TRANSFORMERS.parseDpiStagesResponse(dpiStagesRes);
         if (parsed.dpiStages.length) {
           updates.dpiStages = parsed.dpiStages;
+          debugCrdrako("parsedValue", { feature: "dpiStages", count: parsed.stageCount, value: parsed.dpiStages });
         }
       }
 
-      const activeRes = await this._safeQuery(ProtocolCodec.commands.getActiveDpiStage(tx));
-      if (activeRes?.arguments) {
-        const oneBased = clampInt(activeRes.arguments[1] ?? 1, 1, CRDRAKO_MAX_DPI_STAGES);
+      const activeRes = await this._safeQuery(ProtocolCodec.commands.getActiveDpiStage(tx, targetId));
+      if (activeRes?.raw) {
+        const oneBased = clampInt(ProtocolCodec.valueAt(activeRes, 0, 1), 1, CRDRAKO_MAX_DPI_STAGES);
         const stageCount = Array.isArray(updates.dpiStages)
           ? updates.dpiStages.length
           : (Array.isArray(this._cfg?.dpiStages) ? this._cfg.dpiStages.length : 1);
@@ -2379,76 +2832,114 @@
       }
 
       if (caps.idle) {
-        const idleRes = await this._safeQuery(ProtocolCodec.commands.getSleepTime(tx));
-        if (idleRes?.arguments) {
+        const idleRes = await this._safeQuery(ProtocolCodec.commands.getSleepTime(tx, targetId));
+        if (idleRes?.raw) {
           updates.deviceIdleTime = TRANSFORMERS.normalizeIdleTime(
-            ((clampU8(idleRes.arguments[1]) << 8) | clampU8(idleRes.arguments[2])) & 0xffff
+            ((ProtocolCodec.valueAt(idleRes, 0, 0) << 8) | ProtocolCodec.valueAt(idleRes, 1, 0)) & 0xffff
           );
         }
       }
 
       if (caps.lod) {
-        const lodRes = await this._safeQuery(ProtocolCodec.commands.getLod(tx));
-        if (lodRes?.arguments) {
-          updates.lod = TRANSFORMERS.lodFromRaw(lodRes.arguments[1], this._cfg?.lod ?? 1);
+        const lodRes = await this._safeQuery(ProtocolCodec.commands.getLod(tx, targetId));
+        if (lodRes?.raw) {
+          const rawLod = ProtocolCodec.valueAt(lodRes, 0, 1);
+          updates.lod = TRANSFORMERS.lodFromRaw(rawLod, this._cfg?.lod ?? 1);
+          debugCrdrako("parsedValue", { feature: "lod", raw: rawLod, value: updates.lod });
         }
       }
 
       if (caps.angleSnap) {
-        const angle = await this._safeQuery(ProtocolCodec.commands.getAngleSnap(tx));
-        if (angle?.arguments) updates.angleSnap = !!clampU8(angle.arguments[1] ?? 0);
+        const angle = await this._safeQuery(ProtocolCodec.commands.getAngleSnap(tx, targetId));
+        if (angle?.raw) updates.angleSnap = !!ProtocolCodec.valueAt(angle, 0, 0);
       }
       if (caps.motionSync) {
-        const motion = await this._safeQuery(ProtocolCodec.commands.getMotionSync(tx));
-        if (motion?.arguments) updates.motionSync = !!clampU8(motion.arguments[1] ?? 0);
+        const motion = await this._safeQuery(ProtocolCodec.commands.getMotionSync(tx, targetId));
+        if (motion?.raw) {
+          updates.motionSync = !!ProtocolCodec.valueAt(motion, 0, 0);
+          debugCrdrako("parsedValue", { feature: "motionSync", value: updates.motionSync });
+        }
       }
       if (caps.rippleControl) {
-        const ripple = await this._safeQuery(ProtocolCodec.commands.getRippleControl(tx));
-        if (ripple?.arguments) updates.rippleControl = !!clampU8(ripple.arguments[1] ?? 0);
+        const ripple = await this._safeQuery(ProtocolCodec.commands.getRippleControl(tx, targetId));
+        if (ripple?.raw) {
+          updates.rippleControl = !!ProtocolCodec.valueAt(ripple, 0, 0);
+          debugCrdrako("parsedValue", { feature: "rippleControl", value: updates.rippleControl });
+        }
+      }
+      if (caps.competitiveMode) {
+        const competitive = await this._safeQuery(ProtocolCodec.commands.getCompetitiveMode(tx, targetId));
+        if (competitive?.raw) {
+          updates.competitiveMode = !!ProtocolCodec.valueAt(competitive, 0, 0);
+          debugCrdrako("parsedValue", { feature: "competitiveMode", value: updates.competitiveMode });
+        }
       }
       if (caps.hyperMode) {
-        const hyper = await this._safeQuery(ProtocolCodec.commands.getHyperMode(tx));
-        if (hyper?.arguments) updates.hyperMode = !!clampU8(hyper.arguments[1] ?? 0);
+        const hyper = await this._safeQuery(ProtocolCodec.commands.getHyperMode(tx, targetId));
+        if (hyper?.raw) updates.hyperMode = !!ProtocolCodec.valueAt(hyper, 0, 0);
       }
       if (caps.dpiXYOnOff) {
-        const dpixy = await this._safeQuery(ProtocolCodec.commands.getDpiXyOnOff(tx));
-        if (dpixy?.arguments) updates.dpiXYOnOff = !!clampU8(dpixy.arguments[1] ?? 0);
+        const dpixy = await this._safeQuery(ProtocolCodec.commands.getDpiXyOnOff(tx, targetId));
+        if (dpixy?.raw) updates.dpiXYOnOff = !!ProtocolCodec.valueAt(dpixy, 0, 0);
       }
       if (caps.dpiIndicator) {
-        const indicator = await this._safeQuery(ProtocolCodec.commands.getDpiIndicator(tx));
-        if (indicator?.arguments) updates.dpiIndicator = !!clampU8(indicator.arguments[1] ?? 0);
+        const indicator = await this._safeQuery(ProtocolCodec.commands.getDpiIndicator(tx, targetId));
+        if (indicator?.raw) updates.dpiIndicator = !!ProtocolCodec.valueAt(indicator, 0, 0);
       }
       if (caps.buttonCombine) {
-        const combine = await this._safeQuery(ProtocolCodec.commands.getButtonCombine(tx));
-        if (combine?.arguments) updates.buttonCombine = !!clampU8(combine.arguments[1] ?? 0);
+        const combine = await this._safeQuery(ProtocolCodec.commands.getButtonCombine(tx, targetId));
+        if (combine?.raw) updates.buttonCombine = !!ProtocolCodec.valueAt(combine, 0, 0);
       }
       if (caps.debounceTime) {
-        const debounce = await this._safeQuery(ProtocolCodec.commands.getDebounceTime(tx));
-        if (debounce?.arguments) {
-          updates.debounceTime = TRANSFORMERS.normalizeDebounceTime(debounce.arguments[1] ?? 8);
+        const debounce = await this._safeQuery(ProtocolCodec.commands.getDebounceTime(tx, targetId));
+        if (debounce?.raw) {
+          const rawDebounce = ProtocolCodec.valueAt(debounce, 0, 8);
+          updates.debounceTime = TRANSFORMERS.normalizeDebounceTime(rawDebounce);
+          debugCrdrako("parsedValue", { feature: "debounceTime", raw: rawDebounce, value: updates.debounceTime });
         }
       }
       if (caps.speedEnable) {
-        const speed = await this._safeQuery(ProtocolCodec.commands.getSpeedEnable(tx));
-        if (speed?.arguments) {
-          updates.speedEnable = !!clampU8(speed.arguments[1] ?? 0);
-          updates.speedWindow = TRANSFORMERS.normalizeSpeedWindow(speed.arguments[2] ?? 0);
+        const speed = await this._safeQuery(ProtocolCodec.commands.getSpeedEnable(tx, targetId));
+        if (speed?.raw) {
+          updates.speedEnable = !!ProtocolCodec.valueAt(speed, 0, 0);
+          updates.speedWindow = !!ProtocolCodec.valueAt(speed, 1, 0);
+        }
+      }
+      if (caps.scrollHp) {
+        const scrollHp = await this._safeQuery(ProtocolCodec.commands.getScrollHP(tx, targetId));
+        if (scrollHp?.raw) {
+          const mode = ProtocolCodec.valueAt(scrollHp, 0, 0);
+          const windowTime = (ProtocolCodec.valueAt(scrollHp, 1, 0) << 8)
+            + ProtocolCodec.valueAt(scrollHp, 2, 0);
+          updates.scrollHpMode = TRANSFORMERS.normalizeScrollHpMode(mode, this._cfg?.scrollHpMode ?? 0);
+          updates.scrollHpWindowMs = TRANSFORMERS.normalizeScrollHpWindowMs(
+            windowTime,
+            this._cfg?.scrollHpWindowMs ?? 100
+          );
+        }
+      }
+      if (caps.sensorAngle) {
+        const angleTune = await this._safeQuery(ProtocolCodec.commands.getAngleTune(tx, targetId));
+        if (angleTune?.raw) {
+          updates.sensorAngle = TRANSFORMERS.sensorAngleFromRaw(ProtocolCodec.valueAt(angleTune, 0, 0));
         }
       }
       if (caps.lightness) {
-        const lightness = await this._safeQuery(ProtocolCodec.commands.getLightness(tx));
+        const lightnessTx = txForField(pid, "lightness");
+        const lightness = await this._safeQuery(ProtocolCodec.commands.getLightness(lightnessTx));
         if (lightness?.arguments) updates.lightness = TRANSFORMERS.normalizeLightness(lightness.arguments[2] ?? 100);
       }
       if (caps.lightingEffect) {
-        const effect = await this._safeQuery(ProtocolCodec.commands.getLightEffect(tx, 0, 8));
+        const lightingTx = txForField(pid, "lightingEffect");
+        const effect = await this._safeQuery(ProtocolCodec.commands.getLightEffect(lightingTx, 0, 8));
         if (effect?.arguments) updates.lightingEffect = TRANSFORMERS.parseLightingEffectResponse(effect);
       }
       if (caps.dpiStageColors) {
-        const colors = await this._safeQuery(ProtocolCodec.commands.getDpiStageColors(tx));
+        const colors = await this._safeQuery(ProtocolCodec.commands.getDpiStageColors(tx, targetId));
         if (colors?.arguments) updates.dpiStageColors = TRANSFORMERS.parseDpiStageColorsResponse(colors);
       }
       if (caps.keyMapping) {
-        const mappings = await this._readButtonMappingsSnapshot({ strictStability: !!strictButtonMappingRead });
+        const mappings = await this._readButtonMappingsSnapshot({ strictStability: !!strictButtonMappingRead, targetId });
         if (Array.isArray(mappings) && mappings.length) updates.buttonMappings = mappings;
       }
 
@@ -2468,17 +2959,18 @@
     : (typeof globalThis !== "undefined" ? globalThis : global);
   const ProtocolApi = (root.ProtocolApi = root.ProtocolApi || {});
 
-  ProtocolApi.RAZER_HID = {
+  ProtocolApi.CRDRAKO_HID = {
     vendorId: CRDRAKO_VENDOR_ID,
     productIds: SUPPORTED_PIDS.slice(0),
-    defaultFilters: [{
+    defaultFilters: SUPPORTED_PIDS.map((productId) => ({
       vendorId: CRDRAKO_VENDOR_ID,
-      productId: CRDRAKO_PRODUCT_ID_006B,
-    }],
+      productId,
+    })),
     isSupportedPid(productId) {
       return SUPPORTED_PID_SET.has(Number(productId));
     },
   };
+  ProtocolApi.RAZER_HID = ProtocolApi.CRDRAKO_HID;
 
   ProtocolApi.resolveMouseDisplayName = function resolveMouseDisplayName(vendorId, productId, fallbackName) {
     const vid = Number(vendorId) & 0xffff;
@@ -2508,9 +3000,10 @@
   };
 
   if (!ProtocolApi.MOUSE_HID) {
-    ProtocolApi.MOUSE_HID = ProtocolApi.RAZER_HID;
+    ProtocolApi.MOUSE_HID = ProtocolApi.CRDRAKO_HID;
   }
 
   ProtocolApi.MouseMouseHidApi = MouseMouseHidApi;
+  ProtocolApi.CrdrakoHidApi = MouseMouseHidApi;
   ProtocolApi.RazerHidApi = MouseMouseHidApi;
 })();

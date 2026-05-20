@@ -894,8 +894,14 @@
         });
       },
 
-      getPollingRate2(tx) {
-        return ProtocolCodec.encodeRazerReport({ transactionId: tx, commandClass: 0x00, commandId: 0xc0, dataSize: 0x01 });
+      getPollingRate2(tx, profileId = OFFICIAL_MOUSE_PROFILE_ID) {
+        return ProtocolCodec.encodeRazerReport({
+          transactionId: tx,
+          commandClass: 0x00,
+          commandId: 0xc0,
+          dataSize: 0x02,
+          arguments: [clampU8(profileId), 0x00],
+        });
       },
 
       setPollingRate2(tx, argument0, pollingCode) {
@@ -983,7 +989,7 @@
           transactionId: tx,
           commandClass: 0x04,
           commandId: 0x86,
-          dataSize: 0x26,
+          dataSize: 0x50,
           arguments: [clampU8(profileId)],
         });
       },

@@ -47,6 +47,7 @@
     normalizeButtonMappingPatch,
     rapooTexts,
     atkTexts,
+    crdrakoTexts,
     ninjutsoTexts,
     razerTexts,
     KEYMAP_COMMON,
@@ -225,6 +226,8 @@
         hasLightforceSwitch: false,
         hasSurfaceMode: false,
         hasBhopDelay: false,
+        hasSpeedClick: false,
+        hasScrollHp: false,
         // When true, UI defers local slot-count repaint until device config ack to avoid transient DPI jumps.
         deferDpiSlotCountUiUntilAck: false,
         ledMasterBySecondarySurface: false,
@@ -482,6 +485,268 @@ id: "atk",
       batteryPollMs: 60000,
       batteryPollTag: "60s",
       enterDelayMs: 0,
+    },
+  });
+
+  const CRDRAKO_LOD_VALUES = Object.freeze([0.7, 1, 2]);
+  const CRDRAKO_SCROLL_HP_MODES = Object.freeze([0, 1, 2, 3]);
+  const CRDRAKO_SCROLL_HP_WINDOWS = Object.freeze([100, 200, 300, 400, 500, 1000]);
+
+  function nearestCrdrakoLod(value) {
+    const n = toNumber(value);
+    if (!Number.isFinite(n)) return undefined;
+    return CRDRAKO_LOD_VALUES.reduce((best, item) => (
+      Math.abs(item - n) < Math.abs(best - n) ? item : best
+    ), CRDRAKO_LOD_VALUES[0]);
+  }
+
+  function writeCrdrakoPerformanceMode(value) {
+    if (value === true || value === 1) return true;
+    if (value === false || value === 0) return false;
+    const mode = String(value ?? "").trim().toLowerCase();
+    if (mode === "sport" || mode === "competitive" || mode === "competition") return true;
+    if (mode === "hp" || mode === "standard" || mode === "std") return false;
+    return undefined;
+  }
+
+  function readCrdrakoPerformanceMode(raw) {
+    const enabled = readBool(raw);
+    return enabled == null ? undefined : (enabled ? "sport" : "hp");
+  }
+
+  function normalizeCrdrakoScrollHpMode(value) {
+    const n = toNumber(value);
+    if (!Number.isFinite(n)) return undefined;
+    const mode = clamp(Math.round(n), 0, 3);
+    return CRDRAKO_SCROLL_HP_MODES.includes(mode) ? mode : undefined;
+  }
+
+  function normalizeCrdrakoScrollHpWindow(value) {
+    const n = toNumber(value);
+    if (!Number.isFinite(n)) return undefined;
+    return CRDRAKO_SCROLL_HP_WINDOWS.reduce((best, item) => (
+      Math.abs(item - n) < Math.abs(best - n) ? item : best
+    ), CRDRAKO_SCROLL_HP_WINDOWS[0]);
+  }
+
+  function normalizeCrdrakoSensorAngle(value) {
+    const n = toNumber(value);
+    if (!Number.isFinite(n)) return undefined;
+    return clamp(Math.round(n), -30, 30);
+  }
+
+  const CrdrakoProfile = composeDeviceProfile({
+    id: "crdrako",
+    ui: {
+      landingReadyText: "CRDRAKO READY",
+      landingTitle: crdrakoTexts.landingTitle,
+      landingCaption: crdrakoTexts.landingCaption,
+      keymap: {
+        imageSrc: "./assets/images/CRDRAKO_KO_ONE.png",
+        points: {
+          1: { x: 32, y: 18, side: "left" },
+          2: { x: 4, y: 51, side: "left" },
+          3: { x: 4, y: 39, side: "left" },
+          4: { x: 68, y: 18, side: "right" },
+          5: { x: 50, y: 26, side: "left" },
+        },
+        defaultLabels: {
+          1: "Left Click",
+          2: "Back",
+          3: "Forward",
+          4: "Right Click",
+          5: "Middle Click",
+        },
+      },
+      lod: crdrakoTexts.lod,
+      led: crdrakoTexts.led,
+      perfMode: crdrakoTexts.perfMode,
+      advancedPanels: {
+        dpiLightEffect: { enabled: false },
+        surfaceFeel: {
+          regions: ["dual-right"],
+          requiresCapabilities: ["surfaceFeel"],
+        },
+        speedClickLeft: {
+          requiresCapabilities: ["speedEnable"],
+        },
+        speedClickRight: {
+          requiresCapabilities: ["speedEnable"],
+        },
+        scrollHpMode: {
+          requiresCapabilities: ["scrollHp"],
+        },
+        scrollHpWindowMs: {
+          requiresCapabilities: ["scrollHp"],
+        },
+        sensorAngle: {
+          requiresCapabilities: ["sensorAngle"],
+        },
+      },
+      advancedSourceRegionByStdKey: {
+        ...ADVANCED_SOURCE_REGION_DEFAULTS,
+        surfaceFeel: "dual-right",
+        scrollHpMode: "dual-right",
+        scrollHpWindowMs: "dual-left",
+        speedClickLeft: "dual-right",
+        speedClickRight: "dual-right",
+      },
+    },
+    ranges: window.AppConfig?.ranges?.crdrako,
+    keyMap: {
+      performanceMode: "competitiveMode",
+      pollingWirelessHz: null,
+      dpiSlots: "dpiStages",
+      dpiSlotsX: "dpiStages",
+      dpiSlotsY: "dpiStages",
+      dpiSlotCount: "dpiStages",
+      activeDpiSlotIndex: "activeDpiStageIndex",
+      sleepSeconds: "deviceIdleTime",
+      debounceMs: "debounceTime",
+      surfaceModePrimary: null,
+      surfaceModeSecondary: null,
+      primaryLedFeature: null,
+      surfaceFeel: "lod",
+      keyScanningRate: null,
+      wirelessStrategyMode: null,
+      commProtocolMode: null,
+      sensorAngle: "sensorAngle",
+      linearCorrection: "angleSnap",
+      speedClickLeft: "speedEnable",
+      speedClickRight: "speedWindow",
+      scrollHpMode: "scrollHpMode",
+      scrollHpWindowMs: "scrollHpWindowMs",
+      dpiLightEffect: null,
+      receiverLightEffect: null,
+      staticLedColor: null,
+    },
+    transforms: {
+      performanceMode: {
+        write: writeCrdrakoPerformanceMode,
+        read: readCrdrakoPerformanceMode,
+      },
+      dpiSlots: {
+        write: (v) => normalizeDpiSlotArray(v),
+        read: (raw) => stagesToDpiSlots(raw),
+      },
+      dpiSlotsX: {
+        write: (v) => normalizeDpiSlotArray(v),
+        read: (raw) => stagesToDpiSlotsX(raw),
+      },
+      dpiSlotsY: {
+        write: (v) => normalizeDpiSlotArray(v),
+        read: (raw) => stagesToDpiSlotsY(raw),
+      },
+      dpiSlotCount: {
+        write: (v) => {
+          const n = toNumber(v);
+          if (!Number.isFinite(n)) return undefined;
+          return clamp(Math.round(n), 1, 5);
+        },
+        read: (raw) => stagesToSlotCount(raw),
+      },
+      activeDpiSlotIndex: {
+        write: (v) => {
+          const n = toNumber(v);
+          if (!Number.isFinite(n)) return undefined;
+          return Math.max(0, Math.round(n));
+        },
+        read: (raw) => readNumber(raw),
+      },
+      sleepSeconds: {
+        write: (v) => {
+          const n = toNumber(v);
+          if (!Number.isFinite(n)) return undefined;
+          return Math.max(0, Math.round(n));
+        },
+        read: (raw) => readNumber(raw),
+      },
+      debounceMs: {
+        write: (v) => {
+          const n = toNumber(v);
+          if (!Number.isFinite(n)) return undefined;
+          return clamp(Math.round(n), 0, 8);
+        },
+        read: (raw) => {
+          const n = readNumber(raw);
+          return Number.isFinite(n) ? clamp(Math.round(n), 0, 8) : undefined;
+        },
+      },
+      surfaceFeel: {
+        write: (v) => nearestCrdrakoLod(v),
+        read: (raw) => nearestCrdrakoLod(raw),
+      },
+      linearCorrection: { write: (v) => !!v, read: readBool },
+      speedClickLeft: { write: (v) => !!v, read: readBool },
+      speedClickRight: { write: (v) => !!v, read: readBool },
+      scrollHpMode: {
+        write: normalizeCrdrakoScrollHpMode,
+        read: normalizeCrdrakoScrollHpMode,
+      },
+      scrollHpWindowMs: {
+        write: normalizeCrdrakoScrollHpWindow,
+        read: normalizeCrdrakoScrollHpWindow,
+      },
+      sensorAngle: {
+        write: normalizeCrdrakoSensorAngle,
+        read: normalizeCrdrakoSensorAngle,
+      },
+    },
+    actions: {
+      activeDpiSlotIndex: async ({ hidApi, value }) => {
+        const idx = Math.max(0, Math.round(Number(value) || 0));
+        if (typeof hidApi?.setActiveDpiSlotIndex !== "function") return;
+        await hidApi.setActiveDpiSlotIndex(idx);
+      },
+      dpiSlotCount: async ({ hidApi, value }) => {
+        const nextCount = clamp(Math.round(Number(value) || 1), 1, 5);
+        if (typeof hidApi?.setDpiSlotCount !== "function") return;
+        await hidApi.setDpiSlotCount(nextCount);
+      },
+    },
+    dpiSnapper: defaultDpiSnapper,
+    features: {
+      hasPrimarySurfaceToggle: false,
+      hasSecondarySurfaceToggle: false,
+      hasPrimaryLedFeature: false,
+      hasPerformanceMode: true,
+      hasConfigSlots: false,
+      hasDualPollingRates: false,
+      hasMotionSync: true,
+      hasLinearCorrection: true,
+      hasRippleControl: true,
+      hasKeyScanRate: false,
+      hasWirelessStrategy: false,
+      hasCommProtocol: false,
+      hasLongRange: false,
+      hasAtkLights: false,
+      hasDpiLightCycle: false,
+      hasReceiverLightCycle: false,
+      hasStaticLedColorPanel: false,
+      hasDpiColors: false,
+      hasDpiLods: false,
+      hasDpiAdvancedAxis: true,
+      hasSensorAngle: true,
+      hideSensorAngleVisualization: false,
+      hideSensorAngleCenterMark: false,
+      hasSurfaceFeel: true,
+      showHeightViz: false,
+      hideSportPerfMode: false,
+      advancedLayout: "dual",
+      hasOnboardMemoryMode: false,
+      warnOnDisableOnboardMemoryMode: false,
+      autoEnableOnboardMemoryOnConnect: false,
+      hasLightforceSwitch: false,
+      hasSurfaceMode: false,
+      hasBhopDelay: false,
+      hasSpeedClick: true,
+      hasScrollHp: true,
+      deferDpiSlotCountUiUntilAck: false,
+      keymapButtonCount: 5,
+      batteryReadMode: "active",
+      batteryPollMs: 60000,
+      batteryPollTag: "60s",
+      enterDelayMs: 80,
     },
   });
 
@@ -1296,6 +1561,7 @@ id: "atk",
   const DEVICE_PROFILES = {
     atk: AtkProfile,
     chaos: ChaosProfile,
+    crdrako: CrdrakoProfile,
     logitech: LogitechProfile,
     ninjutso: NinjutsoProfile,
     rapoo: RapooProfile,
