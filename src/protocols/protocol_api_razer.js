@@ -97,6 +97,10 @@
   const RAZER_WEBHID_REPORT_ID = 0x00;
   // Some wireless paths need a short settle window right after open().
   const RAZER_POST_OPEN_SETTLE_MS = 60;
+  // dpiStages can be temporarily unavailable right after first open(), so add
+  // a small targeted retry before falling back to existing snapshot behavior.
+  const RAZER_DPI_STAGES_READ_ATTEMPTS = 3;
+  const RAZER_DPI_STAGES_RETRY_DELAY_MS = 80;
   // OBM button I/O is noticeably more timing-sensitive than the rest of the
   // snapshot traffic, especially on wireless dongle paths.
   const RAZER_OBM_BUTTON_IO_WAIT_MS = 24;
@@ -459,6 +463,21 @@
   }
 
   function shouldRetryOfficialObmButtonIoError(err) {
+    if (isPermissionPathError(err)) return true;
+    const code = String(err?.code || "");
+    return (
+      code === "IO_READ_TIMEOUT"
+      || code === "IO_WRITE_TIMEOUT"
+      || code === "DEVICE_COMMAND_NEW_COMMAND"
+      || code === "DEVICE_BUSY"
+      || code === "DEVICE_COMMAND_FAILURE"
+      || code === "DEVICE_COMMAND_TIMEOUT"
+      || code === "RESPONSE_MISMATCH"
+      || code === "RESPONSE_VALIDATION_FAILED"
+    );
+  }
+
+  function shouldRetryDpiStagesReadError(err) {
     if (isPermissionPathError(err)) return true;
     const code = String(err?.code || "");
     return (
@@ -3996,6 +4015,38 @@
       return out;
     }
 
+    async _readDpiStagesSnapshotWithRetry({ tx, isLegacyV3 = false } = {}) {
+      const packet = isLegacyV3
+        ? ProtocolCodec.commands.getDpiStagesLegacy(tx, RAZER_CONST.VARSTORE)
+        : ProtocolCodec.commands.getDpiStages(tx, OFFICIAL_MOUSE_PROFILE_ID);
+      const maxAttempts = clampInt(RAZER_DPI_STAGES_READ_ATTEMPTS, 1, 10);
+      let lastErr = null;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const stages = await this._safeQuery(packet);
+          if (stages?.arguments) {
+            const parsed = TRANSFORMERS.parseDpiStagesResponse(stages);
+            if (Array.isArray(parsed.dpiStages) && parsed.dpiStages.length) {
+              return parsed;
+            }
+          }
+          lastErr = null;
+        } catch (err) {
+          lastErr = err;
+          const canRetry = attempt < maxAttempts && shouldRetryDpiStagesReadError(err);
+          if (!canRetry) throw err;
+        }
+
+        if (attempt < maxAttempts && RAZER_DPI_STAGES_RETRY_DELAY_MS > 0) {
+          await sleep(RAZER_DPI_STAGES_RETRY_DELAY_MS);
+        }
+      }
+
+      if (lastErr) throw lastErr;
+      return null;
+    }
+
     // Read the serialized runtime snapshot used by connect bootstrap and later refreshes.
     async _readDeviceStateSnapshot({ mode = SNAPSHOT_READ_MODE.REFRESH_FULL } = {}) {
       const pid = this._ensureSupported();
@@ -4040,25 +4091,25 @@
         }
       }
 
-      const stages = await this._safeQuery(
-        isLegacyV3
-          ? ProtocolCodec.commands.getDpiStagesLegacy(tx, RAZER_CONST.VARSTORE)
-          : ProtocolCodec.commands.getDpiStages(tx, OFFICIAL_MOUSE_PROFILE_ID)
-      );
-      if (stages?.arguments) {
-        const parsed = TRANSFORMERS.parseDpiStagesResponse(stages);
-        if (parsed.dpiStages?.length) {
-          this._updateDpiWriteContext(parsed.classId ?? OFFICIAL_MOUSE_PROFILE_ID, parsed.stageIds ?? []);
-          const activeIndex = clampInt(parsed.activeDpiStageIndex ?? 0, 0, Math.max(0, parsed.dpiStages.length - 1));
-          const activeStage = parsed.dpiStages[activeIndex] || parsed.dpiStages[0] || null;
-          updates.dpiStages = parsed.dpiStages;
-          updates.activeDpiStageIndex = activeIndex;
-          if (activeStage) {
-            updates.dpi = {
-              x: activeStage.x,
-              y: activeStage.y,
-            };
-          }
+      const parsedDpiStages = await this._readDpiStagesSnapshotWithRetry({
+        tx,
+        isLegacyV3,
+      });
+      if (parsedDpiStages?.dpiStages?.length) {
+        this._updateDpiWriteContext(parsedDpiStages.classId ?? OFFICIAL_MOUSE_PROFILE_ID, parsedDpiStages.stageIds ?? []);
+        const activeIndex = clampInt(
+          parsedDpiStages.activeDpiStageIndex ?? 0,
+          0,
+          Math.max(0, parsedDpiStages.dpiStages.length - 1)
+        );
+        const activeStage = parsedDpiStages.dpiStages[activeIndex] || parsedDpiStages.dpiStages[0] || null;
+        updates.dpiStages = parsedDpiStages.dpiStages;
+        updates.activeDpiStageIndex = activeIndex;
+        if (activeStage) {
+          updates.dpi = {
+            x: activeStage.x,
+            y: activeStage.y,
+          };
         }
       }
 
