@@ -64,6 +64,7 @@
   const RAZER_DEFAULT_CONTROL_USAGE_PAGE = 0x0c;
   const RAZER_WEBHID_REPORT_ID = 0x00;
   const RAZER_VIPER_V3_PIDS = new Set([0x00c0, 0x00c1]);
+  const RAZER_IMPLICIT_REPORT_ZERO_PIDS = new Set([0x00b3, 0x00c5]);
   const RAZER_LEGACY_MOUSE_USAGE_PAGE = 0x0001;
   const RAZER_LEGACY_MOUSE_USAGE = 0x0002;
   const CRDRAKO_VENDOR_ID = 0x373e;
@@ -114,6 +115,18 @@
 
   function _hasFeatureReports(d) {
     return _countHidReports(d, "featureReports") > 0;
+  }
+
+  function _hasFeatureReportId(d, reportId) {
+    const expected = Number(reportId);
+    let found = (Array.isArray(d?.featureReports) ? d.featureReports : [])
+      .some((report) => Number(report?.reportId) === expected);
+    _walkHidCollections(d?.collections, (collection) => {
+      if (found) return;
+      found = (Array.isArray(collection?.featureReports) ? collection.featureReports : [])
+        .some((report) => Number(report?.reportId) === expected);
+    });
+    return found;
   }
 
   function _hasInputReports(d) {
@@ -175,6 +188,14 @@
     );
   }
 
+  function _isRazerOfficialControlFallbackCandidate(summary) {
+    return !!(
+      summary
+      && !_isRazerViperV3Pid(summary.productId)
+      && summary.canTryFeatureReportZero
+    );
+  }
+
   function _isRazerLegacyControlCandidate(summary) {
     return !!(
       summary
@@ -208,8 +229,27 @@
     if (primaryHandle && _isRazerOfficialControlCandidate(primaryHandle.summary)) {
       return primaryHandle;
     }
+    const strictHandle = handles.find((item) => _isRazerOfficialControlCandidate(item.summary));
+    if (strictHandle) return strictHandle;
+
+    if (
+      primaryHandle
+      && _isRazerOfficialControlFallbackCandidate(primaryHandle.summary)
+      && primaryHandle.summary.hasFeatureReportZero
+    ) {
+      return primaryHandle;
+    }
+    const advertisedReportZeroHandle = handles.find((item) => (
+      _isRazerOfficialControlFallbackCandidate(item.summary)
+      && item.summary.hasFeatureReportZero
+    ));
+    if (advertisedReportZeroHandle) return advertisedReportZeroHandle;
+
+    if (primaryHandle && _isRazerOfficialControlFallbackCandidate(primaryHandle.summary)) {
+      return primaryHandle;
+    }
     return (
-      handles.find((item) => _isRazerOfficialControlCandidate(item.summary))
+      handles.find((item) => _isRazerOfficialControlFallbackCandidate(item.summary))
       || null
     );
   }
@@ -268,6 +308,7 @@
     const firstCollectionInputReportCount = Array.isArray(firstCollection?.inputReports)
       ? firstCollection.inputReports.length
       : 0;
+    const hasFeatureReportZero = _hasFeatureReportId(d, RAZER_WEBHID_REPORT_ID);
     const controlUsagePage = Number.isFinite(Number(transportMeta?.controlUsagePage))
       ? Number(transportMeta.controlUsagePage)
       : RAZER_DEFAULT_CONTROL_USAGE_PAGE;
@@ -283,10 +324,10 @@
       && legacyPrimaryMouseCollection
     );
     const officialEventCandidate = (
-      collections.length > 1
-      && inputReportCount > 0
+      inputReportCount > 0
       && String(d?.productName || "").trim().length > 0
     );
+    const implicitFeatureReportZero = RAZER_IMPLICIT_REPORT_ZERO_PIDS.has(Number(d?.productId));
     return {
       vendorId: Number(d?.vendorId ?? 0),
       productId: Number(d?.productId ?? 0),
@@ -300,6 +341,9 @@
       featureReportCount,
       inputReportCount,
       hasFeatureReports: featureReportCount > 0,
+      hasFeatureReportZero,
+      implicitFeatureReportZero,
+      canTryFeatureReportZero: featureReportCount > 0 || implicitFeatureReportZero,
       hasInputReports: inputReportCount > 0,
       controlUsagePage,
       webhidReportId: transportMeta?.webhidReportId ?? RAZER_WEBHID_REPORT_ID,
@@ -340,7 +384,7 @@
 
   function _buildRazerConnectionPlanError(code, handleSummaries = []) {
     const messageByCode = {
-      MISSING_RAZER_CONTROL_INTERFACE: "Missing Razer control interface",
+      MISSING_RAZER_CONTROL_INTERFACE: "No usable Razer control interface was authorized; clear this site's HID permission and reconnect after fully closing Razer software",
       MISSING_RAZER_BODY_CONTROL_INTERFACE: "Missing Razer body control interface for paired mouse model",
       MISSING_RAZER_EVENT_INTERFACE: "Missing Razer event interface with input reports",
     };
@@ -405,29 +449,13 @@
   }
 
   function _buildRazerRequestFilters() {
-    const filters = [];
-    for (const productId of RAZER_SUPPORTED_PIDS) {
-      if (_isRazerViperV3Pid(productId)) {
-        filters.push({
-          vendorId: RAZER_VENDOR_ID,
-          productId,
-          usagePage: RAZER_LEGACY_MOUSE_USAGE_PAGE,
-          usage: RAZER_LEGACY_MOUSE_USAGE,
-        });
-        filters.push({
-          vendorId: RAZER_VENDOR_ID,
-          productId,
-        });
-        continue;
-      }
-
-      filters.push({
+    // Do not constrain Razer requests by usage page. The same supported PID can
+    // expose its feature-report control path under a different usage page or
+    // collection layout across firmware/browser versions.
+    return Array.from(RAZER_SUPPORTED_PIDS, (productId) => ({
         vendorId: RAZER_VENDOR_ID,
         productId,
-        usagePage: RAZER_DEFAULT_CONTROL_USAGE_PAGE,
-      });
-    }
-    return filters;
+    }));
   }
 
   function _isAllowedNinjutsoName(d) {

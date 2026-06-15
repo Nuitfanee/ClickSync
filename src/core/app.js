@@ -10781,6 +10781,8 @@ function openDrawer(btn) {
           `firstInput=${Number(item.firstCollectionInputReportCount ?? 0)}`,
           `usage=${formatSummaryHex(item.usage)}`,
           `feature=${item.hasFeatureReports ? "yes" : "no"}(${Number(item.featureReportCount ?? 0)})`,
+          `feature0=${item.hasFeatureReportZero ? "yes" : "no"}`,
+          `feature0Probe=${item.canTryFeatureReportZero ? "yes" : "no"}`,
           `input=${item.hasInputReports ? "yes" : "no"}(${Number(item.inputReportCount ?? 0)})`,
         ].join(" ");
       };

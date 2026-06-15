@@ -4232,7 +4232,6 @@
     defaultFilters: SUPPORTED_PIDS.map((productId) => ({
       vendorId: RAZER_VENDOR_ID,
       productId,
-      usagePage: RAZER_WEBHID_CONTROL_USAGE_PAGE,
     })),
     isSupportedPid(productId) {
       return SUPPORTED_PID_SET.has(Number(productId));
