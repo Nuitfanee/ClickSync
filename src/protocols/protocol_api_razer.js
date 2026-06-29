@@ -130,13 +130,15 @@
     DEATHADDER_V3_PRO_WIRELESS_ALT: 0x00c3,
     DEATHADDER_V3_HYPERSPEED_WIRED: 0x00c4,
     DEATHADDER_V3_HYPERSPEED_WIRELESS: 0x00c5,
+    VIPER_V3_PRO_SE_WIRED: 0x00de,
+    VIPER_V3_PRO_SE_WIRELESS: 0x00df,
     VIPER_V4_PRO_WIRED: 0x00e5,
     VIPER_V4_PRO_WIRELESS: 0x00e6,
   });
 
   function isViperV3Pid(pid) {
     const normalized = Number(pid);
-    return normalized === PID.VIPER_V3_PRO_WIRED || normalized === PID.VIPER_V3_PRO_WIRELESS;
+    return normalized === PID.VIPER_V3_PRO_WIRED || normalized === PID.VIPER_V3_PRO_WIRELESS || normalized === PID.VIPER_V3_PRO_SE_WIRED || normalized === PID.VIPER_V3_PRO_SE_WIRELESS;
   }
 
   function isLegacyV3TransportForPid(mode, pid) {
@@ -302,6 +304,7 @@
       dynamicSensitivity: false,
       smartTracking: true,
       sensorAngle: false,
+      maxDpi: 45000,
       lowThresholdTx: null,
       hyperIndicatorTx: null,
       defaultTx: RAZER_CONST.TX_DEFAULT,
@@ -366,6 +369,28 @@
       dynamicSensitivity: true,
       sensorAngle: true,
       hyperIndicatorTx: 0xff,
+    }),
+    buildPidMatrixRow(PID.VIPER_V3_PRO_SE_WIRED, "Razer Viper V3 Pro SE (Wired)", {
+      modelKey: "viper_v3_pro_se",
+      transportRole: TRANSPORT_ROLE.BODY,
+      bodyPid: PID.VIPER_V3_PRO_SE_WIRED,
+      donglePid: PID.VIPER_V3_PRO_SE_WIRELESS,
+      eventReportId: 0x05,
+      dynamicSensitivity: true,
+      sensorAngle: true,
+      smartTracking: true,
+      maxDpi: 35000,
+    }),
+    buildPidMatrixRow(PID.VIPER_V3_PRO_SE_WIRELESS, "Razer Viper V3 Pro SE (Wireless)", {
+      modelKey: "viper_v3_pro_se",
+      transportRole: TRANSPORT_ROLE.DONGLE,
+      bodyPid: PID.VIPER_V3_PRO_SE_WIRED,
+      donglePid: PID.VIPER_V3_PRO_SE_WIRELESS,
+      eventReportId: 0x05,
+      dynamicSensitivity: true,
+      sensorAngle: true,
+      smartTracking: true,
+      maxDpi: 35000,
     }),
     buildPidMatrixRow(PID.DEATHADDER_V3_PRO_WIRED_ALT, "Razer DeathAdder V3 Pro (Wired Alt)", {
       modelKey: "deathadder_v3_pro_alt",
@@ -503,12 +528,13 @@
       battery: !!matrixRow?.battery,
       charging: !!matrixRow?.battery,
       idle: !!matrixRow?.battery,
-      lowBatteryThreshold: !!matrixRow?.battery,
-      lowPowerThresholdPercent: !!matrixRow?.battery,
+      lowBatteryThreshold: matrixRow?.lowBatteryThreshold ?? !!matrixRow?.battery,
+      lowPowerThresholdPercent: matrixRow?.lowBatteryThreshold ?? !!matrixRow?.battery,
       hyperpollingIndicatorMode: !!matrixRow?.hyperpollingIndicatorMode,
       dynamicSensitivity: !!matrixRow?.dynamicSensitivity,
       smartTracking: !!matrixRow?.smartTracking,
       sensorAngle: !!matrixRow?.sensorAngle,
+      maxDpi: matrixRow?.maxDpi ?? 45000,
     };
   }
 
@@ -717,17 +743,12 @@
             switch (response.status) {
               case REPORT_STATUS.SUCCESS:
               case REPORT_STATUS.SUCCESSFUL:
+              case REPORT_STATUS.BUSY:
                 return response;
               case REPORT_STATUS.NEW_COMMAND:
                 throw new ProtocolError("Razer device returned NEW_COMMAND", "DEVICE_COMMAND_NEW_COMMAND", {
                   reportId,
                   response,
-                });
-              case REPORT_STATUS.BUSY:
-                throw new ProtocolError("Razer device returned BUSY", "DEVICE_BUSY", {
-                  reportId,
-                  response,
-                  attempts: attempt + 1,
                 });
               case REPORT_STATUS.FAIL:
               case REPORT_STATUS.FAILURE:
@@ -1269,6 +1290,20 @@
         });
       },
 
+      getProximitySensorState(
+        tx,
+        classId = OFFICIAL_PROXIMITY_CLASS_ID,
+        sensorId = OFFICIAL_PROXIMITY_SENSOR_ID
+      ) {
+        return ProtocolCodec.encodeRazerReport({
+          transactionId: tx,
+          commandClass: 0x0b,
+          commandId: 0x83,
+          dataSize: 0x03,
+          arguments: [clampU8(classId), clampU8(sensorId)],
+        });
+      },
+
       getProximitySensorConfiguration(
         tx,
         classId = OFFICIAL_PROXIMITY_CLASS_ID,
@@ -1415,11 +1450,12 @@
       return POLLING_V2_DECODE_MAP.get(Number(code)) ?? 1000;
     },
 
-    clampDpi(dpi) {
-      return clampInt(dpi, 100, 45000);
+    clampDpi(dpi, max = 45000) {
+      return clampInt(dpi, 100, max);
     },
 
-    normalizeDpi(prevDpi, patch) {
+    normalizeDpi(prevDpi, patch, max) {
+      const cap = Number.isFinite(Number(max)) && Number(max) > 0 ? Math.trunc(Number(max)) : 45000;
       const prev = isObject(prevDpi) ? prevDpi : { x: 1600, y: 1600 };
       let x = prev.x;
       let y = prev.y;
@@ -1440,25 +1476,26 @@
       if (Object.prototype.hasOwnProperty.call(patch, "dpiY")) y = patch.dpiY;
 
       return {
-        x: TRANSFORMERS.clampDpi(x),
-        y: TRANSFORMERS.clampDpi(y),
+        x: TRANSFORMERS.clampDpi(x, cap),
+        y: TRANSFORMERS.clampDpi(y, cap),
       };
     },
 
-    normalizeDpiStages(input, fallback) {
+    normalizeDpiStages(input, fallback, max) {
+      const cap = Number.isFinite(Number(max)) && Number(max) > 0 ? Math.trunc(Number(max)) : 45000;
       const source = Array.isArray(input) ? input : (Array.isArray(fallback) ? fallback : []);
       const out = [];
 
       for (const item of source) {
         if (out.length >= 5) break;
         if (Number.isFinite(Number(item))) {
-          const v = TRANSFORMERS.clampDpi(item);
+          const v = TRANSFORMERS.clampDpi(item, cap);
           out.push({ x: v, y: v });
           continue;
         }
         if (isObject(item)) {
-          const x = TRANSFORMERS.clampDpi(item.x ?? item.X ?? item.y ?? item.Y ?? 1600);
-          const y = TRANSFORMERS.clampDpi(item.y ?? item.Y ?? item.x ?? item.X ?? x);
+          const x = TRANSFORMERS.clampDpi(item.x ?? item.X ?? item.y ?? item.Y ?? 1600, cap);
+          const y = TRANSFORMERS.clampDpi(item.y ?? item.Y ?? item.x ?? item.X ?? x, cap);
           out.push({ x, y });
           continue;
         }
@@ -1658,7 +1695,7 @@
       ? response.argumentsData.length
       : (Number.isFinite(Number(response?.dataSize)) ? response.dataSize : response.arguments.length);
     const hasClassSensorEcho =
-      dataSize > 10
+      dataSize >= 5
       && readOfficialResponseArgument(response, 0) === OFFICIAL_PROXIMITY_CLASS_ID
       && readOfficialResponseArgument(response, 1) === OFFICIAL_PROXIMITY_SENSOR_ID;
     const parmOffset = hasClassSensorEcho ? 2 : 0;
@@ -1793,7 +1830,8 @@
       plan({ pid, caps, nextState }) {
         requireCapability(caps, "lowPowerThresholdPercent", "lowPowerThresholdPercent", pid);
         const tx = txForField(pid, "lowPowerThresholdPercent");
-        return [{ packet: ProtocolCodec.commands.setLowBatteryThreshold(tx, nextState.chargeLowThreshold) }];
+        const rawThreshold = TRANSFORMERS.lowPowerPercentToRaw(nextState.lowPowerThresholdPercent);
+        return [{ packet: ProtocolCodec.commands.setLowBatteryThreshold(tx, rawThreshold) }];
       },
     },
 
@@ -1804,7 +1842,8 @@
       plan({ pid, caps, nextState }) {
         requireCapability(caps, "lowBatteryThreshold", "chargeLowThreshold", pid);
         const tx = txForField(pid, "chargeLowThreshold");
-        return [{ packet: ProtocolCodec.commands.setLowBatteryThreshold(tx, nextState.chargeLowThreshold) }];
+        const rawThreshold = nextState.chargeLowThreshold;
+        return [{ packet: ProtocolCodec.commands.setLowBatteryThreshold(tx, rawThreshold) }];
       },
     },
 
@@ -1867,7 +1906,7 @@
               tx,
               OFFICIAL_PROXIMITY_CLASS_ID,
               OFFICIAL_PROXIMITY_SENSOR_ID,
-              0x04,
+              0x02,
               officialSmartTracking.trackingDistance - 1
             ),
           });
@@ -2015,13 +2054,13 @@
         Object.prototype.hasOwnProperty.call(patch, "dpiX") ||
         Object.prototype.hasOwnProperty.call(patch, "dpiY")
       ) {
-        next.dpi = TRANSFORMERS.normalizeDpi(next.dpi, patch);
+        next.dpi = TRANSFORMERS.normalizeDpi(next.dpi, patch, this.capabilities?.maxDpi);
       }
 
       if (Object.prototype.hasOwnProperty.call(patch, "dpiStages")) {
-        next.dpiStages = TRANSFORMERS.normalizeDpiStages(patch.dpiStages, next.dpiStages);
+        next.dpiStages = TRANSFORMERS.normalizeDpiStages(patch.dpiStages, next.dpiStages, this.capabilities?.maxDpi);
       } else {
-        next.dpiStages = TRANSFORMERS.normalizeDpiStages(next.dpiStages, next.dpiStages);
+        next.dpiStages = TRANSFORMERS.normalizeDpiStages(next.dpiStages, next.dpiStages, this.capabilities?.maxDpi);
       }
 
       if (Object.prototype.hasOwnProperty.call(patch, "activeDpiStageIndex")) {
@@ -2747,7 +2786,9 @@
       });
     }
     const sourceEcho = ((clampU8(args[2]) << 8) | clampU8(args[1])) & 0xffff;
-    if (sourceEcho !== expectedSourceCode) {
+    // V3 PRO SE: args[2] is profileId (0x01), not sourceCode high byte
+    const isV3ProSeFormat = clampU8(args[2]) === 0x01 && clampU8(args[1]) === (sourceCode & 0xff);
+    if (sourceEcho !== expectedSourceCode && !isV3ProSeFormat) {
       throw new ProtocolError("REP4 source echo mismatch", "REP4_SOURCE_ECHO_MISMATCH", {
         btnId: slot,
         expectedSourceCode,
@@ -2915,9 +2956,10 @@
 
     _setTransportMode(mode) {
       const requested = normalizeRazerTransportMode(mode);
-      this._transportMode = isLegacyV3TransportForPid(requested, this._pid())
+      const pid = this._pid();
+      this._transportMode = isViperV3Pid(pid)
         ? RAZER_TRANSPORT_MODE.LEGACY_V3
-        : RAZER_TRANSPORT_MODE.OFFICIAL;
+        : requested;
       this._driver.setTransportMode(this._transportMode);
       return this._transportMode;
     }
@@ -2960,7 +3002,7 @@
       this._eventDevice = eventDevice || null;
       this._transportPid = this._resolveTransportPid(this._device);
       this._sessionPid = this._resolveSessionPid(this._device);
-      this._transportMode = isLegacyV3TransportForPid(this._transportMode, this._sessionPid)
+      this._transportMode = isViperV3Pid(this._sessionPid)
         ? RAZER_TRANSPORT_MODE.LEGACY_V3
         : RAZER_TRANSPORT_MODE.OFFICIAL;
       this._planner.setProductId(this._sessionPid);
@@ -3035,7 +3077,7 @@
         : [125, 500, 1000];
       return {
         dpiSlotCount: 5,
-        maxDpi: 45000,
+        maxDpi: caps.maxDpi ?? 45000,
         dpiStep: 1,
         pollingRates: pollingRates.slice(0),
         dynamicSensitivity: !!caps.dynamicSensitivity,
@@ -3551,8 +3593,9 @@
       const s = requestedSlot;
 
       const valObj = isObject(value) ? value : null;
-      const nextX = TRANSFORMERS.clampDpi(valObj ? (valObj.x ?? valObj.X ?? valObj.y ?? valObj.Y) : value);
-      const nextY = TRANSFORMERS.clampDpi(valObj ? (valObj.y ?? valObj.Y ?? nextX) : nextX);
+      const dpiMax = this._caps()?.maxDpi ?? 45000;
+      const nextX = TRANSFORMERS.clampDpi(valObj ? (valObj.x ?? valObj.X ?? valObj.y ?? valObj.Y) : value, dpiMax);
+      const nextY = TRANSFORMERS.clampDpi(valObj ? (valObj.y ?? valObj.Y ?? nextX) : nextX, dpiMax);
       next[s - 1] = { x: nextX, y: nextY };
 
       const patch = { dpiStages: next };
@@ -3749,7 +3792,9 @@
                 const args = response?.arguments;
                 if (!(args instanceof Uint8Array) || args.length < 3) return false;
                 const sourceEcho = ((clampU8(args[2]) << 8) | clampU8(args[1])) & 0xffff;
-                return sourceEcho === clampU16(sourceCode);
+                if (sourceEcho === clampU16(sourceCode)) return true;
+                // V3 PRO SE: args[2] is profileId (0x01), not sourceCode high byte
+                return clampU8(args[1]) === (sourceCode & 0xff) && clampU8(args[2]) === 0x01;
               },
             }
           );
@@ -3952,7 +3997,8 @@
 
       const tx = txForField(pid, "battery");
       const defaultRawThreshold = TRANSFORMERS.normalizeLowThreshold(
-        this._cfg?.chargeLowThreshold ?? TRANSFORMERS.lowPowerPercentToRaw(this._cfg?.lowPowerThresholdPercent ?? 15)
+        this._cfg?.chargeLowThreshold
+          ?? TRANSFORMERS.lowPowerPercentToRaw(this._cfg?.lowPowerThresholdPercent ?? 15)
       );
       const out = {
         batteryPercent: -1,
@@ -4055,7 +4101,8 @@
       const snapshotMode = this._resolveSnapshotReadMode(mode);
       const isConnectFull = snapshotMode === SNAPSHOT_READ_MODE.CONNECT_FULL;
       const isLegacyV3 = this._usesLegacyV3Transport();
-      const readOptionalAdvancedSnapshot = !(isLegacyV3 && isConnectFull);
+      const isViperV3ProSe = pid === PID.VIPER_V3_PRO_SE_WIRED || pid === PID.VIPER_V3_PRO_SE_WIRELESS;
+      const readOptionalAdvancedSnapshot = !(isLegacyV3 && isConnectFull) || isViperV3ProSe;
       const updates = {
         deviceName: PID_NAME[pid] || (this.device?.productName ? String(this.device.productName) : "Razer Mouse"),
         capabilities: this._capabilitiesSnapshot(caps),
@@ -4140,11 +4187,15 @@
 
       if (caps.dynamicSensitivity && readOptionalAdvancedSnapshot) {
         const txDyn = txForField(pid, "dynamicSensitivity");
-        const dynEnabled = await this._safeQuery(ProtocolCodec.commands.getProximitySensorAccelerationState(txDyn));
+        const dynEnabled = await this._safeQuery(
+          ProtocolCodec.commands.getProximitySensorAccelerationState(txDyn)
+        );
         if (dynEnabled?.arguments) {
           updates.dynamicSensitivityEnabled = !!clampU8(dynEnabled.arguments[1] ?? 0);
         }
-        const dynMode = await this._safeQuery(ProtocolCodec.commands.getProximitySensorAccelerationMode(txDyn));
+        const dynMode = await this._safeQuery(
+          ProtocolCodec.commands.getProximitySensorAccelerationMode(txDyn)
+        );
         if (dynMode?.arguments) {
           updates.dynamicSensitivityMode = TRANSFORMERS.normalizeDynamicSensitivityMode(dynMode.arguments[1] ?? 1);
         }
@@ -4152,10 +4203,13 @@
 
       if (caps.sensorAngle && readOptionalAdvancedSnapshot) {
         const txAngle = txForField(pid, "sensorAngle");
-        const angleRes = await this._safeQuery(ProtocolCodec.commands.getSensorAngle(txAngle));
+        const angleRes = await this._safeQuery(
+          ProtocolCodec.commands.getSensorAngle(txAngle)
+        );
         if (angleRes?.arguments) {
+          const angleIndex = 2;
           updates.sensorAngle = TRANSFORMERS.normalizeSensorAngle(
-            TRANSFORMERS.fromInt8Raw(angleRes.arguments[2] ?? 0)
+            TRANSFORMERS.fromInt8Raw(angleRes.arguments[angleIndex] ?? 0)
           );
         }
       }
@@ -4176,7 +4230,7 @@
         );
         if (liftRes?.arguments) {
           const modeSel = clampU8(liftRes.arguments[2] ?? 0x01);
-          officialSmartTracking.isAsymmetric = modeSel === 0x04;
+          officialSmartTracking.isAsymmetric = modeSel === 0x02;
           if (liftRes.arguments[3] != null) {
             officialSmartTracking.trackingDistance = TRANSFORMERS.smartTrackingLevelToTrackingDistance(
               liftRes.arguments[3]
@@ -4206,7 +4260,7 @@
       }
 
       const buttonMappings = await this._readButtonMappingsSnapshot({
-        skipDeviceRead: isLegacyV3 && isConnectFull,
+        skipDeviceRead: isLegacyV3 && isConnectFull && !isViperV3ProSe,
       });
       if (Array.isArray(buttonMappings) && buttonMappings.length) {
         updates.buttonMappings = buttonMappings;

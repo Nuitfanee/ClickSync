@@ -60,10 +60,10 @@
   const NINJUTSO_PRODUCT_ID = 0xeb02;
   const NINJUTSO_ALLOWED_NAME = "ninjutso sora v3";
   const RAZER_VENDOR_ID = 0x1532;
-  const RAZER_SUPPORTED_PIDS = new Set([0x00b3, 0x00b6, 0x00b7, 0x00c0, 0x00c1, 0x00c2, 0x00c3, 0x00c4, 0x00c5, 0x00e5, 0x00e6]);
+  const RAZER_SUPPORTED_PIDS = new Set([0x00b3, 0x00b6, 0x00b7, 0x00c0, 0x00c1, 0x00c2, 0x00c3, 0x00c4, 0x00c5, 0x00de, 0x00df, 0x00e5, 0x00e6]);
   const RAZER_DEFAULT_CONTROL_USAGE_PAGE = 0x0c;
   const RAZER_WEBHID_REPORT_ID = 0x00;
-  const RAZER_VIPER_V3_PIDS = new Set([0x00c0, 0x00c1]);
+  const RAZER_VIPER_V3_PIDS = new Set([0x00c0, 0x00c1, 0x00de, 0x00df]);
   const RAZER_IMPLICIT_REPORT_ZERO_PIDS = new Set([0x00b3, 0x00c5]);
   const RAZER_LEGACY_MOUSE_USAGE_PAGE = 0x0001;
   const RAZER_LEGACY_MOUSE_USAGE = 0x0002;
