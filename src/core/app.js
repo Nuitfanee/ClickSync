@@ -4556,9 +4556,11 @@ function lockEl(el) {
    * @returns {any} Formatted label.
    */
   function __formatDebounceLabel(valStr, rawLabel) {
+    const raw = String(rawLabel ?? "").trim();
+    if (raw) return raw;
     const v = Number(valStr);
     if (Number.isFinite(v)) return String(v);
-    return String(rawLabel || valStr || "-");
+    return String(valStr || "-");
   }
 
   /**

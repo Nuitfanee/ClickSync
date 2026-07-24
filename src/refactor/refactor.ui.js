@@ -1661,26 +1661,52 @@
 
     const debounceMs = cfg?.power?.debounceMs;
     if (debounceSel && Array.isArray(debounceMs)) {
-      applySelectOptions(debounceSel, debounceMs, (ms) => String(ms));
+      const debounceMeta = (ui?.debounce && typeof ui.debounce === "object") ? ui.debounce : null;
+      const debounceLabels = Array.isArray(debounceMeta?.labels) ? debounceMeta.labels : [];
+      applySelectOptions(debounceSel, debounceMs, (value) => {
+        const optionMeta = debounceLabels.find((item) => Number(item?.value) === Number(value));
+        return optionMeta
+          ? tr(String(optionMeta.label ?? value), String(optionMeta.labelEn ?? optionMeta.label ?? value))
+          : String(value);
+      });
       if (debounceInput) {
         debounceInput.min = "0";
         debounceInput.max = String(Math.max(0, debounceMs.length - 1));
         debounceInput.step = "1";
       }
       const debCard = debounceInput?.closest(".slider-card");
+      const name = debCard?.querySelector(".slider-name");
       const sub = debCard?.querySelector(".slider-sub");
-      if (sub && sub.dataset.__orig_text == null) sub.dataset.__orig_text = String(sub.textContent ?? "");
-      if (sub && debounceMs.length > 0) {
-        sub.textContent = tr(
-          `范围：${debounceMs[0]}ms - ${debounceMs[debounceMs.length - 1]}ms`,
-          `Range: ${debounceMs[0]}ms - ${debounceMs[debounceMs.length - 1]}ms`
-        );
+      const valueReadout = debCard?.querySelector(".value-readout");
+      applyTextWithRestore(
+        name,
+        debounceMeta ? tr(debounceMeta.title, debounceMeta.titleEn || debounceMeta.title) : null
+      );
+      applyTextWithRestore(
+        sub,
+        debounceMeta
+          ? tr(debounceMeta.desc, debounceMeta.descEn || debounceMeta.desc)
+          : tr(
+            `范围：${debounceMs[0]}ms - ${debounceMs[debounceMs.length - 1]}ms`,
+            `Range: ${debounceMs[0]}ms - ${debounceMs[debounceMs.length - 1]}ms`
+          )
+      );
+      if (valueReadout) {
+        if (valueReadout.dataset.__orig_unit == null) {
+          valueReadout.dataset.__orig_unit = String(valueReadout.dataset.unit ?? "");
+        }
+        valueReadout.dataset.unit = debounceMeta
+          ? String(debounceMeta.unit ?? "")
+          : valueReadout.dataset.__orig_unit;
       }
     } else if (debounceSel) {
       restoreInnerHtml(debounceSel, "debounceSelect");
-      const debounceSub = debounceSel?.closest(".slider-card")?.querySelector(".slider-sub");
-      if (debounceSub && debounceSub.dataset.__orig_text != null) {
-        debounceSub.textContent = debounceSub.dataset.__orig_text;
+      const debounceCard = debounceSel?.closest(".slider-card");
+      applyTextWithRestore(debounceCard?.querySelector(".slider-name"), null);
+      applyTextWithRestore(debounceCard?.querySelector(".slider-sub"), null);
+      const valueReadout = debounceCard?.querySelector(".value-readout");
+      if (valueReadout?.dataset.__orig_unit != null) {
+        valueReadout.dataset.unit = valueReadout.dataset.__orig_unit;
       }
     }
 

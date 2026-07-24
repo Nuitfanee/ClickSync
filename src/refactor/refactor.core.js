@@ -250,7 +250,7 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
       ninjutso: {
         power: {
           sleepSeconds: Array.from({ length: 15 }, (_, i) => (i + 1) * 60),
-          debounceMs: [2, 5, 10],
+          debounceMs: [0, 1, 2],
         },
         sensor: {
           angleDeg: { min: 25, max: 100, step: 25, hint: "Range 25 - 100", name: "灯光亮度", sub: "Range 25 - 100", unit: "%" },
@@ -278,6 +278,18 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
             dpi: { code: "008 // MARA Mode", title: "灯效模式", desc: "点击切换常亮与跑马模式" },
           },
           staticLedColor: { code: "009 // Static Color", title: "常亮颜色", desc: "点击选择常亮模式颜色" },
+          debounce: {
+            title: "防误触发",
+            titleEn: "Slam-Click",
+            desc: "减少抬鼠复位时因按键灵敏度过高导致的误触，默认中档",
+            descEn: "Reduces accidental clicks when setting the mouse down; Medium is the default",
+            unit: "",
+            labels: [
+              { value: 0, label: "低", labelEn: "Low" },
+              { value: 1, label: "中", labelEn: "Medium" },
+              { value: 2, label: "高", labelEn: "High" },
+            ],
+          },
       advancedSectionHeaders: {
         power: "01 // 休眠和防误触",
         sensor: "02 // LED灯效参数",
@@ -299,7 +311,7 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
       ninjutso_ten: {
         power: {
           sleepSeconds: Array.from({ length: 15 }, (_, i) => (i + 1) * 60),
-          debounceMs: [2, 5, 10],
+          debounceMs: [0, 1, 2],
         },
         sensor: {
           angleDeg: { min: -30, max: 30, step: 1, hint: "Range -30° ~ 30°" },
@@ -326,6 +338,18 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
             dpi: { code: "008 // LED Mode", title: "灯效模式", desc: "点击切换常亮与跑马模式" },
           },
           staticLedColor: { code: "009 // Static Color", title: "常亮颜色", desc: "点击选择常亮模式颜色" },
+          debounce: {
+            title: "防误触发",
+            titleEn: "Slam-Click",
+            desc: "减少抬鼠复位时因按键灵敏度过高导致的误触，默认中档",
+            descEn: "Reduces accidental clicks when setting the mouse down; Medium is the default",
+            unit: "",
+            labels: [
+              { value: 0, label: "低", labelEn: "Low" },
+              { value: 1, label: "中", labelEn: "Medium" },
+              { value: 2, label: "高", labelEn: "High" },
+            ],
+          },
           advancedSectionHeaders: {
             power: "01 // 休眠和防误触",
             sensor: "02 // 传感器参数",

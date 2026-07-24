@@ -695,11 +695,9 @@
       throw new ProtocolError(`unsupported debounce value: ${v}`, "BAD_PARAM");
     },
 
-    debounceMsFromLevel(level) {
-      const l = clampInt(level, 0, 2);
-      if (l === 0) return 2;
-      if (l === 1) return 5;
-      return 10;
+    // Command 0x29 controls Slam-Click sensitivity (low/mid/high), not milliseconds.
+    debounceValueFromLevel(level) {
+      return clampInt(level, 0, 2);
     },
 
     sleepMinutesFromSeconds(v) {
@@ -828,14 +826,10 @@
     },
 
     debounceFromReadByte(code) {
-      const c = toU8(code);
-      if (c <= 0x02) {
-        const level = c === 0 ? "low" : (c === 1 ? "mid" : "high");
-        return { debounceLevel: level, debounceMs: TRANSFORMERS.debounceMsFromLevel(c) };
-      }
-      const ms = c;
-      const level = ms <= 3 ? "low" : (ms <= 7 ? "mid" : "high");
-      return { debounceLevel: level, debounceMs: ms };
+      const raw = toU8(code);
+      const levelCode = raw <= 0x02 ? raw : TRANSFORMERS.debounceLevelCode(raw);
+      const level = levelCode === 0 ? "low" : (levelCode === 1 ? "mid" : "high");
+      return { debounceLevel: level, debounceMs: levelCode };
     },
 
     sleepSecondsFromMinutes(code) {
@@ -1238,7 +1232,7 @@
         out.debounceLevel = TRANSFORMERS.debounceLevelCode(out.debounceMs);
       }
       if ("debounceLevel" in out && !("debounceMs" in out)) {
-        out.debounceMs = TRANSFORMERS.debounceMsFromLevel(TRANSFORMERS.debounceLevelCode(out.debounceLevel));
+        out.debounceMs = TRANSFORMERS.debounceValueFromLevel(TRANSFORMERS.debounceLevelCode(out.debounceLevel));
       }
 
       const dpiTouched = (
@@ -1332,7 +1326,7 @@
       if ("debounceLevel" in next) {
         const code = TRANSFORMERS.debounceLevelCode(next.debounceLevel);
         next.debounceLevel = code === 0 ? "low" : (code === 1 ? "mid" : "high");
-        if (!("debounceMs" in patch)) next.debounceMs = TRANSFORMERS.debounceMsFromLevel(code);
+        if (!("debounceMs" in patch)) next.debounceMs = TRANSFORMERS.debounceValueFromLevel(code);
       } else if ("debounceMs" in next) {
         const code = TRANSFORMERS.debounceLevelCode(next.debounceMs);
         next.debounceLevel = code === 0 ? "low" : (code === 1 ? "mid" : "high");
@@ -2820,7 +2814,7 @@
         performanceMode: "hp",
         lodHeight: "low",
         debounceLevel: "mid",
-        debounceMs: 5,
+        debounceMs: 1,
         hyperClick: false,
         burstEnabled: false,
         motionSync: false,
