@@ -42,6 +42,7 @@
     "atk",
     "crdrako",
     "ninjutso",
+    "ninjutso_ten",
     "logitech",
     "razer",
   ]);
@@ -52,13 +53,15 @@
     atk: "./src/protocols/protocol_api_atk.js",
     crdrako: "./src/protocols/protocol_api_crdrkao.js",
     ninjutso: "./src/protocols/protocol_api_ninjutso.js",
+    ninjutso_ten: "./src/protocols/protocol_api_ninjutso.js",
     logitech: "./src/protocols/protocol_api_logitech.js",
     razer: "./src/protocols/protocol_api_razer.js",
   });
   const ATK_VENDOR_IDS = new Set([0x373b, 0x3710]);
   const NINJUTSO_VENDOR_ID = 0x093a;
-  const NINJUTSO_PRODUCT_ID = 0xeb02;
-  const NINJUTSO_ALLOWED_NAME = "ninjutso sora v3";
+  const NINJUTSO_SORAV3_PIDS = new Set([0xe010, 0xeb02]);
+  const NINJUTSO_SORAV3_ALLOWED_NAME = "ninjutso sora v3";
+  const NINJUTSO_TEN_PIDS = new Set([0xe020, 0xea01, 0xeb01, 0xec01]);
   const RAZER_VENDOR_ID = 0x1532;
   const RAZER_SUPPORTED_PIDS = new Set([0x00b3, 0x00b6, 0x00b7, 0x00c0, 0x00c1, 0x00c2, 0x00c3, 0x00c4, 0x00c5, 0x00e5, 0x00e6]);
   const RAZER_DEFAULT_CONTROL_USAGE_PAGE = 0x0c;
@@ -458,8 +461,8 @@
     }));
   }
 
-  function _isAllowedNinjutsoName(d) {
-    return String(d?.productName || "").trim().toLowerCase() === NINJUTSO_ALLOWED_NAME;
+  function _isAllowedSoraV3Name(d) {
+    return String(d?.productName || "").trim().toLowerCase() === NINJUTSO_SORAV3_ALLOWED_NAME;
   }
 
   function _passesConnectionFilter(d) {
@@ -469,21 +472,27 @@
     if (Number(d?.vendorId) === 0x1915 || _isChaosDevice(d)) return false;
     const vid = Number(d?.vendorId);
     const pid = Number(d?.productId);
-    if (vid === NINJUTSO_VENDOR_ID && pid === NINJUTSO_PRODUCT_ID) {
-      return _isAllowedNinjutsoName(d);
+    if (vid === NINJUTSO_VENDOR_ID && NINJUTSO_SORAV3_PIDS.has(pid)) {
+      return _isAllowedSoraV3Name(d);
+    }
+    // Ten devices: no productName requirement (PID-based only, per NinjaForce firmware)
+    if (vid === NINJUTSO_VENDOR_ID && NINJUTSO_TEN_PIDS.has(pid)) {
+      return true;
     }
     return true;
   }
 
   function _isNinjutsoDevice(d) {
-    if (Number(d?.vendorId) !== NINJUTSO_VENDOR_ID || Number(d?.productId) !== NINJUTSO_PRODUCT_ID) return false;
-    if (!_isAllowedNinjutsoName(d)) return false;
-    // Some browsers/firmwares may not expose vendor pages consistently on first read.
-    if (!Array.isArray(d?.collections) || !d.collections.length) return true;
-    return d.collections.some((c) => {
-      const page = Number(c?.usagePage);
-      return page === 0xff01 || page === 0xff00;
-    });
+    if (Number(d?.vendorId) !== NINJUTSO_VENDOR_ID) return false;
+    if (!NINJUTSO_SORAV3_PIDS.has(Number(d?.productId))) return false;
+    return _isAllowedSoraV3Name(d);
+  }
+
+  function _isNinjutsoTenDevice(d) {
+    return (
+      Number(d?.vendorId) === NINJUTSO_VENDOR_ID
+      && NINJUTSO_TEN_PIDS.has(Number(d?.productId))
+    );
   }
 
   /**
@@ -515,11 +524,29 @@
       type: "ninjutso",
       label: "NINJUTSO",
       match: _isNinjutsoDevice,
-      filters: [
-        { vendorId: NINJUTSO_VENDOR_ID, productId: NINJUTSO_PRODUCT_ID, usagePage: 0xff01 },
-        { vendorId: NINJUTSO_VENDOR_ID, productId: NINJUTSO_PRODUCT_ID, usagePage: 0xff00 },
-        { vendorId: NINJUTSO_VENDOR_ID, productId: NINJUTSO_PRODUCT_ID },
-      ],
+      filters: (() => {
+        const out = [];
+        for (const pid of NINJUTSO_SORAV3_PIDS) {
+          out.push({ vendorId: NINJUTSO_VENDOR_ID, productId: pid, usagePage: 0xff01 });
+          out.push({ vendorId: NINJUTSO_VENDOR_ID, productId: pid, usagePage: 0xff00 });
+          out.push({ vendorId: NINJUTSO_VENDOR_ID, productId: pid });
+        }
+        return out;
+      })(),
+    },
+    {
+      type: "ninjutso_ten",
+      label: "NINJUTSO TEN",
+      match: _isNinjutsoTenDevice,
+      filters: (() => {
+        const out = [];
+        for (const pid of NINJUTSO_TEN_PIDS) {
+          out.push({ vendorId: NINJUTSO_VENDOR_ID, productId: pid, usagePage: 0xff01 });
+          out.push({ vendorId: NINJUTSO_VENDOR_ID, productId: pid, usagePage: 0xff00 });
+          out.push({ vendorId: NINJUTSO_VENDOR_ID, productId: pid });
+        }
+        return out;
+      })(),
     },
     // The legacy 0x1915 entry is intentionally excluded from WebHID request
     // filters so the browser picker will not offer those devices.
@@ -737,6 +764,7 @@
     if (type === "rapoo") return list.filter(_isRapooDevice);
     if (type === "atk") return list.filter(_isAtkDevice);
     if (type === "ninjutso") return list.filter(_isNinjutsoDevice);
+    if (type === "ninjutso_ten") return list.filter(_isNinjutsoTenDevice);
     // The disabled legacy branch is retained for future re-enable, but it must
     // not return candidates while WebHID support is disabled.
     // if (type === "chaos") return list.filter(_isChaosDevice);
@@ -752,6 +780,7 @@
       _isRapooDevice(d)
       || _isAtkDevice(d)
       || _isNinjutsoDevice(d)
+      || _isNinjutsoTenDevice(d)
       // Legacy 0x1915 matching is disabled for WebHID connection support.
       // || _isChaosDevice(d)
       || _isLogitechDevice(d)
@@ -949,9 +978,10 @@
     const pid = Number(device?.productId);
     if (vid === 0x24ae) return "rapoo";
     if (ATK_VENDOR_IDS.has(vid)) return "atk";
-    if (vid === NINJUTSO_VENDOR_ID && pid === NINJUTSO_PRODUCT_ID) {
-      return _isAllowedNinjutsoName(device) ? "ninjutso" : null;
+    if (vid === NINJUTSO_VENDOR_ID && NINJUTSO_SORAV3_PIDS.has(pid)) {
+      return _isAllowedSoraV3Name(device) ? "ninjutso" : null;
     }
+    if (vid === NINJUTSO_VENDOR_ID && NINJUTSO_TEN_PIDS.has(pid)) return "ninjutso_ten";
     // The broad 0x1915 fallback is intentionally disabled with WebHID support.
     // Future shared-VID devices must be inferred by exact PID/usage rules.
     // if (vid === 0x1915) return "chaos";

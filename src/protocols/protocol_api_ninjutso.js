@@ -127,6 +127,27 @@
     DEFAULT_PROFILE_ID: 0x01,
   });
 
+  const NINJUTSO_TEN_PIDS = new Set([0xe020, 0xea01, 0xeb01, 0xec01]);
+  const NINJUTSO_WIRED_PIDS = new Set([0xe010, 0xe020]);
+
+  // Sora V3 color id → name
+  const SORAV3_COLOR_MAP = Object.freeze({
+    0: "black",
+    1: "white",
+    2: "pink",
+    3: "red",
+  });
+
+  // Ten color id → name (more variants than Sora V3)
+  const TEN_COLOR_MAP = Object.freeze({
+    0: "black",
+    1: "white",
+    2: "pink",
+    3: "red",
+    4: "clear-blue",
+    5: "clear-pink",
+  });
+
   const CMD = Object.freeze({
     // Base controls
     POLLING_W: 0x05,
@@ -175,6 +196,14 @@
     VERSION_R: 0x15,
     COLOR_R: 0xa3,
     PAIR_PID_R: 0xa7,
+
+    // Ten-specific: motion sync (Ten only, not on Sora V3)
+    MOTION_SYNC_W: 0x0d,
+    MOTION_SYNC_R: 0x0e,
+
+    // Ten-specific: sensor angle (Ten only, not on Sora V3)
+    ANGLE_W: 0x09,
+    ANGLE_R: 0x0a,
   });
 
   // Packet byte[6] policy:
@@ -481,6 +510,9 @@
       configReadDelayMs: 15,
       configReadRetries: 4,
     }),
+    // "atomic": unlock→sleep→lock in one call (Sora V3 original behavior)
+    // "session": unlock→sleep, keep open, lock later via _finalizeSecurityGate (Ten)
+    gateStrategy: "atomic",
     compat: Object.freeze({
       // Older devices may encode DPI as (value + 1) * 50; disabled by default for V3 alignment.
       dpiDecodeLegacyScale50: false,
@@ -507,6 +539,15 @@
 
     burst: "burstEnabled",
     burstEnabled: "burstEnabled",
+
+    motion_sync: "motionSync",
+    motionSync: "motionSync",
+
+    sensor_angle: "sensorAngle",
+    sensorAngle: "sensorAngle",
+
+    performance_modes: "performanceModes",
+    performanceModes: "performanceModes",
 
     sleep_seconds: "sleepSeconds",
     sleepSeconds: "sleepSeconds",
@@ -558,6 +599,8 @@
     "debounceLevel",
     "hyperClick",
     "burstEnabled",
+    "motionSync",
+    "sensorAngle",
     "sleepSeconds",
     "currentSlotCount",
     "currentDpiIndex",
@@ -687,6 +730,11 @@
     dpiValuePayload(v, profile) {
       const cap = profile?.capabilities || DEFAULT_PROFILE.capabilities;
       const n = clampNumber(assertFiniteNumber(v, "dpi"), cap.dpiMin, cap.dpiMax, cap.dpiMin);
+      // Ten legacy encoding: (dpi / 50) - 1
+      if (profile?.compat?.dpiDecodeLegacyScale50) {
+        const level = clampInt(Math.round(n / 50) - 1, 0, 0xffff);
+        return [...u16leBytes(level), 0x00];
+      }
       const intPart = Math.trunc(n);
       const decimalTenth = clampInt(Math.round((n - intPart) * 10), 0, 9);
       return [...u16leBytes(intPart), decimalTenth];
@@ -871,10 +919,11 @@
       kind: "direct",
       priority: 20,
       encode(value) {
+        const code = TRANSFORMERS.performanceModeCode(value);
         return {
           cmd: CMD.PERF_W,
           lenOrIdx: 0x01,
-          dataBytes: [TRANSFORMERS.performanceModeCode(value)],
+          dataBytes: [code],
         };
       },
     },
@@ -943,6 +992,39 @@
           cmd: CMD.BURST_W,
           lenOrIdx: 0x01,
           dataBytes: [value ? 0x01 : 0x00], // 修正：开启发送 0x01
+        };
+      },
+    },
+
+    motionSync: {
+      key: "motionSync",
+      kind: "direct",
+      priority: 42,
+      encode(value) {
+        return {
+          cmd: CMD.MOTION_SYNC_W,
+          lenOrIdx: 0x01,
+          dataBytes: [value ? 0x01 : 0x00],
+        };
+      },
+    },
+
+    sensorAngle: {
+      key: "sensorAngle",
+      kind: "direct",
+      priority: 43,
+      validate(patch, nextState) {
+        const a = Number(nextState.sensorAngle);
+        if (!Number.isFinite(a) || a < -30 || a > 30) {
+          throw new ProtocolError(`sensorAngle out of range: ${a}`, "BAD_PARAM", { min: -30, max: 30 });
+        }
+      },
+      encode(value) {
+        const a = clampInt(Number(value), -30, 30);
+        return {
+          cmd: CMD.ANGLE_W,
+          lenOrIdx: 0x01,
+          dataBytes: [(a < 0 ? 0x100 + a : a) & 0xff],
         };
       },
     },
@@ -1093,10 +1175,12 @@
       key: "ledColor",
       kind: "direct",
       priority: 64,
-      encode(value) {
+      encode(value, _nextState, profile) {
+        // Sora V3: lenOrIdx 0x03 (original); Ten: lenOrIdx 0x00
+        const useTenFormat = profile?.isTenProfile;
         return {
           cmd: CMD.LED_COLOR_W,
-          lenOrIdx: 0x03,
+          lenOrIdx: useTenFormat ? 0x00 : 0x03,
           dataBytes: TRANSFORMERS.ledColorBytes(value),
         };
       },
@@ -1258,6 +1342,13 @@
       next.ledSpeed = clampInt(Number(next.ledSpeed ?? 0), 0, 20);
       next.ledBrightness = clampInt(Number(next.ledBrightness ?? 100), 1, 100);
 
+      // Ten: polling >= 2K forces Competitive (sport) mode; wired Ten always sport
+      if (this.profile?.isTenProfile) {
+        if (this.profile?.isTenWired || Number(next.pollingHz) >= 2000) {
+          next.performanceMode = "sport";
+        }
+      }
+
       return next;
     }
 
@@ -1416,6 +1507,23 @@
             });
           }
         }
+      }
+
+      // Ten: auto-inject sport mode when polling >= 2K (wireless) or always (wired)
+      if (this.profile?.isTenProfile && (this.profile?.isTenWired || Number(nextState.pollingHz) >= 2000)) {
+        const sportHex = ProtocolCodec.write({
+          cmd: CMD.PERF_W,
+          lenOrIdx: 0x01,
+          profileId: targetProfileId,
+          dataBytes: [TRANSFORMERS.performanceModeCode("sport")],
+        });
+        commands.push({
+          rid: HID_CONST.MAIN_RID,
+          hex: sportHex,
+          waitMs: this.profile.timings.interCmdDelayMs ?? 12,
+          cmd: CMD.PERF_W,
+          sensitive: true,
+        });
       }
 
       const gated = this._injectSecurityGate(commands, prevState || {});
@@ -1585,7 +1693,8 @@
   // ============================================================
   class MouseMouseHidApi {
     constructor({ profile = DEFAULT_PROFILE } = {}) {
-      this._profile = profile || DEFAULT_PROFILE;
+      this._baseProfile = profile || DEFAULT_PROFILE;
+      this._profile = this._baseProfile;
       this._planner = new CommandPlanner(this._profile);
       this._driver = new UniversalHidDriver();
       this._driver.defaultInterCmdDelayMs = this._profile.timings.interCmdDelayMs ?? 12;
@@ -1597,13 +1706,36 @@
       this._onBatteryCbs = [];
       this._onRawReportCbs = [];
       this._boundInputHandler = null;
+      this._securityGateSessionOpen = false;
       this._cfg = this._makeDefaultCfg();
     }
 
     set device(dev) {
       this._device = dev || null;
       this._driver.setDevice(this._device);
-      if (!this._device) this._protocolProfileId = HID_CONST.DEFAULT_PROFILE_ID;
+      this._profile = this._baseProfile;
+      if (!this._device) {
+        this._protocolProfileId = HID_CONST.DEFAULT_PROFILE_ID;
+        this._planner.profile = this._profile;
+        return;
+      }
+      // Adjust profile for Ten devices immediately (before any reads/writes)
+      const pid = Number(this._device?.productId);
+      if (NINJUTSO_TEN_PIDS.has(pid)) {
+        const isWired = NINJUTSO_WIRED_PIDS.has(pid);
+        this._profile = Object.assign({}, this._baseProfile, {
+          isTenProfile: true,
+          isTenWired: isWired,
+          gateStrategy: "session",
+          compat: Object.assign({}, this._baseProfile.compat, { dpiDecodeLegacyScale50: true }),
+          capabilities: Object.assign({}, this._baseProfile.capabilities, {
+            performanceModes: Object.freeze(["hp", "sport"]),
+            pollingRates: isWired ? Object.freeze([1000]) : Object.freeze([1000, 2000, 4000, 8000]),
+          }),
+        });
+      }
+      this._planner.profile = this._profile;
+      this._driver.defaultInterCmdDelayMs = this._profile.timings.interCmdDelayMs ?? 12;
     }
 
     get device() {
@@ -1641,12 +1773,36 @@
     }
 
     async _initializeSecurityGate() {
+      const isSession = this._profile?.gateStrategy === "session";
+      if (isSession && this._securityGateSessionOpen) return;
+      let unlocked = false;
       try {
         await this._driver.unlockGate();
+        unlocked = true;
         await sleep(this._profile.timings.secureGateWaitMs ?? 10);
+        if (isSession) {
+          this._securityGateSessionOpen = true;
+          return;
+        }
+        // Sora V3 (atomic): lock immediately, matching original behavior
         await this._driver.lockGate();
       } catch (e) {
-        console.warn("[Ninjutso] security gate handshake warning:", e);
+        if (isSession && unlocked) {
+          try { await this._driver.lockGate(); } catch (_) {}
+        }
+        this._securityGateSessionOpen = false;
+        console.warn("[Ninjutso] security gate unlock warning:", e);
+      }
+    }
+
+    async _finalizeSecurityGate() {
+      if (this._profile?.gateStrategy !== "session") return; // Sora V3: already locked
+      try {
+        await this._driver.lockGate();
+      } catch (e) {
+        console.warn("[Ninjutso] security gate lock warning:", e);
+      } finally {
+        this._securityGateSessionOpen = false;
       }
     }
 
@@ -1757,6 +1913,7 @@
       const dev = this.device;
       if (!dev) return;
 
+      await this._finalizeSecurityGate();
       try {
         if (this._boundInputHandler) {
           dev.removeEventListener("inputreport", this._boundInputHandler);
@@ -1949,9 +2106,9 @@
         return base + decimalTenth / 10;
       }
 
-      // Older protocol variants encode DPI as (value + 1) * 50.
+      // Older protocol variants encode DPI as a 16-bit (value + 1) * 50 level.
       const useLegacyScale50 = this._profile?.compat?.dpiDecodeLegacyScale50 === true;
-      if (useLegacyScale50 && base > 0 && base < 100) {
+      if (useLegacyScale50) {
         return (base + 1) * 50;
       }
 
@@ -2090,21 +2247,71 @@
       const lodBytes = await this._readCmdBytes(CMD.LOD_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
       snapshot.lodHeight = DECODERS.lodHeightFromCode(lodBytes[0] ?? 0);
 
+      const pid = Number(this.device?.productId);
+      const isTen = NINJUTSO_TEN_PIDS.has(pid);
+
+      // Ten profile adjustment is done in device setter (immediate, before any I/O)
       const perfBytes = await this._readCmdBytes(CMD.PERF_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
-      snapshot.performanceMode = DECODERS.performanceModeFromCode(perfBytes[0] ?? 0);
+      const perfRaw = toU8(perfBytes[0] ?? 0);
+      if (isTen) {
+        // Ten: boolean mode (0=hp/Standard, 1=sport/Competitive); wired always sport
+        const isTenWired = NINJUTSO_WIRED_PIDS.has(pid);
+        snapshot.performanceMode = (isTenWired || perfRaw !== 0) ? "sport" : "hp";
+        snapshot.performanceModes = ["hp", "sport"];
+      } else {
+        snapshot.performanceMode = DECODERS.performanceModeFromCode(perfRaw);
+        snapshot.performanceModes = ["hp", "sport", "oc"];
+      }
+
+      // Ten-only: motion sync (replaces burst)
+      if (isTen) {
+        try {
+          const msBytes = await this._readCmdBytes(CMD.MOTION_SYNC_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+          snapshot.motionSync = (toU8(msBytes[0] ?? 0) === 1);
+        } catch (_) {
+          snapshot.motionSync = false;
+        }
+        // Ten-only: sensor angle (unsigned byte → signed int, matches NinjaForce getAngle)
+        try {
+          const angleBytes = await this._readCmdBytes(CMD.ANGLE_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+          const rawByte = angleBytes[0] ?? 0;
+          snapshot.sensorAngle = rawByte >= 128 ? rawByte - 256 : rawByte;
+        } catch (_) {
+          snapshot.sensorAngle = 0;
+        }
+      } else {
+        snapshot.motionSync = false;
+        snapshot.sensorAngle = 0;
+      }
 
       const d = DECODERS.debounceFromReadByte(await this._readCmdU8(CMD.DEBOUNCE_R, { lenOrIdx: 0x01 }));
       snapshot.debounceLevel = d.debounceLevel;
       snapshot.debounceMs = d.debounceMs;
 
-      const hyperBytes = await this._readCmdBytes(CMD.HYPER_R, {
-        lenOrIdx: 0x00,
-        dataBytes: [],
-        expectedLen: 1,
-      });
+      // HyperClick: Ten may fail (optional feature); Sora V3 always supports
+      let hyperBytes;
+      if (isTen) {
+        try {
+          hyperBytes = await this._readCmdBytes(CMD.HYPER_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+        } catch (_) {
+          hyperBytes = new Uint8Array([0]);
+        }
+      } else {
+        hyperBytes = await this._readCmdBytes(CMD.HYPER_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+      }
       snapshot.hyperClick = DECODERS.bool(hyperBytes[0] ?? 0);
 
-      const burstBytes = await this._readCmdBytes(CMD.BURST_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+      // Burst: Ten may fail (optional feature); Sora V3 direct read
+      let burstBytes;
+      if (isTen) {
+        try {
+          burstBytes = await this._readCmdBytes(CMD.BURST_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+        } catch (_) {
+          burstBytes = new Uint8Array([0]);
+        }
+      } else {
+        burstBytes = await this._readCmdBytes(CMD.BURST_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+      }
       snapshot.burstEnabled = (toU8(burstBytes[0] ?? 0) === 0x01);
 
       const sleepBytes = await this._readCmdBytes(CMD.SLEEP_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
@@ -2158,16 +2365,46 @@
       }
       snapshot.buttonMappings = buttonMappings;
 
-      const ledEnBytes = await this._readCmdBytes(CMD.LED_ENABLED_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
-      snapshot.ledEnabled = DECODERS.bool(ledEnBytes[0] ?? 0);
-      const ledBrBytes = await this._readCmdBytes(CMD.LED_BRIGHTNESS_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
-      snapshot.ledBrightness = DECODERS.ledBrightnessFromCode(ledBrBytes[0] ?? 0);
-      const ledMdBytes = await this._readCmdBytes(CMD.LED_MODE_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
-      snapshot.ledMode = DECODERS.ledModeFromCode(ledMdBytes[0] ?? 0);
-      const ledSpBytes = await this._readCmdBytes(CMD.LED_SPEED_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
-      snapshot.ledSpeed = DECODERS.ledSpeedFromCode(ledSpBytes[0] ?? 20);
-      const rgb = await this._readCmdBytes(CMD.LED_COLOR_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 3 });
-      snapshot.ledColor = normalizeColorHex([rgb[0], rgb[1], rgb[2]], "#11119a");
+      const isWired = NINJUTSO_WIRED_PIDS.has(pid);
+
+      // Wired devices have no receiver LED controls.
+      if (isWired) {
+        snapshot.ledEnabled = false;
+        snapshot.ledBrightness = 100;
+        snapshot.ledMode = "static";
+        snapshot.ledSpeed = 0;
+        snapshot.ledColor = "#11119a";
+      } else if (isTen) {
+        try {
+          const ledEnBytes = await this._readCmdBytes(CMD.LED_ENABLED_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+          snapshot.ledEnabled = DECODERS.bool(ledEnBytes[0] ?? 0);
+          const ledBrBytes = await this._readCmdBytes(CMD.LED_BRIGHTNESS_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+          snapshot.ledBrightness = DECODERS.ledBrightnessFromCode(ledBrBytes[0] ?? 0);
+          const ledMdBytes = await this._readCmdBytes(CMD.LED_MODE_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+          snapshot.ledMode = DECODERS.ledModeFromCode(ledMdBytes[0] ?? 0);
+          const ledSpBytes = await this._readCmdBytes(CMD.LED_SPEED_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+          snapshot.ledSpeed = DECODERS.ledSpeedFromCode(ledSpBytes[0] ?? 20);
+          const rgb = await this._readCmdBytes(CMD.LED_COLOR_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 3 });
+          snapshot.ledColor = normalizeColorHex([rgb[0], rgb[1], rgb[2]], "#11119a");
+        } catch (_) {
+          snapshot.ledEnabled = false;
+          snapshot.ledBrightness = 100;
+          snapshot.ledMode = "static";
+          snapshot.ledSpeed = 0;
+          snapshot.ledColor = "#11119a";
+        }
+      } else {
+        const ledEnBytes = await this._readCmdBytes(CMD.LED_ENABLED_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+        snapshot.ledEnabled = DECODERS.bool(ledEnBytes[0] ?? 0);
+        const ledBrBytes = await this._readCmdBytes(CMD.LED_BRIGHTNESS_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+        snapshot.ledBrightness = DECODERS.ledBrightnessFromCode(ledBrBytes[0] ?? 0);
+        const ledMdBytes = await this._readCmdBytes(CMD.LED_MODE_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+        snapshot.ledMode = DECODERS.ledModeFromCode(ledMdBytes[0] ?? 0);
+        const ledSpBytes = await this._readCmdBytes(CMD.LED_SPEED_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 1 });
+        snapshot.ledSpeed = DECODERS.ledSpeedFromCode(ledSpBytes[0] ?? 20);
+        const rgb = await this._readCmdBytes(CMD.LED_COLOR_R, { lenOrIdx: 0x00, dataBytes: [], expectedLen: 3 });
+        snapshot.ledColor = normalizeColorHex([rgb[0], rgb[1], rgb[2]], "#11119a");
+      }
 
       const vm = await this._readCmdBytes(CMD.VERSION_R, {
         lenOrIdx: 0x01,
@@ -2178,27 +2415,63 @@
       snapshot.mouseFwRaw = Number.isFinite(Number(vm?.[0])) ? toU8(vm[0]) : null;
       snapshot.mouseFwHex = ProtocolApi.versionBytesToHex(vm);
 
-      const vr = await this._readCmdBytes(CMD.VERSION_R, {
-        lenOrIdx: 0x01,
-        dataBytes: [0x01],
-        expectedLen: 3,
-      });
-      snapshot.receiverFwBytes = Array.from(vr || []);
-      snapshot.receiverFwRaw = Number.isFinite(Number(vr?.[0])) ? toU8(vr[0]) : null;
-      snapshot.receiverFwHex = ProtocolApi.versionBytesToHex(vr);
+      // Wired PIDs only have mouse firmware (no separate receiver version).
+      if (!isWired) {
+        const vr = await this._readCmdBytes(CMD.VERSION_R, {
+          lenOrIdx: 0x01,
+          dataBytes: [0x01],
+          expectedLen: 3,
+        });
+        snapshot.receiverFwBytes = Array.from(vr || []);
+        snapshot.receiverFwRaw = Number.isFinite(Number(vr?.[0])) ? toU8(vr[0]) : null;
+        snapshot.receiverFwHex = ProtocolApi.versionBytesToHex(vr);
+      } else {
+        snapshot.receiverFwBytes = [];
+        snapshot.receiverFwRaw = null;
+        snapshot.receiverFwHex = "-";
+      }
 
-      const color = await this._readCmdBytes(CMD.COLOR_R, { lenOrIdx: 0x00, expectedLen: null });
-      snapshot.infoA = Array.from(color || []);
+      const colorBytes = await this._readCmdBytes(CMD.COLOR_R, { lenOrIdx: 0x00, expectedLen: null });
+      snapshot.infoA = Array.from(colorBytes || []);
+      const colorId = toU8(colorBytes?.[0] ?? 0);
+      const colorName = isTen ? (TEN_COLOR_MAP[colorId] || "black") : (SORAV3_COLOR_MAP[colorId] || "black");
 
-      const pid = await this._readCmdBytes(CMD.PAIR_PID_R, { lenOrIdx: 0x00, expectedLen: null });
-      snapshot.infoB = Array.from(pid || []);
+      if (!isWired) {
+        const pairedPidBytes = await this._readCmdBytes(CMD.PAIR_PID_R, { lenOrIdx: 0x00, expectedLen: null });
+        snapshot.infoB = Array.from(pairedPidBytes || []);
+      } else {
+        snapshot.infoB = [];
+      }
 
-      snapshot.deviceName = String(this.device?.productName || "Ninjutso Mouse");
+      // Device name: Ten uses prefix-stripped + color; Sora V3 keeps original behavior
+      if (isTen) {
+        let rawName = String(this.device?.productName || "Ninjutso Ten");
+        if (rawName.toLowerCase().startsWith("ninjutso ")) {
+          rawName = rawName.slice(9).trim();
+        }
+        if (!rawName.toLowerCase().includes("ten")) {
+          rawName = rawName + " (" + colorName + ")";
+        }
+        snapshot.deviceName = rawName || "Ninjutso Ten";
+      } else {
+        snapshot.deviceName = String(this.device?.productName || "Ninjutso Mouse");
+      }
+      snapshot.deviceType = isTen ? "ten" : "sorav3";
+      snapshot.color = colorName;
+      snapshot.isTen = isTen;
+      snapshot.wireless = !isWired;
+
+      // Ensure performanceModes is always set
+      if (!snapshot.performanceModes) {
+        snapshot.performanceModes = isTen ? ["hp", "sport"] : ["hp", "sport", "oc"];
+      }
+
       snapshot.capabilities = {
         dpiSlotCount: cap.dpiSlotMax,
         maxDpi: cap.dpiMax,
         dpiStep: cap.dpiStep,
         pollingRates: (cap.pollingRates || []).slice(0),
+        wired: isWired,
       };
 
       return snapshot;
@@ -2236,7 +2509,15 @@
         if (!this.device) throw new ProtocolError("requestConfig() requires hidApi.device", "NO_DEVICE");
         if (!this.device.opened) await this.open();
 
-        const snapshot = await this._readDeviceConfigSnapshot();
+        if (this._profile?.gateStrategy === "session") {
+          await this._initializeSecurityGate();
+        }
+        let snapshot;
+        try {
+          snapshot = await this._readDeviceConfigSnapshot();
+        } finally {
+          await this._finalizeSecurityGate();
+        }
         this._cfg = Object.assign({}, this._cfg || this._makeDefaultCfg(), snapshot);
         this._protocolProfileId = toU8(this._cfg.protocolProfileId ?? this._protocolProfileId);
 
@@ -2266,7 +2547,15 @@
         if (!this.device) throw new ProtocolError("requestBattery() requires hidApi.device", "NO_DEVICE");
         if (!this.device.opened) await this.open();
 
-        const percent = await this._readBatteryPercent();
+        if (this._profile?.gateStrategy === "session") {
+          await this._initializeSecurityGate();
+        }
+        let percent;
+        try {
+          percent = await this._readBatteryPercent();
+        } finally {
+          await this._finalizeSecurityGate();
+        }
         this._cfg = this._cfg || this._makeDefaultCfg();
         this._cfg.batteryPercent = percent;
         this._emitBattery({ batteryPercent: percent, batteryIsCharging: false });
@@ -2296,7 +2585,15 @@
           // On write failure, run a protocol-level readback reconciliation once
           // so the UI cache realigns with the device's actual state.
           try {
-            const snapshot = await this._readDeviceConfigSnapshot();
+            if (this._profile?.gateStrategy === "session") {
+              await this._initializeSecurityGate();
+            }
+            let snapshot;
+            try {
+              snapshot = await this._readDeviceConfigSnapshot();
+            } finally {
+              await this._finalizeSecurityGate();
+            }
             this._cfg = Object.assign({}, this._cfg || this._makeDefaultCfg(), snapshot);
             this._emitConfig();
           } catch (reconcileErr) {
@@ -2313,11 +2610,18 @@
 
         let committedState = nextState;
         if (slotCountIncreased) {
-          const readback = await this._readDpiSlotsForCount(nextCount, {
-            seedState: nextState,
-            currentDpiIndex: nextState?.currentDpiIndex,
-          });
-          committedState = Object.assign({}, committedState, readback);
+          await this._initializeSecurityGate();
+          try {
+            const readback = await this._readDpiSlotsForCount(nextCount, {
+              seedState: nextState,
+              currentDpiIndex: nextState?.currentDpiIndex,
+            });
+            committedState = Object.assign({}, committedState, readback);
+          } catch (e) {
+            console.warn("[Ninjutso] DPI readback failed, using defaults for new slots", e);
+          } finally {
+            await this._finalizeSecurityGate();
+          }
         }
 
         this._cfg = Object.assign({}, base, committedState);
@@ -2519,6 +2823,9 @@
         debounceMs: 5,
         hyperClick: false,
         burstEnabled: false,
+        motionSync: false,
+        sensorAngle: 0,
+        performanceModes: ["hp", "sport", "oc"],
         sleepSeconds: 300,
 
         ledEnabled: false,
@@ -2552,6 +2859,9 @@
         mouseFw: "-",
         receiverFw: "-",
         deviceName: "Ninjutso Mouse",
+        deviceType: "sorav3",
+        color: "black",
+        isTen: false,
       };
     }
 

@@ -296,6 +296,54 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
           },
         },
       },
+      ninjutso_ten: {
+        power: {
+          sleepSeconds: Array.from({ length: 15 }, (_, i) => (i + 1) * 60),
+          debounceMs: [2, 5, 10],
+        },
+        sensor: {
+          angleDeg: { min: -30, max: 30, step: 1, hint: "Range -30° ~ 30°" },
+          feel: { min: 0, max: 2, step: 1, unit: "档", name: "LOD 高度", sub: "超低 / 低 / 中" },
+        },
+        dpi: {
+          step: 50,
+        },
+        polling: {
+          basicHz: [1000, 2000, 4000, 8000],
+          advHz: [1000, 2000, 4000, 8000],
+        },
+        texts: {
+          landingTitle: "NINJUTSO TEN",
+          landingCaption: "stare into the void to connect (NINJUTSO TEN)",
+          lod: { code: "005 // Motion Sync", title: "运动同步", desc: "开启运动同步以优化传感器响应" },
+          led: { code: "006 // Hyper Click", title: "Hyper Click", desc: "可降低按键延迟" },
+          ledMaster: { code: "007 // LED Master", title: "灯光开关", desc: "Enable LED related controls" },
+          perfMode: {
+            hp: { color: "#000000", text: "标准模式" },
+            sport: { color: "#FF4500", text: "竞技模式" },
+          },
+          lightCycles: {
+            dpi: { code: "008 // LED Mode", title: "灯效模式", desc: "点击切换常亮与跑马模式" },
+          },
+          staticLedColor: { code: "009 // Static Color", title: "常亮颜色", desc: "点击选择常亮模式颜色" },
+          advancedSectionHeaders: {
+            power: "01 // 休眠和防误触",
+            sensor: "02 // 传感器参数",
+          },
+          lights: {
+            dpi: [
+              { val: 0, label: "Static", cls: "atk-mode-0" },
+              { val: 1, label: "MARA", cls: "atk-mode-1" },
+            ],
+            receiver: [
+              { val: 25, label: "25%", cls: "atk-mode-0" },
+              { val: 50, label: "50%", cls: "atk-mode-1" },
+              { val: 75, label: "75%", cls: "atk-mode-2" },
+              { val: 100, label: "100%", cls: "atk-mode-3" },
+            ],
+          },
+        },
+      },
       razer: {
         power: {
           sleepSeconds: Array.from({ length: 15 }, (_, i) => (i + 1) * 60),
@@ -383,7 +431,7 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   const VALID_DEVICE_IDS = Object.freeze(
     (Array.isArray(window.DeviceRuntime?.VALID_DEVICE_IDS) && window.DeviceRuntime.VALID_DEVICE_IDS.length
       ? window.DeviceRuntime.VALID_DEVICE_IDS
-      : [DEFAULT_DEVICE_ID, "rapoo", "atk", "crdrako", "ninjutso", "logitech", "razer"])
+      : [DEFAULT_DEVICE_ID, "rapoo", "atk", "crdrako", "ninjutso", "ninjutso_ten", "logitech", "razer"])
       .map((deviceId) => String(deviceId || "").trim().toLowerCase())
       .filter(Boolean)
   );
@@ -686,6 +734,7 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
   const atkTexts = window.AppConfig?.ranges?.atk?.texts || {};
   const crdrakoTexts = window.AppConfig?.ranges?.crdrako?.texts || {};
   const ninjutsoTexts = window.AppConfig?.ranges?.ninjutso?.texts || {};
+  const ninjutsoTenTexts = window.AppConfig?.ranges?.ninjutso_ten?.texts || {};
   const razerTexts = window.AppConfig?.ranges?.razer?.texts || {};
 
   /**
@@ -1038,6 +1087,7 @@ const LOGITECH_DPI_STEP_SEGMENTS = Object.freeze([
     atkTexts,
     crdrakoTexts,
     ninjutsoTexts,
+    ninjutsoTenTexts,
     razerTexts,
     KEYMAP_COMMON,
     TRANSFORMS_COMMON,

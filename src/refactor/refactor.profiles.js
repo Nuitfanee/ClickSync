@@ -49,6 +49,7 @@
     atkTexts,
     crdrakoTexts,
     ninjutsoTexts,
+    ninjutsoTenTexts,
     razerTexts,
     KEYMAP_COMMON,
     TRANSFORMS_COMMON,
@@ -1078,6 +1079,7 @@ id: "atk",
       },
       landingTitle: ninjutsoTexts.landingTitle,
       landingCaption: ninjutsoTexts.landingCaption,
+      colorPickerVariant: "spectrum",
       lod: ninjutsoTexts.lod,
       led: ninjutsoTexts.led,
       secondarySurface: ninjutsoTexts.ledMaster,
@@ -1175,6 +1177,159 @@ id: "atk",
       staticLedColorRequiredDpiLightValue: 0,
       keymapButtonCount: 5,
       // Ninjutso protocol writes slot count first and then requires readback for stable slot DPI display.
+      deferDpiSlotCountUiUntilAck: true,
+      batteryReadMode: "active",
+      batteryPollMs: 60000,
+      batteryPollTag: "60s",
+    },
+  });
+
+  const NinjutsoTenProfile = composeDeviceProfile({
+    id: "ninjutso_ten",
+    ui: {
+      skinClass: "atk",
+      landingReadyText: "NINJUTSO TEN READY",
+      keymap: {
+        imageSrc: "./assets/images/ninjutso_ten.webp",
+        points: {
+          1: { x: 30, y: 20, side: "left" },
+          2: { x: 70, y: 38, side: "right" },
+          3: { x: 50.5, y: 26, side: "right" },
+          4: { x: 14, y: 40, side: "left" },
+          5: { x: 14, y: 51, side: "left" },
+        },
+      },
+      landingTitle: "NINJUTSO TEN",
+      landingCaption: "stare into the void to connect (NINJUTSO TEN)",
+      colorPickerVariant: "spectrum",
+      lod: { code: "005 // Motion Sync", title: "运动同步", desc: "开启运动同步以优化传感器响应" },
+      led: { code: "006 // Hyper Click", title: "Hyper Click", desc: "可降低按键延迟" },
+      secondarySurface: { code: "007 // LED Master", title: "灯光开关", desc: "点击切换灯光开关" },
+      perfMode: {
+        hp: { color: "#000000", text: "标准模式" },
+        sport: { color: "#FF4500", text: "竞技模式" },
+      },
+      performanceModePollingConstraint: {
+        minHz: 2000,
+        forceMode: "sport",
+        unavailableModes: ["hp"],
+        forceWhenCapability: "wired",
+      },
+      lightCycles: { code: "008 // LED Mode", title: "灯效模式", desc: "点击切换常亮与跑马模式" },
+      staticLedColor: { code: "009 // Static Color", title: "常亮颜色", desc: "点击选择常亮模式颜色" },
+      advancedSectionHeaders: {
+        power: "01 // 休眠和防误触",
+        sensor: "02 // LED灯效参数",
+      },
+      lights: {
+        dpi: [
+          { val: 0, label: "Static", cls: "atk-mode-0" },
+          { val: 1, label: "MARA", cls: "atk-mode-1" },
+        ],
+        receiver: [
+          { val: 25, label: "25%", cls: "atk-mode-0" },
+          { val: 50, label: "50%", cls: "atk-mode-1" },
+          { val: 75, label: "75%", cls: "atk-mode-2" },
+          { val: 100, label: "100%", cls: "atk-mode-3" },
+        ],
+      },
+      advancedOrders: {
+        surfaceModePrimary: 50,
+        primaryLedFeature: 60,
+        secondarySurfaceToggle: 70,
+        dpiLightEffect: 80,
+        staticLedColor: 85,
+        receiverLightEffect: 90,
+      },
+    },
+    ranges: window.AppConfig?.ranges?.ninjutso_ten,
+    keyMap: {
+      surfaceModePrimary: "motionSync",
+      surfaceModeSecondary: "ledEnabled",
+      primaryLedFeature: "hyperClick",
+      surfaceFeel: "lodHeight",
+      keyScanningRate: null,
+      wirelessStrategyMode: null,
+      commProtocolMode: null,
+      sensorAngle: "sensorAngle",
+      dpiLightEffect: "ledMode",
+      receiverLightEffect: "ledBrightness",
+      staticLedColor: "ledColor",
+    },
+    transforms: {
+      surfaceModePrimary: { write: (v) => !!v, read: readBool },
+      surfaceModeSecondary: { write: (v) => !!v, read: readBool },
+      primaryLedFeature: { write: (v) => !!v, read: readBool },
+      surfaceFeel: {
+        // Ten LOD: "ultra"→0, "low"→1, "mid"→2 (matches NinjaForce 3-level LOD)
+        write: (v) => {
+          const n = clamp(Math.trunc(Number(v) || 0), 0, 2);
+          return ["ultra", "low", "mid"][n] || "low";
+        },
+        read: (raw) => {
+          const s = String(raw || "").toLowerCase().trim();
+          if (s === "ultra") return 0;
+          if (s === "mid") return 2;
+          return 1; // "low" default
+        },
+      },
+      sensorAngle: {
+        write: (v) => clamp(Math.trunc(Number(v) || 0), -30, 30),
+        read: (raw) => {
+          const n = toNumber(raw);
+          if (!Number.isFinite(n)) return undefined;
+          return clamp(Math.trunc(n), -30, 30);
+        },
+      },
+      dpiLightEffect: {
+        write: (v) => toNinjutsoLedMode(v),
+        read: (raw) => fromNinjutsoLedMode(raw),
+      },
+      receiverLightEffect: {
+        write: (v) => toNinjutsoLedBrightness(v),
+        read: (raw) => fromNinjutsoLedBrightness(raw),
+      },
+      staticLedColor: {
+        write: (v) => normalizeHexColor(v, "#11119A"),
+        read: (raw) => normalizeHexColor(raw, "#11119A"),
+      },
+    },
+    dpiSnapper: defaultDpiSnapper,
+    features: {
+      hasPrimarySurfaceToggle: true,
+      hasSecondarySurfaceToggle: true,
+      hasPrimaryLedFeature: true,
+      hasPerformanceMode: true,
+      hasMotionSync: false,
+      hasLinearCorrection: false,
+      hasRippleControl: false,
+      hasKeyScanRate: false,
+      hasWirelessStrategy: false,
+      hasCommProtocol: false,
+      hasLongRange: false,
+      hasAtkLights: true,
+      hasDpiLightCycle: true,
+      hasReceiverLightCycle: false,
+      hasStaticLedColorPanel: true,
+      hasDpiColors: false,
+      hasDpiLods: false,
+      hasDpiAdvancedAxis: false,
+      hasSensorAngle: true,
+      hideSensorAngleVisualization: false,
+      hideSensorAngleCenterMark: false,
+      hasSurfaceFeel: true,
+      surfaceModePrimaryLockPerfModes: [],
+      showHeightViz: false,
+      ledMasterBySecondarySurface: true,
+      ledMasterGatesDpiLightEffect: true,
+      ledMasterGatesReceiverLightEffect: true,
+      ledMasterGatesSurfaceFeel: false,
+      ledMasterGatesSensorAngle: false,
+      ledMasterGatesStaticLedColor: true,
+      surfaceFeelRequiresDpiLightEffect: false,
+      staticLedColorRequiresDpiLightEffect: true,
+      staticLedColorRequiredDpiLightValue: 0,
+      keymapButtonCount: 5,
       deferDpiSlotCountUiUntilAck: true,
       batteryReadMode: "active",
       batteryPollMs: 60000,
@@ -1560,6 +1715,7 @@ id: "atk",
     crdrako: CrdrakoProfile,
     logitech: LogitechProfile,
     ninjutso: NinjutsoProfile,
+    ninjutso_ten: NinjutsoTenProfile,
     rapoo: RapooProfile,
     razer: RazerProfile,
   };
