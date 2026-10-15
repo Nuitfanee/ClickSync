@@ -57,7 +57,7 @@
     logitech: "./src/protocols/protocol_api_logitech.js",
     razer: "./src/protocols/protocol_api_razer.js",
   });
-  const ATK_VENDOR_IDS = new Set([0x373b, 0x3710]);
+  const ATK_VENDOR_IDS = new Set([0x373b, 0x3710, 0x3554]);
   const NINJUTSO_VENDOR_ID = 0x093a;
   const NINJUTSO_SORAV3_PIDS = new Set([0xe010, 0xeb02]);
   const NINJUTSO_SORAV3_ALLOWED_NAME = "ninjutso sora v3";
@@ -518,6 +518,7 @@
       filters: [
         { vendorId: 0x373b, usagePage: 0xff02, usage: 0x0002 },
         { vendorId: 0x3710, usagePage: 0xff02, usage: 0x0002 },
+        { vendorId: 0x3554, usagePage: 0xff02, usage: 0x0002 },
       ],
     },
     {
