@@ -8748,7 +8748,8 @@ body.dark .color-picker-popover {
 /* 4. 底部控件 */
 .cp-controls {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
   align-items: center;
 }
 
@@ -8786,6 +8787,262 @@ body.dark .color-picker-popover {
   font-weight: 700;
   font-size: 12px;
   cursor: pointer;
+}
+
+.cp-brightness-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+.cp-brightness-label {
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--text);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.cp-brightness {
+  flex: 1;
+  height: 4px;
+  accent-color: var(--ink);
+  cursor: pointer;
+}
+.cp-brightness-val {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 32px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* TEN 专用颜色选择器 */
+.ten-color-picker-popover {
+  width: 240px;
+  padding: 12px;
+  background: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.26);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px) scale(0.98);
+  transform-origin: top left;
+  transition: opacity 180ms var(--ease), transform 180ms var(--ease);
+}
+
+body.dark .ten-color-picker-popover {
+  background: #171717;
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.5);
+}
+
+.ten-color-picker-popover.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+/* 3. 饱和度与明度面板 */
+.ten-color-picker-popover .cp-spectrum-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 6 / 5;
+}
+
+.ten-color-picker-popover .cp-spectrum {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 2px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.ten-color-picker-popover .cp-spectrum:focus-visible,
+.ten-color-picker-popover .cp-hue:focus-visible,
+.ten-color-picker-popover .cp-hex:focus-visible,
+.ten-color-picker-popover .cp-btn-close:focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: 2px;
+}
+
+.ten-color-picker-popover .cp-spectrum-marker {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* 4. 色相与颜色预览 */
+.ten-color-picker-popover .cp-hue-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+}
+
+.ten-color-picker-popover .cp-hue {
+  width: 180px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ten-color-picker-popover .cp-hue::-webkit-slider-runnable-track {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    #ff0000 0%,
+    #ffff00 16.66%,
+    #00ff00 33.33%,
+    #00ffff 50%,
+    #0000ff 66.66%,
+    #ff00ff 83.33%,
+    #ff0000 100%
+  );
+}
+
+.ten-color-picker-popover .cp-hue::-moz-range-track {
+  height: 12px;
+  border: 0;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    #ff0000 0%,
+    #ffff00 16.66%,
+    #00ff00 33.33%,
+    #00ffff 50%,
+    #0000ff 66.66%,
+    #ff00ff 83.33%,
+    #ff0000 100%
+  );
+}
+
+.ten-color-picker-popover .cp-hue::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  margin-top: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+.ten-color-picker-popover .cp-hue::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+.ten-color-picker-popover .cp-preview {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  background: #ff0000;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.24);
+  flex: 0 0 30px;
+}
+
+/* 5. HEX 输入 */
+.ten-color-picker-popover .cp-hex-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.ten-color-picker-popover .cp-hex-label {
+  color: #4b5563;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+}
+
+body.dark .ten-color-picker-popover .cp-hex-label {
+  color: #d4d4d4;
+}
+
+.ten-color-picker-popover .cp-hex {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  border: 1px solid #d1d5db;
+  border-radius: 3px;
+  background: #ffffff;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 500;
+  color: #4b5563;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+body.dark .ten-color-picker-popover .cp-hex {
+  border-color: #404040;
+  background: #262626;
+  color: #f5f5f5;
+}
+
+.ten-color-picker-popover .cp-btn-close {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 3px;
+  background: #111827;
+  color: #ffffff;
+  border: none;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 160ms ease, opacity 160ms ease;
+}
+
+.ten-color-picker-popover .cp-btn-close:hover {
+  background: #312e81;
+}
+
+.ten-color-picker-popover .cp-btn-close:active {
+  opacity: 0.82;
+}
+
+@media (max-width: 420px) {
+  .ten-color-picker-popover {
+    width: min(240px, calc(100vw - 20px));
+  }
+
+  .ten-color-picker-popover .cp-hue {
+    width: auto;
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ten-color-picker-popover {
+    transition: none;
+  }
 }
 
 /* =========================================

@@ -23,6 +23,10 @@ body.device-atk{
 /* Advanced panel remapping */
 body.device-atk #advancedPanel #bitLOD + .shutter-row .status-text::after{ content: var(--i18n-atk-lod-off, "Disabled"); }
 body.device-atk #advancedPanel #bitLOD:checked + .shutter-row .status-text::after{ content: var(--i18n-atk-lod-on, "Active"); }
+body.device-ninjutso_ten #advancedPanel #bitLOD + .shutter-row .status-text::after{ content: "OFF"; }
+body.device-ninjutso_ten #advancedPanel #bitLOD:checked + .shutter-row .status-text::after{ content: "ON"; }
+body.device-ninjutso_ten #angleInput,
+body.device-ninjutso_ten #singleSensorAngleInput { direction: rtl; }
 
 /* replace bit6 toggle with polling selector */
 body.device-atk #advancedPanel .rapoo-polling{

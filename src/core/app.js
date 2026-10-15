@@ -4082,11 +4082,41 @@ function lockEl(el) {
     __refreshBasicItemRefs(root);
 
     const fallbackPerf = __basicModeConfig?.low ? "low" : (__basicModeConfig?.hp ? "hp" : "low");
-    const perf = document.querySelector('input[name="perfMode"]:checked')?.value || fallbackPerf;
+    let perf = document.querySelector('input[name="perfMode"]:checked')?.value || fallbackPerf;
     const wiredHz = document.getElementById("pollingSelect")?.value || "1000";
     const wirelessHz = document.getElementById("pollingSelectWireless")?.value || wiredHz;
     const hz = wiredHz;
 
+    const perfConstraint = adapter?.ui?.performanceModePollingConstraint;
+    const minConstraintHz = Number(perfConstraint?.minHz);
+    const forceCapability = String(perfConstraint?.forceWhenCapability || "").trim();
+    const constraintActive = !!perfConstraint && (
+      (Number.isFinite(minConstraintHz) && Number(hz) >= minConstraintHz)
+      || (forceCapability && getCapabilities()?.[forceCapability] === true)
+    );
+    const unavailableModes = constraintActive && Array.isArray(perfConstraint?.unavailableModes)
+      ? new Set(perfConstraint.unavailableModes.map((mode) => String(mode)))
+      : new Set();
+    if (perfConstraint) {
+      const managedModes = new Set(
+        Array.isArray(perfConstraint.unavailableModes)
+          ? perfConstraint.unavailableModes.map((mode) => String(mode))
+          : []
+      );
+      __basicModeItems.forEach((el) => {
+        if (managedModes.has(el.dataset.perf)) {
+          el.style.display = unavailableModes.has(el.dataset.perf) ? "none" : "";
+        }
+      });
+      if (unavailableModes.has(perf)) {
+        const forceMode = String(perfConstraint.forceMode || "");
+        if (forceMode) {
+          perf = forceMode;
+          const forcedRadio = document.querySelector(`input[name="perfMode"][value="${forceMode}"]`);
+          if (forcedRadio) forcedRadio.checked = true;
+        }
+      }
+    }
 
     __basicActiveModeEl = null;
     if (__isDualPollingRates) {
@@ -4526,9 +4556,11 @@ function lockEl(el) {
    * @returns {any} Formatted label.
    */
   function __formatDebounceLabel(valStr, rawLabel) {
+    const raw = String(rawLabel ?? "").trim();
+    if (raw) return raw;
     const v = Number(valStr);
     if (Number.isFinite(v)) return String(v);
-    return String(rawLabel || valStr || "-");
+    return String(valStr || "-");
   }
 
   /**
@@ -4729,7 +4761,9 @@ function lockEl(el) {
 
       const openPicker = () => {
         if (panel.getAttribute("aria-disabled") === "true") return;
-        const picker = initColorPicker();
+        const picker = adapter?.ui?.colorPickerVariant === "spectrum"
+          ? initTenColorPicker()
+          : initColorPicker();
         const current = __normalizeHexColorUi(panel.dataset.color, __staticLedColorValue);
         picker.open(panel, current, {
           onPreview: (nextHex) => {
@@ -4808,7 +4842,7 @@ function lockEl(el) {
     __setCycleLocked(receiverCycle, lockReceiver);
     __setCycleLocked(staticLedColorPanel, lockStaticColor);
     __setCycleLocked(feelCycle, lockFeel);
-    __setSliderLocked(receiverSlider, lockReceiver);
+    __setSliderLocked(receiverSlider, hasFeature("hasSensorAngle") ? (hasFeature("ledMasterGatesSensorAngle") && lockByLedMaster) : lockReceiver);
     __setSliderLocked(feelInput, lockFeel);
     syncScrollHpWindowLock();
   }
@@ -8025,6 +8059,7 @@ function applyCapabilitiesToUi(cap, opts = {}) {
 
 
   let __colorPicker = null;
+  let __tenColorPicker = null;
 
   /**
    * Initialize color picker popover.
@@ -8042,6 +8077,11 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       <div class="cp-controls">
         <div class="cp-preview"></div>
         <input class="cp-hex" type="text" value="#FF0000" maxlength="7" />
+        <div class="cp-brightness-row">
+          <span class="cp-brightness-label">B</span>
+          <input class="cp-brightness" type="range" min="10" max="100" value="100" />
+          <span class="cp-brightness-val">100%</span>
+        </div>
         <button class="cp-btn-close">OK</button>
       </div>
     `;
@@ -8051,6 +8091,8 @@ function applyCapabilitiesToUi(cap, opts = {}) {
     const ctx = canvas.getContext("2d");
     const preview = wrap.querySelector(".cp-preview");
     const hexInput = wrap.querySelector(".cp-hex");
+    const brightnessSlider = wrap.querySelector(".cp-brightness");
+    const brightnessVal = wrap.querySelector(".cp-brightness-val");
     const btnClose = wrap.querySelector(".cp-btn-close");
 
 
@@ -8093,6 +8135,19 @@ function applyCapabilitiesToUi(cap, opts = {}) {
     let currentColor = "#FF0000";
     let initialPickerColor = "#FF0000";
     let isDragging = false;
+    let currentBaseColor = "#FF0000";
+    let currentBrightness = 100;
+
+    const computeDimmed = (baseHex, pct) => {
+      const r = parseInt(baseHex.slice(1, 3), 16);
+      const g = parseInt(baseHex.slice(3, 5), 16);
+      const b = parseInt(baseHex.slice(5, 7), 16);
+      const s = Math.max(0, Math.min(100, pct)) / 100;
+      const rr = Math.round(r * s).toString(16).padStart(2, "0");
+      const gg = Math.round(g * s).toString(16).padStart(2, "0");
+      const bb = Math.round(b * s).toString(16).padStart(2, "0");
+      return "#" + rr + gg + bb;
+    };
 
     const applyPickerColorUi = (hex) => {
       currentColor = __normalizeHexColorUi(hex, initialPickerColor || "#FF0000");
@@ -8101,16 +8156,29 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       return currentColor;
     };
 
+    const syncOutputFromBaseAndBrightness = () => {
+      const dimmed = computeDimmed(currentBaseColor, currentBrightness);
+      applyPickerColorUi(dimmed);
+      if (currentPreviewCallback) currentPreviewCallback(dimmed);
+    };
+
     /**
-     * Set current picker color.
-     * Purpose: provide a single read/write entry and reduce coupling.
-     * @param {any} hex - Hex color.
-     * @returns {any} Set result.
+     * Set base color from wheel.
+     */
+    const setBaseColor = (hex) => {
+      currentBaseColor = __normalizeHexColorUi(hex, "#FF0000");
+      syncOutputFromBaseAndBrightness();
+    };
+
+    /**
+     * Set current picker color (legacy path for hex input).
      */
     const setColor = (hex) => {
-      const normalized = applyPickerColorUi(hex);
-      if (currentPreviewCallback) currentPreviewCallback(normalized);
-      return normalized;
+      currentBaseColor = __normalizeHexColorUi(hex, "#FF0000");
+      currentBrightness = 100;
+      brightnessSlider.value = "100";
+      if (brightnessVal) brightnessVal.textContent = "100%";
+      syncOutputFromBaseAndBrightness();
     };
 
     /**
@@ -8132,7 +8200,7 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       if (p[3] === 0) return;
 
       const hex = "#" + [p[0], p[1], p[2]].map(x => x.toString(16).padStart(2, "0")).join("").toUpperCase();
-      setColor(hex);
+      setBaseColor(hex);
     };
 
 
@@ -8185,6 +8253,14 @@ function applyCapabilitiesToUi(cap, opts = {}) {
         if (/^#[0-9A-Fa-f]{6}$/.test(val)) setColor(val);
     });
 
+    if (brightnessSlider) {
+      brightnessSlider.addEventListener("input", () => {
+        currentBrightness = Number(brightnessSlider.value);
+        if (brightnessVal) brightnessVal.textContent = currentBrightness + "%";
+        syncOutputFromBaseAndBrightness();
+      });
+    }
+
     __colorPicker = {
       open: (anchorEl, initialColor, handlers = {}) => {
 
@@ -8206,6 +8282,10 @@ function applyCapabilitiesToUi(cap, opts = {}) {
         wrap.style.left = `${left}px`;
         wrap.style.top = `${top}px`;
 
+        currentBrightness = 100;
+        if (brightnessSlider) brightnessSlider.value = "100";
+        if (brightnessVal) brightnessVal.textContent = "100%";
+        currentBaseColor = initialPickerColor;
         applyPickerColorUi(initialPickerColor);
         currentPreviewCallback = typeof resolvedHandlers.onPreview === "function" ? resolvedHandlers.onPreview : null;
         currentConfirmCallback = typeof resolvedHandlers.onConfirm === "function" ? resolvedHandlers.onConfirm : null;
@@ -8216,6 +8296,272 @@ function applyCapabilitiesToUi(cap, opts = {}) {
       close
     };
     return __colorPicker;
+  }
+
+  function initTenColorPicker() {
+    if (__tenColorPicker) return __tenColorPicker;
+
+    const wrap = document.createElement("div");
+    wrap.className = "color-picker-popover ten-color-picker-popover";
+    wrap.innerHTML = `
+      <div class="cp-spectrum-wrap">
+        <canvas class="cp-spectrum" width="216" height="180" tabindex="0"
+          aria-label="Color saturation and brightness"></canvas>
+        <span class="cp-spectrum-marker" aria-hidden="true"></span>
+      </div>
+      <div class="cp-hue-row">
+        <input class="cp-hue" type="range" min="0" max="359" value="0"
+          aria-label="Color hue" />
+        <div class="cp-preview" aria-label="Selected color"></div>
+      </div>
+      <div class="cp-hex-row">
+        <label class="cp-hex-label" for="deviceColorPickerHex">HEX</label>
+        <input id="deviceColorPickerHex" class="cp-hex" type="text"
+          value="#FF0000" maxlength="7" autocomplete="off" spellcheck="false" />
+      </div>
+      <button class="cp-btn-close" type="button">OK</button>
+    `;
+    document.body.appendChild(wrap);
+
+    const canvas = wrap.querySelector(".cp-spectrum");
+    const ctx = canvas.getContext("2d");
+    const spectrumMarker = wrap.querySelector(".cp-spectrum-marker");
+    const hueSlider = wrap.querySelector(".cp-hue");
+    const preview = wrap.querySelector(".cp-preview");
+    const hexInput = wrap.querySelector(".cp-hex");
+    const btnClose = wrap.querySelector(".cp-btn-close");
+
+    let currentHue = 0;
+    let currentSaturation = 1;
+    let currentValue = 1;
+
+    const hexToHsv = (hex) => {
+      const normalized = __normalizeHexColorUi(hex, "#FF0000");
+      const r = parseInt(normalized.slice(1, 3), 16) / 255;
+      const g = parseInt(normalized.slice(3, 5), 16) / 255;
+      const b = parseInt(normalized.slice(5, 7), 16) / 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      let hue = 0;
+      if (delta > 0) {
+        if (max === r) hue = 60 * (((g - b) / delta) % 6);
+        else if (max === g) hue = 60 * (((b - r) / delta) + 2);
+        else hue = 60 * (((r - g) / delta) + 4);
+      }
+      if (hue < 0) hue += 360;
+      return {
+        hue,
+        saturation: max === 0 ? 0 : delta / max,
+        value: max,
+      };
+    };
+
+    const hsvToHex = (hue, saturation, value) => {
+      const h = ((Number(hue) % 360) + 360) % 360;
+      const s = Math.max(0, Math.min(1, Number(saturation)));
+      const v = Math.max(0, Math.min(1, Number(value)));
+      const chroma = v * s;
+      const x = chroma * (1 - Math.abs(((h / 60) % 2) - 1));
+      const offset = v - chroma;
+      let rgb = [0, 0, 0];
+      if (h < 60) rgb = [chroma, x, 0];
+      else if (h < 120) rgb = [x, chroma, 0];
+      else if (h < 180) rgb = [0, chroma, x];
+      else if (h < 240) rgb = [0, x, chroma];
+      else if (h < 300) rgb = [x, 0, chroma];
+      else rgb = [chroma, 0, x];
+      return "#" + rgb
+        .map((channel) => Math.round((channel + offset) * 255).toString(16).padStart(2, "0"))
+        .join("")
+        .toUpperCase();
+    };
+
+    const drawSpectrum = () => {
+      const w = canvas.width, h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = `hsl(${currentHue}, 100%, 50%)`;
+      ctx.fillRect(0, 0, w, h);
+
+      const white = ctx.createLinearGradient(0, 0, w, 0);
+      white.addColorStop(0, "#FFFFFF");
+      white.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = white;
+      ctx.fillRect(0, 0, w, h);
+
+      const black = ctx.createLinearGradient(0, 0, 0, h);
+      black.addColorStop(0, "rgba(0,0,0,0)");
+      black.addColorStop(1, "#000000");
+      ctx.fillStyle = black;
+      ctx.fillRect(0, 0, w, h);
+    };
+
+    let currentPreviewCallback = null;
+    let currentConfirmCallback = null;
+    let currentCancelCallback = null;
+    let currentColor = "#FF0000";
+    let initialPickerColor = "#FF0000";
+    let isDragging = false;
+
+    const applyPickerColorUi = (hex) => {
+      currentColor = __normalizeHexColorUi(hex, initialPickerColor || "#FF0000");
+      preview.style.background = currentColor;
+      preview.setAttribute("aria-label", `Selected color ${currentColor}`);
+      hexInput.value = currentColor;
+      return currentColor;
+    };
+
+    const updateSpectrumMarker = () => {
+      spectrumMarker.style.left = `${currentSaturation * 100}%`;
+      spectrumMarker.style.top = `${(1 - currentValue) * 100}%`;
+    };
+
+    const syncOutputFromHsv = ({ emitPreview = true } = {}) => {
+      const hex = applyPickerColorUi(hsvToHex(currentHue, currentSaturation, currentValue));
+      hueSlider.value = String(Math.round(currentHue) % 360);
+      updateSpectrumMarker();
+      if (emitPreview && currentPreviewCallback) currentPreviewCallback(hex);
+    };
+
+    const setColor = (hex, { emitPreview = true } = {}) => {
+      const normalized = __normalizeHexColorUi(hex, initialPickerColor || "#FF0000");
+      const hsv = hexToHsv(normalized);
+      currentHue = hsv.hue;
+      currentSaturation = hsv.saturation;
+      currentValue = hsv.value;
+      drawSpectrum();
+      syncOutputFromHsv({ emitPreview });
+    };
+
+    /**
+     * Pick color from pointer event.
+     * Purpose: centralize color-pick flow and keep behavior consistent.
+     * @param {any} e - Pointer event.
+     * @returns {any} Pick result.
+     */
+    const pickColor = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+      currentSaturation = rect.width > 0 ? x / rect.width : 0;
+      currentValue = rect.height > 0 ? 1 - (y / rect.height) : 0;
+      syncOutputFromHsv();
+    };
+
+    canvas.addEventListener("pointerdown", (e) => {
+      isDragging = true;
+      canvas.setPointerCapture(e.pointerId);
+      pickColor(e);
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (isDragging) pickColor(e);
+    });
+    canvas.addEventListener("pointerup", () => isDragging = false);
+    canvas.addEventListener("pointercancel", () => isDragging = false);
+    canvas.addEventListener("keydown", (e) => {
+      const step = e.shiftKey ? 0.05 : 0.01;
+      if (e.key === "ArrowLeft") currentSaturation = Math.max(0, currentSaturation - step);
+      else if (e.key === "ArrowRight") currentSaturation = Math.min(1, currentSaturation + step);
+      else if (e.key === "ArrowUp") currentValue = Math.min(1, currentValue + step);
+      else if (e.key === "ArrowDown") currentValue = Math.max(0, currentValue - step);
+      else return;
+      e.preventDefault();
+      syncOutputFromHsv();
+    });
+
+    hueSlider.addEventListener("input", () => {
+      currentHue = Number(hueSlider.value);
+      drawSpectrum();
+      syncOutputFromHsv();
+    });
+
+    /**
+     * Close color picker.
+     * Purpose: centralize visibility switching and avoid scattered direct mutations.
+     * @returns {any} Close result.
+     */
+    const close = ({ commit = false } = {}) => {
+      if (!wrap.classList.contains("open")) return;
+      const confirmedColor = currentColor;
+      const initialColor = initialPickerColor;
+      const confirmCallback = currentConfirmCallback;
+      const cancelCallback = currentCancelCallback;
+      wrap.classList.remove("open");
+      isDragging = false;
+      currentPreviewCallback = null;
+      currentConfirmCallback = null;
+      currentCancelCallback = null;
+      if (commit) {
+        if (confirmCallback) confirmCallback(confirmedColor);
+        return;
+      }
+      if (cancelCallback) cancelCallback(initialColor);
+    };
+
+    btnClose.addEventListener("click", () => close({ commit: true }));
+
+
+    document.addEventListener("pointerdown", (e) => {
+      const isAnchor = !!e.target?.closest?.(".dpiSelectBtn, [data-color-picker-anchor=\"1\"]");
+      if (wrap.classList.contains("open") && !wrap.contains(e.target) && !isAnchor) {
+        close();
+      }
+    });
+
+    hexInput.addEventListener("change", () => {
+      let val = hexInput.value;
+      if (!val.startsWith("#")) val = "#" + val;
+      if (/^#[0-9A-Fa-f]{6}$/.test(val)) setColor(val);
+      else hexInput.value = currentColor;
+    });
+    hexInput.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      hexInput.dispatchEvent(new Event("change", { bubbles: true }));
+      close({ commit: true });
+    });
+    wrap.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      close();
+    });
+
+    __tenColorPicker = {
+      open: (anchorEl, initialColor, handlers = {}) => {
+
+        if (wrap.classList.contains("open")) close();
+
+        const resolvedHandlers = (handlers && typeof handlers === "object") ? handlers : {};
+        initialPickerColor = __normalizeHexColorUi(initialColor, "#FF0000");
+
+        const r = anchorEl.getBoundingClientRect();
+        const pickerWidth = wrap.offsetWidth || 240;
+        const pickerHeight = wrap.offsetHeight || 310;
+        let left = r.left;
+        let top = r.bottom + 8;
+        if (left + pickerWidth > window.innerWidth - 10) {
+          left = window.innerWidth - pickerWidth - 10;
+        }
+        if (top + pickerHeight > window.innerHeight - 10) {
+          top = r.top - pickerHeight - 8;
+        }
+        left = Math.max(10, left);
+        top = Math.max(10, top);
+
+        wrap.style.left = `${left}px`;
+        wrap.style.top = `${top}px`;
+
+        currentPreviewCallback = typeof resolvedHandlers.onPreview === "function" ? resolvedHandlers.onPreview : null;
+        currentConfirmCallback = typeof resolvedHandlers.onConfirm === "function" ? resolvedHandlers.onConfirm : null;
+        currentCancelCallback = typeof resolvedHandlers.onCancel === "function" ? resolvedHandlers.onCancel : null;
+        setColor(initialPickerColor, { emitPreview: false });
+
+        wrap.classList.add("open");
+        canvas.focus({ preventScroll: true });
+      },
+      close
+    };
+    return __tenColorPicker;
   }
 
   /**
