@@ -43,7 +43,7 @@
   const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
   const clampInt = (n, min, max) => Math.min(max, Math.max(min, Math.trunc(Number(n))));
   const toU8 = (n) => clampInt(n, 0, 0xff);
-  const ATK_VENDOR_IDS = new Set([0x373b, 0x3710]);
+  const ATK_VENDOR_IDS = new Set([0x373b, 0x3710, 0x3554]);
   
   // byte[] -> hex
   function bytesToHex(bytes) {
@@ -1114,6 +1114,7 @@ ProtocolApi.resolveMouseDisplayName = ProtocolApi.resolveMouseDisplayName || fun
     filters: [
       { vendorId: 0x373b, usagePage: 0xff02, usage: 0x0002 },
       { vendorId: 0x3710, usagePage: 0xff02, usage: 0x0002 },
+      { vendorId: 0x3554, usagePage: 0xff02, usage: 0x0002 },
     ],
   };
 
@@ -1166,6 +1167,7 @@ ProtocolApi.resolveMouseDisplayName = ProtocolApi.resolveMouseDisplayName || fun
       const filters = [
         { vendorId: 0x373b, usagePage: 0xff02, usage: 0x0002 },
         { vendorId: 0x3710, usagePage: 0xff02, usage: 0x0002 },
+        { vendorId: 0x3554, usagePage: 0xff02, usage: 0x0002 },
 
       ];
       const devs = await navigator.hid.requestDevice({ filters });
