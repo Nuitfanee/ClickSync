@@ -255,6 +255,15 @@
   }
 
   function _pickRazerLegacyControlHandle(handles, primaryDevice = null) {
+    // Prefer an advertised report-0 control path over a mouse-only handle.
+    // Chrome can hide protected mouse collections while leaving the consumer
+    // or vendor control collection visible on the very same supported PID.
+    const advertised = handles.filter((item) => (
+      _isRazerLegacyControlCandidate(item.summary) && item.summary.hasFeatureReportZero
+    ));
+    if (advertised.length) {
+      return advertised.find((item) => item.device === primaryDevice) || advertised[0];
+    }
     const primaryHandle = primaryDevice
       ? handles.find((item) => item.device === primaryDevice) || null
       : null;
@@ -319,9 +328,20 @@
       && firstCollectionFeatureReportCount > 0
     );
     const legacyPrimaryMouseCollection = _hasRazerLegacyPrimaryMouseCollection(d);
+    let legacyControlCollection = false;
+    _walkHidCollections(collections, (collection) => {
+      if (
+        Number(collection?.usagePage) === controlUsagePage
+        && Number(collection?.usage) === 0x01
+      ) legacyControlCollection = true;
+    });
     const legacyControlCandidate = (
       _isRazerViperV3Pid(d?.productId)
-      && legacyPrimaryMouseCollection
+      && (
+        legacyPrimaryMouseCollection
+        || hasFeatureReportZero
+        || legacyControlCollection
+      )
     );
     const officialEventCandidate = (
       inputReportCount > 0
@@ -350,6 +370,7 @@
       officialControlCandidate,
       officialEventCandidate,
       legacyPrimaryMouseCollection,
+      legacyControlCollection,
       legacyControlCandidate,
       modelKey: transportMeta?.modelKey || "",
       transportRole: transportMeta?.transportRole || null,

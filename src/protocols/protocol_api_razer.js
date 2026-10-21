@@ -575,6 +575,7 @@
     }
 
     setDevice(device, productId = 0, opts = {}) {
+      this._useNativeTransport = false;
       this.device = device || null;
       this.productId = Number(productId || 0);
       if (Object.prototype.hasOwnProperty.call(opts || {}, "transportMode")) {
@@ -652,6 +653,33 @@
       return toDataViewU8(raw);
     }
 
+    _canUseLocalTransport() {
+      const location = typeof window !== "undefined" ? window.location : null;
+      return this._usesLegacyV3Transport() && location?.protocol === "http:"
+        && ["localhost", "127.0.0.1"].includes(location.hostname);
+    }
+
+    async _nativeRoundTrip(packet) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch(`/api/razer-exchange?productId=${this.productId}`, {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({packet:Array.from(packet)}), signal:controller.signal,
+          cache:"no-store", credentials:"same-origin",
+        });
+        const value = await response.json();
+        if (!response.ok || value.ok !== true || value.productId !== this.productId
+          || !Array.isArray(value.response) || value.response.length !== RAZER_REPORT_LEN
+          || value.response.some(x => !Number.isInteger(x) || x < 0 || x > 255)) {
+          throw new Error(value.error || `Native transport HTTP ${response.status}`);
+        }
+        return new Uint8Array(value.response);
+      } catch (err) {
+        throw new ProtocolError(String(err?.message || err), "NATIVE_TRANSPORT_FAILED");
+      } finally { clearTimeout(timer); }
+    }
+
     /**
      * Send one Razer command frame and wait for a matching response.
      * Official mode follows Synapse Web; legacy V3 keeps the older OpenRazer-style framing.
@@ -678,10 +706,20 @@
 
         for (let attempt = 0; attempt <= retryBudget; attempt++) {
           try {
-            await this._sendFeature(reportId, requestBytes);
-            if (waitMs > 0) await sleep(waitMs);
-
-            const raw = await this._recvFeature(reportId);
+            let raw;
+            if (this._useNativeTransport) {
+              raw = await this._nativeRoundTrip(requestBytes);
+            } else {
+              try {
+                await this._sendFeature(reportId, requestBytes);
+                if (waitMs > 0) await sleep(waitMs);
+                raw = await this._recvFeature(reportId);
+              } catch (err) {
+                if (!isPermissionPathError(err) || !this._canUseLocalTransport()) throw err;
+                raw = await this._nativeRoundTrip(requestBytes);
+                this._useNativeTransport = true;
+              }
+            }
             const responseBytes = ProtocolCodec.fitReport(raw);
             const response = ProtocolCodec.parseRazerReport(responseBytes);
 
@@ -758,7 +796,8 @@
             const code = String(err?.code || "");
 
             if (
-              code === "DEVICE_COMMAND_NOT_SUPPORTED"
+              code === "NATIVE_TRANSPORT_FAILED"
+              || code === "DEVICE_COMMAND_NOT_SUPPORTED"
               || code === "DEVICE_COMMAND_UNKNOWN_STATUS"
             ) {
               throw err;
@@ -1658,7 +1697,7 @@
       ? response.argumentsData.length
       : (Number.isFinite(Number(response?.dataSize)) ? response.dataSize : response.arguments.length);
     const hasClassSensorEcho =
-      dataSize > 10
+      dataSize >= 5
       && readOfficialResponseArgument(response, 0) === OFFICIAL_PROXIMITY_CLASS_ID
       && readOfficialResponseArgument(response, 1) === OFFICIAL_PROXIMITY_SENSOR_ID;
     const parmOffset = hasClassSensorEcho ? 2 : 0;
@@ -1860,15 +1899,18 @@
         requireCapability(caps, "smartTracking", "smartTracking", pid);
         const tx = txForField(pid, "smartTracking");
         const officialSmartTracking = buildOfficialSmartTrackingModelFromPublicState(nextState);
-        const seq = [{ packet: ProtocolCodec.commands.setProximitySensorState(tx, OFFICIAL_PROXIMITY_CLASS_ID, OFFICIAL_PROXIMITY_SENSOR_ID, true) }];
+        const seq = [];
         if (officialSmartTracking.isAsymmetric) {
+          // Firmware 1.12 requires calibration to be armed before the
+          // asymmetric unlock/pair write. Symmetric writes must not arm it.
+          seq.push({ packet: ProtocolCodec.commands.setProximitySensorState(tx, OFFICIAL_PROXIMITY_CLASS_ID, OFFICIAL_PROXIMITY_SENSOR_ID, true) });
           seq.push({
             packet: ProtocolCodec.commands.setProximitySensorLiftSetting(
               tx,
               OFFICIAL_PROXIMITY_CLASS_ID,
               OFFICIAL_PROXIMITY_SENSOR_ID,
               0x04,
-              officialSmartTracking.trackingDistance - 1
+              0x01
             ),
           });
           seq.push({
@@ -3653,7 +3695,7 @@
     }
 
     async setButtonMappingBySelect(btnId, labelOrObj) {
-      if (this._usesLegacyV3Transport()) {
+      if (this._usesLegacyV3Transport() && !this._driver._useNativeTransport) {
         return this._setLegacyRep4ButtonMappingBySelect(btnId, labelOrObj);
       }
       return this._opQueue.enqueue(async () => {
@@ -3912,7 +3954,7 @@
 
     async _readButtonMappingsSnapshot(opts = {}) {
       this._ensureSupported();
-      if (this._usesLegacyV3Transport()) {
+      if (this._usesLegacyV3Transport() && !this._driver._useNativeTransport) {
         return this._readLegacyRep4ButtonMappingsSnapshot(opts);
       }
       const cached = Array.isArray(this._cfg?.buttonMappings) && this._cfg.buttonMappings.length
@@ -3942,6 +3984,35 @@
       return out;
     }
 
+    // On Windows Chrome may expose the event interface but refuse feature I/O.
+    // The optional local server provides only native battery/charging reads.
+    async _readBatteryViaLocalHelper() {
+      if (!isViperV3Pid(this._pid())) return null;
+      const location = window.location;
+      if (!location || location.protocol !== "http:"
+        || !["localhost", "127.0.0.1"].includes(location.hostname)) return null;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 14000);
+      try {
+        const response = await fetch(`/api/razer-battery?productId=${this._pid()}`, {
+          signal: controller.signal, cache: "no-store", credentials: "same-origin",
+        });
+        if (!response.ok) throw new Error(`Local battery helper HTTP ${response.status}`);
+        const value = await response.json();
+        if (value.ok !== true || value.productId !== this._pid()
+          || !Number.isInteger(value.batteryPercent)
+          || value.batteryPercent < 0 || value.batteryPercent > 100) {
+          throw new Error("Invalid native battery response");
+        }
+        const result = { batteryPercent: value.batteryPercent };
+        if (typeof value.batteryIsCharging === "boolean") result.batteryIsCharging = value.batteryIsCharging;
+        return result;
+      } catch (err) {
+        console.warn("[Razer] Local battery helper unavailable", err);
+        return null;
+      } finally { clearTimeout(timer); }
+    }
+
     // Read battery + charging + idle + low-threshold snapshot.
     async _readBatterySnapshot() {
       const pid = this._ensureSupported();
@@ -3962,6 +4033,7 @@
         lowPowerThresholdPercent: TRANSFORMERS.lowPowerRawToPercent(defaultRawThreshold),
       };
       const isLegacyV3 = this._usesLegacyV3Transport();
+      let nativeBattery = null;
       const queryBatteryField = async (label, packet) => {
         try {
           return await this._safeQuery(
@@ -3973,6 +4045,10 @@
           );
         } catch (err) {
           if (!isLegacyV3) throw err;
+          if (label === "battery" && isPermissionPathError(err)) {
+            nativeBattery = await this._readBatteryViaLocalHelper();
+            if (nativeBattery) return null;
+          }
           console.warn("[Razer] Legacy V3 battery read failed", {
             field: String(label || ""),
             pid,
@@ -3986,6 +4062,7 @@
       };
 
       const batteryRes = await queryBatteryField("battery", ProtocolCodec.commands.getBattery(tx));
+      if (nativeBattery) return Object.assign(out, nativeBattery);
       if (batteryRes?.arguments) {
         out.batteryPercent = TRANSFORMERS.batteryPercentFromRaw(batteryRes.arguments[1] ?? 0);
       }
@@ -4055,7 +4132,7 @@
       const snapshotMode = this._resolveSnapshotReadMode(mode);
       const isConnectFull = snapshotMode === SNAPSHOT_READ_MODE.CONNECT_FULL;
       const isLegacyV3 = this._usesLegacyV3Transport();
-      const readOptionalAdvancedSnapshot = !(isLegacyV3 && isConnectFull);
+      const readOptionalAdvancedSnapshot = !(isLegacyV3 && isConnectFull && !this._driver._canUseLocalTransport());
       const updates = {
         deviceName: PID_NAME[pid] || (this.device?.productName ? String(this.device.productName) : "Razer Mouse"),
         capabilities: this._capabilitiesSnapshot(caps),
